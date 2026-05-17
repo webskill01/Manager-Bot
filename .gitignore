@@ -1,0 +1,7 @@
+node_modules/
+bots/*/baileys_auth/
+bots/*/.env
+bots/*/service-account.json
+logs/*.log
+*.log
+member-mgmt-bot-*.json

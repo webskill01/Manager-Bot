@@ -1,0 +1,54 @@
+{
+  "botName": "bot-nitin",
+  "paidGroups": [
+    "120363423482434246@g.us",
+    "120363404132182917@g.us",
+    "120363406228877039@g.us",
+    "120363406216444790@g.us",
+    "120363420990654823@g.us",
+    "120363422444161150@g.us",
+    "120363403520075306@g.us",
+    "120363422959715688@g.us",
+    "120363403650334256@g.us",
+    "120363422601115995@g.us",
+    "120363422636858624@g.us",
+    "120363423042952422@g.us"
+  ],
+  "upiQrPath": "./qr-payment.jpg",
+  "renewal": {
+    "fullAmount": 90,
+    "referralAmount": 45,
+    "billingCycleDays": 30
+  },
+  "joining": {
+    "fee": 90
+  },
+  "overdue": {
+    "autoReminderDays": 6,
+    "consolidatedListDays": 7
+  },
+  "rateLimits": {
+    "memberToMemberGapMinMs": 7000,
+    "memberToMemberGapMaxMs": 10000,
+    "groupOpGapMinMs": 5000,
+    "groupOpGapMaxMs": 8000,
+    "batchSize": 20,
+    "secondBatchDelayMs": 7200000,
+    "circuitBreakerThreshold": 10,
+    "circuitBreakerCooldownMs": 60000
+  },
+  "allowedNumbers": ["6283380110", "9914623976"],
+  "allowedLids": ["242902009692413"],
+  "schedule": {
+    "morningDigest": "0 9 * * *",
+    "reminderSend": "30 9 * * *",
+    "overdueCheck": "0 10 * * *",
+    "eveningSummary": "0 22 * * *",
+    "timezone": "Asia/Kolkata"
+  },
+  "messages": {
+    "reminder": "Sat Sri Akal {name} paaji 🙏\n\n Aaj tohada ik mahina pura hogya.\niss mahine lyi iste 90/- pay krdo ji 🙏🏻\n",
+    "overdue": "Sat Sri Akal {name} paaji 🙏\n\n🚨 🚨 Hnji paaji aaj last date aaji renew krke dss deyo. 🙏",
+    "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
+  }
+}

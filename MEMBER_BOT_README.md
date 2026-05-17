@@ -1,0 +1,447 @@
+# WhatsApp Group Member Management Bot
+
+A production-grade WhatsApp automation system for managing paid subscription groups — built on **Baileys** (direct WhatsApp Web protocol), reading and writing directly to **Google Sheets** as the single source of truth.
+
+---
+
+## 🧩 Problem Statement
+
+Managing 400+ paid members across 11 WhatsApp groups manually involves:
+
+- **Adding members** — sharing 11 group links, accepting join requests across all groups manually
+- **Renewal reminders** — filtering Excel by date daily, copy-pasting numbers, sending personalized message + QR photo one by one
+- **Removing non-renewals** — finding overdue members, removing from 11 groups individually (7 removals = 77 manual actions)
+- **Record keeping** — noting renewals in a temp WhatsApp chat, updating two Excel sheets at end of day
+- **No status awareness** — no automated way to know who's overdue, who's skipped, who's active
+
+**Scale:** 400–841+ members, ₹90/month, 11 paid groups + 1 free group, with partner revenue split.
+
+---
+
+## ✅ Solution Overview
+
+A **WhatsApp bot** running on the support/personal number that:
+
+1. Reads and writes directly to a structured Google Sheet (single source of truth)
+2. Sends scheduled renewal reminders with human-like rate limiting
+3. Adds/removes members from all 11 groups automatically with gaps
+4. Accepts simple commands from the owner's private chat
+5. Sends daily summaries (morning digest + evening report)
+6. Is architected as a **multibot** so friends running similar subscription groups can run their own instance
+
+The financial tracking sheet remains separate — owner manages it manually using the bot's daily summaries as input.
+
+---
+
+## 🏗️ Architecture
+
+### Two-Number Setup
+- **Bot number (existing):** Continues forwarding taxi messages via the existing taxi multibot — untouched
+- **Support number (existing):** This bot runs here. Members already trust and respond to this number for payment queries
+
+### Multibot Architecture (same pattern as taxi bot)
+```
+member-mgmt-bot/
+├── core/                        # Shared logic — all instances use this
+│   ├── index.js                 # Baileys connection + anti-ban hardening
+│   ├── sheetClient.js           # Google Sheets API read/write
+│   ├── commandParser.js         # WhatsApp command handler
+│   ├── groupManager.js          # Add/remove/approve across groups
+│   ├── scheduler.js             # Cron jobs — reminders, digest, summary
+│   ├── reminderSender.js        # Rate-limited message sender
+│   ├── overdueEngine.js         # Overdue detection + numbered action list
+│   ├── memberStore.js           # In-memory cache + sheet sync
+│   ├── logger.js                # Bot-prefixed logging
+│   └── globalConfig.js          # Shared constants
+│
+├── bots/
+│   ├── bot-nitin/               # Your instance
+│   │   ├── .env                 # BOT_NAME, OWNER_NUMBER, SHEET_ID, PORT
+│   │   ├── config.json          # Group IDs, QR path, message templates
+│   │   ├── start.js
+│   │   ├── baileys_auth/
+│   │   └── qr-payment.jpg       # Your UPI QR image
+│   │
+│   ├── bot-friend1/             # Friend's instance
+│   │   ├── .env
+│   │   ├── config.json          # Their sheet, their 11 groups, their QR
+│   │   └── start.js
+│   │
+│   └── bot-friend2/
+│       └── ...
+│
+├── logs/
+├── ecosystem.config.cjs         # PM2 process manager
+└── package.json
+```
+
+### Bot Instance `config.json`
+```json
+{
+  "botName": "bot-nitin",
+  "ownerNumber": "919XXXXXXXXX@s.whatsapp.net",
+  "sheetId": "YOUR_GOOGLE_SHEET_ID",
+  "paidGroups": [
+    "120363XXXXX@g.us",
+    "120363XXXXX@g.us",
+    "120363XXXXX@g.us",
+    "120363XXXXX@g.us",
+    "120363XXXXX@g.us",
+    "120363XXXXX@g.us",
+    "120363XXXXX@g.us",
+    "120363XXXXX@g.us",
+    "120363XXXXX@g.us",
+    "120363XXXXX@g.us",
+    "120363XXXXX@g.us"
+  ],
+  "upiQrPath": "./qr-payment.jpg",
+  "reminderMessage": "Sat Sri Akal {name} ji 🙏\n\nAapki group membership aaj renew honi hai.\nPlease ₹90 is QR code se bhejo aur screenshot share karo.\n\nShukriya! 🚕",
+  "overdueMessage": "Sat Sri Akal {name} ji 🙏\n\nAapki membership {days} din se overdue hai.\nPlease jaldi renew karo warna group se remove karna padega.\n\n₹90 bhejo aur screenshot share karo. 🙏"
+}
+```
+
+---
+
+## 📊 Google Sheet Structure (New — Bot-Managed)
+
+### Sheet Name: `MEMBERS`
+
+| Column | Type | Description |
+|--------|------|-------------|
+| NAME | Text | Member display name |
+| PHONE | Text | Normalized 10-digit (no dashes/spaces) |
+| JOIN_DATE | Date | DD-MM-YYYY — actual join date |
+| BILLING_DATE | Date | DD-MM-YYYY — next renewal due date |
+| STATUS | Enum | `ACTIVE` / `REMOVED` / `SKIPPED` |
+| RENEWALS | Number | Count of successful renewals |
+| PAID_LAST | Number | Amount paid last time (90 or 45) |
+| REFERENCE | Text | Phone of who referred them (blank if none) |
+| SKIP_REASON | Text | Blank unless SKIPPED — e.g. "admin", "personal" |
+| ADDED_BY | Text | Bot instance name that added this member |
+| LAST_UPDATED | DateTime | ISO timestamp of last write |
+
+**Key design decisions:**
+- Full dates (DD-MM-YYYY) instead of just day numbers — no cross-month ambiguity
+- Phone normalized to 10 digits on every write — enables reliable matching
+- STATUS column replaces the old RENEWAL=0/1/blank system
+- BILLING_DATE auto-updates to +30 days on every confirmed renewal
+- SKIP_REASON allows nuance — admin of another group, personal situation, etc.
+
+### Data Migration from Old Sheet
+
+Old sheet mapping:
+- `RENEWAL = blank or 1` → STATUS = `ACTIVE`
+- `RENEWAL = 0` → STATUS = `REMOVED`
+- `Billing Date` = day number → convert to full date using MONTH OF JOIN
+- Phone numbers → strip dashes, spaces, normalize to 10 digits
+
+A migration script will be built in Phase 1 to do this automatically.
+
+---
+
+## ⚡ Features
+
+### 1. Scheduled Jobs (IST timezone locked)
+
+| Time | Job |
+|------|-----|
+| 9:00 AM | Morning digest — who's due today |
+| 9:30 AM | Send renewal reminder + QR to each due member (rate-limited) |
+| 10:00 PM | Evening auto-summary — new joins, renewals, removals |
+| Continuous | Overdue detection — flags anyone crossing 5-day mark |
+
+### 2. Renewal Reminder Flow
+
+For each member due today:
+1. Bot sends personalized message with their name
+2. Bot sends QR image
+3. 10–15 second gap before next member
+4. Maximum 20 per batch; if more, second batch after 2 hours
+
+### 3. Overdue Handling (Smart Numbered System)
+
+On day 6, bot auto-sends reminder to the member (no owner input needed).
+
+On day 7, bot sends ONE consolidated message to you (not separate messages per person):
+
+```
+📋 OVERDUE MEMBERS (7+ days):
+
+[1] Harpreet • 98551XXXXX • 8 days overdue
+[2] Rajesh • 97791XXXXX • 7 days overdue
+[3] Manjeet • 84276XXXXX • 6 days overdue
+
+Reply with actions:
+R1 = Remove #1 from all groups
+S1 = Skip #1 this month (won't auto-remove)
+W1 = Send another warning to #1
+R1 R2 S3 = Multiple actions in one reply
+```
+
+You reply with e.g. `R1 R2 S3` — bot parses, executes each action with gaps. No confusion about which reply maps to which person.
+
+**Important:** Bot NEVER auto-removes anyone. Removal always requires your explicit command. This prevents accidental kicks of group admins or members with special situations.
+
+### 4. Add Member Flow
+
+You send: `add 98551XXXXX Harpreet`
+
+Bot:
+1. Normalizes phone, writes to Google Sheet with STATUS=ACTIVE
+2. Attempts to add to all 11 groups with 10–15s gaps between each
+3. Reports result:
+
+```
+✅ Added Harpreet to 8/11 groups
+❌ Failed 3 groups (privacy restricted):
+   - Punjab Taxi Group 1
+   - Punjab Taxi Group 4
+   - Punjab Taxi Group 7
+
+Reply LINKS 98551XXXXX to get invite links for failed groups.
+```
+
+4. If you reply `LINKS 98551XXXXX` → bot sends only the 3 failed group invite links
+5. If groups require admin approval → `approve 98551XXXXX` auto-approves across all pending groups
+
+### 5. Remove Member Flow
+
+You send: `kick 98551XXXXX`
+
+Bot:
+1. Removes from all 11 groups with 3–5s gaps (11 groups ≈ 33–55 seconds total)
+2. Updates STATUS = REMOVED in sheet
+3. Logs removal with timestamp
+4. Confirms: `✅ Removed Harpreet from 11/11 groups`
+
+### 6. Rate Limiting (Anti-Ban)
+
+All sends use patterns from the taxi bot codebase:
+- 10–15s gaps between member-to-member messages
+- 3–5s gaps between group operations
+- Circuit breaker: 10 failures = 60s cooldown
+- Per-group cooldown: minimum 1s between sends to same group
+- Batch limits: max 20 outbound messages per scheduled run
+
+---
+
+## 💬 Command Reference
+
+### Member Management
+```
+add [phone] [name]         Add new member + attempt all 11 groups
+kick [phone]               Remove from all 11 groups + mark REMOVED
+skip [phone] [reason]      Mark SKIPPED — won't appear in auto-remove list
+unskip [phone]             Revert SKIPPED → ACTIVE
+links [phone]              Get invite links for groups they're missing from
+approve [phone]            Approve pending join requests across all groups
+```
+
+### Renewal
+```
+renewed [phone]            Mark renewed @ ₹90, update billing date +30 days
+renewed [phone] 45         Mark renewed @ ₹45 (referral discount)
+due                        Who's due today
+due tomorrow               Who's due tomorrow
+overdue                    Full overdue list with days count
+pending                    Members due but not yet confirmed paid
+```
+
+### Lookup
+```
+find [phone]               Full member details from sheet
+find [name]                Search by name (shows all matches)
+status [phone]             Quick status — active/removed/skipped + days till renewal
+```
+
+### Summaries
+```
+summary                    Today's summary
+summary [month]            Monthly summary (e.g. summary may)
+stats                      Total active, removed, overdue counts
+revenue                    This month's confirmed revenue so far
+```
+
+### Groups
+```
+groups                     List all 11 group names + IDs
+groupcheck [phone]         Which of the 11 groups is this member in?
+```
+
+### Overdue Actions (reply format)
+```
+R[n]                       Remove member #n from all groups
+S[n]                       Skip member #n this month
+W[n]                       Send another warning to member #n
+R1 R2 S3                   Multiple actions in one message
+```
+
+---
+
+## 📈 Daily Summary Format
+
+**Auto-sent at 10:00 PM:**
+```
+📊 Daily Summary — 17 May 2026
+
+➕ New Members: 3
+   • Harpreet Singh • 98551XXXXX
+   • Rajesh Kumar • 97791XXXXX
+   • Manjeet Kaur • 84276XXXXX
+
+♻️ Renewals: 7 (₹585)
+   • 5 full @ ₹90
+   • 2 referral @ ₹45
+
+❌ Removals: 4
+⚠️ Overdue (6+ days): 2
+👥 Total Active: 412
+```
+
+You copy these numbers directly into your financial tracking sheet — no reconciliation needed.
+
+---
+
+## 🔧 Tech Stack
+
+| Tool | Purpose |
+|------|---------|
+| **Baileys** (v6.7+) | WhatsApp Web protocol — direct connection |
+| **Google Sheets API** | Single source of truth for member data |
+| **node-cron** | Scheduled jobs (IST timezone) |
+| **Express** | HTTP server for QR code + health endpoints |
+| **Pino** | Structured logging |
+| **PM2** | Process management, auto-restart, log rotation |
+| **Node.js 18+** | Runtime |
+
+---
+
+## 🚀 Build Phases
+
+### Phase 1 — Foundation
+- [ ] Design new Google Sheet (exact column structure above)
+- [ ] Create Google Cloud service account + enable Sheets API
+- [ ] Write migration script — reads current Sheet 2, normalizes phones, sets full dates, maps STATUS
+- [ ] Validate migrated data (duplicate phone check, blank billing date check)
+
+### Phase 2 — Core Bot
+- [ ] Baileys connection with anti-ban hardening (port from taxi bot)
+- [ ] Google Sheets API client (`sheetClient.js`) — read row, write row, update cell
+- [ ] Command parser — listens to owner number only, routes to correct handler
+- [ ] Commands: `add`, `kick`, `renewed`, `find`, `status`, `due`, `summary`
+
+### Phase 3 — Scheduled Jobs
+- [ ] Morning digest (9:00 AM IST)
+- [ ] Renewal reminder sender with rate limiting (9:30 AM IST)
+- [ ] Overdue detection engine — builds numbered list
+- [ ] Evening auto-summary (10:00 PM IST)
+- [ ] Numbered action reply parser (`R1 R2 S3` format)
+
+### Phase 4 — Group Operations
+- [ ] Add to groups with gap + privacy failure detection + reporting
+- [ ] Kick from groups with gap
+- [ ] Approve pending join requests
+- [ ] Invite link generation for failed adds
+- [ ] `groupcheck` — verify which groups a member is in
+
+### Phase 5 — Multibot Templatization
+- [ ] Separate `config.json` per instance (sheet ID, group IDs, QR, templates)
+- [ ] PM2 ecosystem config for multiple instances
+- [ ] Per-instance logging with bot name prefix
+- [ ] Onboarding docs for friends running their own instance
+
+---
+
+## 📦 Setup (Per Instance)
+
+### Prerequisites
+```bash
+Node.js >= 18
+PM2 (npm install -g pm2)
+Google Cloud service account with Sheets API enabled
+```
+
+### Installation
+```bash
+git clone <repo-url>
+cd member-mgmt-bot
+npm install
+```
+
+### Google Sheets Setup
+1. Go to [Google Cloud Console](https://console.cloud.google.com)
+2. Create project → Enable Google Sheets API
+3. Create Service Account → Download JSON key
+4. Share your Google Sheet with the service account email (Editor access)
+5. Place JSON key at `bots/bot-nitin/service-account.json`
+
+### Configure Bot Instance
+```bash
+# Create bot folder
+mkdir -p bots/bot-nitin
+
+# Create .env
+BOT_NAME=bot-nitin
+OWNER_NUMBER=919XXXXXXXXX
+STATS_PORT=3010
+
+# Add config.json (see Architecture section above)
+# Add qr-payment.jpg (your UPI QR image)
+# Add service-account.json (Google Cloud key)
+```
+
+### Run
+```bash
+# Development
+node bots/bot-nitin/start.js
+
+# Production
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 startup
+```
+
+### Scan QR
+- Terminal: shows automatically
+- Browser: `http://localhost:3010/qr`
+
+---
+
+## 🛡️ Safety Guarantees
+
+- **No auto-removal** — every kick requires explicit owner command
+- **SKIPPED status** — members never auto-removed if flagged (group admin, personal situation)
+- **Rate limited** — all sends use human-like gaps, batch limits, circuit breaker
+- **Owner-only commands** — bot only accepts commands from the configured owner number
+- **Sheet as truth** — all state lives in Google Sheet, bot restart loses nothing
+- **Graceful shutdown** — PM2 SIGTERM handler waits for in-progress operations
+
+---
+
+## 💼 SaaS Potential (Multibot)
+
+Friends running similar subscription taxi groups can run their own instance on your Contabo VPS:
+
+- **Setup fee:** ₹500–1000 (your time to onboard their data + configure their instance)
+- **Monthly fee:** ₹500–1000/month (VPS share + maintenance)
+- **Your cost per additional instance:** ~50MB RAM on existing VPS — negligible
+
+Each friend connects their own WhatsApp support number, their own Google Sheet, their own 11 group IDs, their own UPI QR. Core logic is shared — you maintain once, all instances benefit.
+
+This folds naturally under the **EaseBuilds** brand alongside WBaaS.
+
+---
+
+## 🔗 Related Projects
+
+- [whatsapp-taxi-bot-multibot](https://github.com/webskill01/whatsapp-taxi-bot-multibot) — The taxi forwarding bot this project runs alongside. Anti-ban patterns, Baileys connection logic, and PM2 ecosystem config are directly ported from here.
+
+---
+
+## 📝 Notes
+
+- Free group (1 group) is managed manually by owner — bot does not touch it
+- Financial tracking sheet (Sheet 1 — PER MONTH SHEET) remains manually managed by owner
+- Bot only operates on the new structured MEMBERS sheet
+- Revenue split tracking between partners is done manually using bot's daily summary output
+- Referral discount logic: 1 referral = ₹45 renewal, tracked via REFERENCE column and PAID_LAST

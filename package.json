@@ -1,0 +1,29 @@
+{
+  "name": "member-mgmt-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp subscription group manager",
+  "type": "module",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start:nitin": "node bots/bot-nitin/start.js",
+    "migrate": "node scripts/migrate.js",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop all",
+    "pm2:logs": "pm2 logs",
+    "pm2:status": "pm2 status"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "googleapis": "^144.0.0",
+    "node-cron": "^3.0.3",
+    "pino": "^9.5.0",
+    "pino-pretty": "^13.0.0",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "pm2": "^5.4.2"
+  }
+}
