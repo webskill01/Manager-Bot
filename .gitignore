@@ -1,7 +1,39 @@
+# Dependencies
 node_modules/
+
+# Bot secrets & auth (per-instance — never commit these)
 bots/*/baileys_auth/
 bots/*/.env
 bots/*/service-account.json
-logs/*.log
+bots/*/qr-payment.jpg
+
+# Logs
+logs/
 *.log
-member-mgmt-bot-*.json
+
+# CRG graph (local dev tool — not needed on VPS)
+.code-review-graph/
+
+# Checkpoint / progress files (local only)
+GOAL.md
+PHASES.md
+PROGRESS.md
+PROGRESS_ARCHIVE.md
+.learn-pending
+
+# Scripts (one-time migration — not needed on VPS)
+scripts/raw_members.txt
+scripts/staging.csv
+
+# OS & editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# PM2 local files
+.pm2/
+
+# Temp
+*.tmp
+*.bak
