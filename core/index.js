@@ -119,14 +119,17 @@ export async function startBot(config, log, authDir) {
 
     // Early reject — only allowedCommandJids can send commands
     if (!allowedCommandJids.has(jid) && !allowedCommandJids.has(resolvedJid)) {
-      // LID discovery: when an unknown @lid sends any text, notify admin once so
-      // they can copy the LID into config.json allowedLids
-      if (jid.endsWith('@lid') && !notifiedUnknownLids.has(jid)) {
+      // LID discovery: only notify when there are allowedNumbers whose LIDs
+      // haven't been added to allowedLids yet (fires once per unknown LID per
+      // session, stops permanently once all LIDs are configured in config.json)
+      const hasUnconfiguredLids =
+        (config.allowedNumbers || []).length > (config.allowedLids || []).length;
+      if (jid.endsWith('@lid') && hasUnconfiguredLids && !notifiedUnknownLids.has(jid)) {
         const probe = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
         if (probe.trim()) {
           notifiedUnknownLids.add(jid);
           const rawLid = jid.replace('@lid', '');
-          const hint = `🔔 Unknown LID messaged the bot:\n${jid}\n\nIf this is your number (${rawLid}), add it to config.json:\n"allowedLids": ["${rawLid}"]`;
+          const hint = `🔔 Unknown LID messaged the bot:\n${jid}\n\nIf this is your number, add to config.json allowedLids:\n"${rawLid}"`;
           for (const adminJid of getBroadcastJids()) {
             try { await sock?.sendMessage(adminJid, { text: hint }); } catch (_) {}
           }
