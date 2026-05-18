@@ -2,14 +2,17 @@ import { daysFromToday, todayStr } from '../globalConfig.js';
 
 export function createReportHandlers(store, config, botStartTime, log) {
 
-  // Checks lastUpdated against today — handles both old ISO ("2026-05-18T...") and new ("18-05-2026 02:07")
-  function isUpdatedToday(lastUpdated) {
+  // Checks lastUpdated against a given date string ("DD-MM-YYYY") — handles both storage formats
+  function isUpdatedOn(lastUpdated, dateStr) {
     if (!lastUpdated) return false;
-    const today = todayStr(); // "DD-MM-YYYY"
-    if (lastUpdated.startsWith(today)) return true;
-    // Old ISO format: convert today DD-MM-YYYY → YYYY-MM-DD for comparison
-    const [d, m, y] = today.split('-');
+    if (lastUpdated.startsWith(dateStr)) return true;
+    // Old ISO format: convert DD-MM-YYYY → YYYY-MM-DD for comparison
+    const [d, m, y] = dateStr.split('-');
     return lastUpdated.startsWith(`${y}-${m}-${d}`);
+  }
+
+  function isUpdatedToday(lastUpdated) {
+    return isUpdatedOn(lastUpdated, todayStr());
   }
 
   // Checks if lastUpdated is within current month — handles both formats
@@ -65,16 +68,31 @@ export function createReportHandlers(store, config, botStartTime, log) {
     return msg;
   }
 
-  function handleSummary() {
+  function handleSummary(args = []) {
     const all = store.getAll();
-    const today = todayStr();
 
-    const newToday = all.filter(m => m.joinDate === today);
+    // Parse optional days-ago argument: "summary 1" = yesterday, "summary 2" = 2 days ago
+    let daysAgo = 0;
+    if (args.length > 0) {
+      const arg = String(args[0]).toLowerCase();
+      if (arg === 'yesterday') daysAgo = 1;
+      else if (/^\d+$/.test(arg)) daysAgo = Math.min(parseInt(arg, 10), 30);
+    }
+
+    const targetDateObj = new Date();
+    if (daysAgo > 0) targetDateObj.setDate(targetDateObj.getDate() - daysAgo);
+    const targetDateStr = [
+      String(targetDateObj.getDate()).padStart(2, '0'),
+      String(targetDateObj.getMonth() + 1).padStart(2, '0'),
+      String(targetDateObj.getFullYear()),
+    ].join('-'); // "DD-MM-YYYY"
+
+    const newToday = all.filter(m => m.joinDate === targetDateStr);
     const renewedToday = all.filter(m =>
-      isUpdatedToday(m.lastUpdated) && m.renewals > 0 && m.joinDate !== today
+      isUpdatedOn(m.lastUpdated, targetDateStr) && m.renewals > 0 && m.joinDate !== targetDateStr
     );
     const removedToday = all.filter(m =>
-      m.status === 'REMOVED' && isUpdatedToday(m.lastUpdated)
+      m.status === 'REMOVED' && isUpdatedOn(m.lastUpdated, targetDateStr)
     );
     const overdue = all.filter(m => {
       const days = daysFromToday(m.billingDate);
@@ -90,11 +108,14 @@ export function createReportHandlers(store, config, botStartTime, log) {
       referralRenewals.length * config.renewal.referralAmount;
     const totalRevenue = joinRevenue + renewalRevenue;
 
-    const dateStr = new Date().toLocaleDateString('en-IN', {
+    const dateStr = targetDateObj.toLocaleDateString('en-IN', {
       day: 'numeric', month: 'long', year: 'numeric',
     });
+    const dateLabel = daysAgo === 0 ? dateStr
+      : daysAgo === 1 ? `${dateStr} (yesterday)`
+      : `${dateStr} (${daysAgo} days ago)`;
 
-    let msg = `📊 Daily Summary — ${dateStr}\n\n`;
+    let msg = `📊 Daily Summary — ${dateLabel}\n\n`;
 
     if (newToday.length > 0) {
       msg += `➕ New Members: ${newToday.length} (₹${joinRevenue})\n`;
@@ -199,6 +220,8 @@ status [phone]              Quick status + days till renewal
 
 📊 Reports
 summary                     Today's summary with revenue
+summary 1                   Yesterday's summary
+summary 2                   Summary from 2 days ago (up to 30)
 stats                       Active / removed / overdue counts
 revenue                     This month's revenue
 groups                      List all ${config.paidGroups.length} group IDs

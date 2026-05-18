@@ -90,7 +90,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'find':       return lookupH.handleFind(args);
         case 'status':     return lookupH.handleStatus(args);
 
-        case 'summary':    return reportH.handleSummary();
+        case 'summary':    return reportH.handleSummary(args);
         case 'stats':      return reportH.handleStats();
         case 'revenue':    return reportH.handleRevenue();
         case 'groups':     return reportH.handleGroups();
