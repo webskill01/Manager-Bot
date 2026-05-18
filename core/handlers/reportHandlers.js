@@ -26,6 +26,54 @@ export function createReportHandlers(store, config, botStartTime, log) {
     return lastUpdated.startsWith(`${yyyy}-${mm}`);
   }
 
+  function handleMorningDigest() {
+    const all = store.getAll();
+    const dueToday = all.filter(m => m.status === 'ACTIVE' && daysFromToday(m.billingDate) === 0);
+    const dueSoon = all.filter(m => {
+      const d = daysFromToday(m.billingDate);
+      return m.status === 'ACTIVE' && d !== null && d > 0 && d <= 3;
+    });
+    const overdue = all.filter(m => {
+      const d = daysFromToday(m.billingDate);
+      return m.status === 'ACTIVE' && d !== null && d < 0;
+    }).sort((a, b) => (daysFromToday(a.billingDate) || 0) - (daysFromToday(b.billingDate) || 0));
+    const warnToday = overdue.filter(m => Math.abs(daysFromToday(m.billingDate) || 0) >= 6);
+    const totalActive = all.filter(m => m.status === 'ACTIVE').length;
+    const totalSkipped = all.filter(m => m.status === 'SKIPPED').length;
+
+    const dateStr = new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' });
+
+    let msg = `☀️ Morning Digest — ${dateStr}\n`;
+    msg += `━━━━━━━━━━━━━━━━━━━\n\n`;
+
+    msg += `📅 DUE TODAY: ${dueToday.length} member${dueToday.length !== 1 ? 's' : ''}\n`;
+    if (dueToday.length > 0) {
+      msg += dueToday.map(m => `   • ${m.name}  ${m.phone}`).join('\n') + '\n';
+    }
+
+    msg += `\n📆 DUE NEXT 3 DAYS: ${dueSoon.length} member${dueSoon.length !== 1 ? 's' : ''}\n`;
+    if (dueSoon.length > 0) {
+      msg += dueSoon.map(m => `   • ${m.name}  (${daysFromToday(m.billingDate)}d)`).join('\n') + '\n';
+    }
+
+    msg += `\n⚠️ OVERDUE: ${overdue.length} member${overdue.length !== 1 ? 's' : ''}\n`;
+    if (overdue.length > 0) {
+      const show = overdue.slice(0, 8);
+      msg += show.map(m => `   • ${m.name}  (${Math.abs(daysFromToday(m.billingDate))}d overdue)`).join('\n');
+      if (overdue.length > 8) msg += `\n   ... +${overdue.length - 8} more`;
+      msg += '\n';
+    }
+
+    if (warnToday.length > 0) {
+      msg += `\n🚨 AUTO-WARN TODAY (6+ days): ${warnToday.length} member${warnToday.length !== 1 ? 's' : ''}\n`;
+      msg += warnToday.map(m => `   • ${m.name}  (${Math.abs(daysFromToday(m.billingDate))}d)`).join('\n') + '\n';
+    }
+
+    msg += `\n📊 Active: ${totalActive}  |  Overdue: ${overdue.length}  |  Due today: ${dueToday.length}  |  Skipped: ${totalSkipped}`;
+
+    return msg;
+  }
+
   function handleSummary() {
     const all = store.getAll();
     const today = todayStr();
@@ -136,6 +184,7 @@ kick [phone]             Remove from all groups
 skip [phone] [reason]    Skip this month
 unskip [phone]           Revert skip
 approve [phone]          Approve pending join requests
+approveall               Approve ALL pending requests (all groups)
 links [phone]            Invite links for missing groups
 groupcheck [phone]       Which groups is member in?
 
@@ -166,5 +215,5 @@ R[n] = Remove  S[n] = Skip  W[n] = Warn
 Example: R1 R2 S3`;
   }
 
-  return { handleSummary, handleStats, handleRevenue, handleGroups, handlePing, handleHelp };
+  return { handleMorningDigest, handleSummary, handleStats, handleRevenue, handleGroups, handlePing, handleHelp };
 }

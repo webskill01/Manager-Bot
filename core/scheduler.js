@@ -21,10 +21,11 @@ export function createScheduler(config, log) {
   }
 
   function start(tasks) {
-    register(schedule.morningDigest,  'morning-digest',  tasks.morningDigest);
-    register(schedule.reminderSend,   'reminder-send',   tasks.reminderSend);
-    register(schedule.overdueCheck,   'overdue-check',   tasks.overdueCheck);
-    register(schedule.eveningSummary, 'evening-summary', tasks.eveningSummary);
+    register(schedule.morningDigest,  'morning-digest',   tasks.morningDigest);
+    register(schedule.reminderSend,   'reminder-send',    tasks.reminderSend);
+    register(schedule.reminderSend2,  'reminder-send-2',  tasks.reminderSend2);
+    register(schedule.overdueCheck,   'overdue-check',    tasks.overdueCheck);
+    register(schedule.eveningSummary, 'evening-summary',  tasks.eveningSummary);
     log.info(`⏰ Scheduler started — ${jobs.length} jobs active`);
   }
 

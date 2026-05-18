@@ -33,15 +33,16 @@
     "groupOpGapMinMs": 5000,
     "groupOpGapMaxMs": 8000,
     "batchSize": 20,
-    "secondBatchDelayMs": 7200000,
+    "secondBatchDelayMs": 3600000,
     "circuitBreakerThreshold": 10,
     "circuitBreakerCooldownMs": 60000
   },
   "allowedNumbers": ["6283380110", "9914623976"],
   "allowedLids": ["242902009692413"],
   "schedule": {
-    "morningDigest": "0 9 * * *",
-    "reminderSend": "30 9 * * *",
+    "morningDigest": "0 6 * * *",
+    "reminderSend": "30 6 * * *",
+    "reminderSend2": "30 7 * * *",
     "overdueCheck": "0 10 * * *",
     "eveningSummary": "0 22 * * *",
     "timezone": "Asia/Kolkata"

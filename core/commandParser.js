@@ -69,6 +69,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'skip':       return memberH.handleSkip(args);
         case 'unskip':     return memberH.handleUnskip(args);
         case 'approve':    return memberH.handleApprove(args);
+        case 'approveall': return memberH.handleApproveAll();
         case 'links':      return memberH.handleLinks(args);
         case 'groupcheck': return memberH.handleGroupCheck(args);
 

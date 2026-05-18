@@ -2,7 +2,7 @@ import { daysFromToday, sleep, randomBetween, normalizePhone } from './globalCon
 
 export function createOverdueEngine(config, log) {
 
-  async function runOverdueCheck(store, getSock, ownerJid) {
+  async function runOverdueCheck(store, getSock, broadcastJids) {
     const sock = getSock();
     if (!sock?.user) {
       log.warn('⚠️  Overdue check skipped — socket not ready');
@@ -51,7 +51,7 @@ export function createOverdueEngine(config, log) {
       }
     }
 
-    // Send consolidated list to owner
+    // Send consolidated list to all broadcast JIDs
     if (day7plus.length > 0) {
       const listLines = day7plus
         .map((m, i) => `[${i + 1}] ${m.name} • ${m.phone} • ${m.daysOverdue} days overdue`)
@@ -61,11 +61,14 @@ export function createOverdueEngine(config, log) {
         .replace('{count}', day7plus.length)
         .replace('{list}', listLines);
 
-      try {
-        await sock.sendMessage(ownerJid, { text: msg });
-        log.info(`📋 Overdue list sent to owner — ${day7plus.length} members`);
-      } catch (err) {
-        log.warn(`❌ Failed to send overdue list to owner: ${err.message}`);
+      const jids = Array.isArray(broadcastJids) ? broadcastJids : [broadcastJids];
+      for (const jid of jids) {
+        try {
+          await sock.sendMessage(jid, { text: msg });
+          log.info(`📋 Overdue list sent to ${jid} — ${day7plus.length} members`);
+        } catch (err) {
+          log.warn(`❌ Failed to send overdue list to ${jid}: ${err.message}`);
+        }
       }
     }
   }

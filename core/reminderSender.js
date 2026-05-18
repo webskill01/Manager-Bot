@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr } from './globalConfig.js';
 
 export function createReminderSender(config, log) {
   let consecutiveFailures = 0;
@@ -18,6 +18,24 @@ export function createReminderSender(config, log) {
     return true;
   }
 
+  function loadState(botDir) {
+    const stateFile = path.join(botDir, 'reminder-state.json');
+    try {
+      if (fs.existsSync(stateFile)) {
+        const data = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+        if (data.date === todayStr()) return data;
+      }
+    } catch {}
+    return { date: todayStr(), sentPhones: [] };
+  }
+
+  function saveState(botDir, state) {
+    const stateFile = path.join(botDir, 'reminder-state.json');
+    const tmp = stateFile + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(state), 'utf8');
+    fs.renameSync(tmp, stateFile);
+  }
+
   async function sendToMember(getSock, phone, name, botDir) {
     if (checkCircuit()) {
       log.warn(`⚡ Circuit open — skipping ${name}`);
@@ -31,20 +49,17 @@ export function createReminderSender(config, log) {
     }
 
     const jid = `91${normalizePhone(phone)}@s.whatsapp.net`;
-    const text = config.messages.reminder.replace('{name}', name);
+    const caption = config.messages.reminder.replace('{name}', name);
 
     try {
-      await sock.sendMessage(jid, { text });
-      log.info(`📨 Reminder sent: ${name} (${phone})`);
-
       const qrPath = path.resolve(botDir, config.upiQrPath);
       if (config.upiQrPath && fs.existsSync(qrPath)) {
-        await sleep(randomBetween(2000, 4000));
         const image = fs.readFileSync(qrPath);
-        await sock.sendMessage(jid, { image, caption: '₹90 is number pe bhejo 🙏' });
-        log.info(`🖼️  QR image sent: ${name}`);
+        await sock.sendMessage(jid, { image, caption });
+      } else {
+        await sock.sendMessage(jid, { text: caption });
       }
-
+      log.info(`📨 Reminder sent: ${name} (${phone})`);
       consecutiveFailures = 0;
       return true;
     } catch (err) {
@@ -59,54 +74,69 @@ export function createReminderSender(config, log) {
     }
   }
 
-  async function sendReminders(store, getSock, botDir) {
-    const dueToday = store.getActive().filter(m => daysFromToday(m.billingDate) === 0);
-
-    if (dueToday.length === 0) {
-      log.info('⏰ Reminder: no members due today');
-      return { sent: 0, failed: 0, queued: 0 };
-    }
-
-    log.info(`⏰ Reminder: ${dueToday.length} members due today`);
-
-    const batch     = dueToday.slice(0, config.rateLimits.batchSize);
-    const remainder = dueToday.slice(config.rateLimits.batchSize);
-
+  async function runBatch(members, getSock, botDir, state, label) {
     let sent = 0, failed = 0;
-
-    for (let i = 0; i < batch.length; i++) {
-      const m = batch[i];
-      if (await sendToMember(getSock, m.phone, m.name, botDir)) sent++; else failed++;
-
-      if (i < batch.length - 1) {
-        const gap = randomBetween(
-          config.rateLimits.memberToMemberGapMinMs,
-          config.rateLimits.memberToMemberGapMaxMs
-        );
+    for (let i = 0; i < members.length; i++) {
+      const m = members[i];
+      if (await sendToMember(getSock, m.phone, m.name, botDir)) {
+        sent++;
+        state.sentPhones.push(m.phone);
+        saveState(botDir, state);
+      } else {
+        failed++;
+      }
+      if (i < members.length - 1) {
+        const gap = randomBetween(config.rateLimits.memberToMemberGapMinMs, config.rateLimits.memberToMemberGapMaxMs);
         log.info(`⏳ Next reminder in ${(gap / 1000).toFixed(1)}s`);
         await sleep(gap);
       }
     }
-
-    if (remainder.length > 0) {
-      log.info(`📋 ${remainder.length} reminders queued for +${config.rateLimits.secondBatchDelayMs / 3600000}h`);
-      setTimeout(async () => {
-        log.info(`⏰ Sending queued batch (${remainder.length} members)...`);
-        for (let i = 0; i < remainder.length; i++) {
-          await sendToMember(getSock, remainder[i].phone, remainder[i].name, botDir);
-          if (i < remainder.length - 1) {
-            await sleep(randomBetween(
-              config.rateLimits.memberToMemberGapMinMs,
-              config.rateLimits.memberToMemberGapMaxMs
-            ));
-          }
-        }
-      }, config.rateLimits.secondBatchDelayMs);
-    }
-
-    log.info(`⏰ Reminder batch done: ${sent} sent, ${failed} failed, ${remainder.length} queued`);
-    return { sent, failed, queued: remainder.length };
+    log.info(`⏰ ${label} done: ${sent} sent, ${failed} failed`);
+    return { sent, failed };
   }
 
-  return { sendReminders, sendToMember };
+  // Batch 1 (6:30 AM cron) — sends up to batchSize members, skips already-sent
+  async function sendReminders(store, getSock, botDir) {
+    const state = loadState(botDir);
+    const dueToday = store.getActive().filter(m => daysFromToday(m.billingDate) === 0);
+
+    if (dueToday.length === 0) {
+      log.info('⏰ Reminder batch 1: no members due today');
+      return { sent: 0, failed: 0, queued: 0 };
+    }
+
+    const pending = dueToday.filter(m => !state.sentPhones.includes(m.phone));
+    if (pending.length === 0) {
+      log.info('⏰ Reminder batch 1: all members already sent today');
+      return { sent: 0, failed: 0, queued: 0 };
+    }
+
+    const batch = pending.slice(0, config.rateLimits.batchSize);
+    const remainder = pending.slice(config.rateLimits.batchSize);
+
+    log.info(`⏰ Reminder batch 1: ${batch.length} members (${state.sentPhones.length} already sent, ${remainder.length} held for batch 2)`);
+
+    const result = await runBatch(batch, getSock, botDir, state, 'Reminder batch 1');
+    if (remainder.length > 0) {
+      log.info(`📋 ${remainder.length} members held for batch 2 at 7:30 AM`);
+    }
+    return { ...result, queued: remainder.length };
+  }
+
+  // Batch 2 (7:30 AM cron) — sends remaining members not yet sent today
+  async function sendRemindersSecondBatch(store, getSock, botDir) {
+    const state = loadState(botDir);
+    const dueToday = store.getActive().filter(m => daysFromToday(m.billingDate) === 0);
+    const remaining = dueToday.filter(m => !state.sentPhones.includes(m.phone));
+
+    if (remaining.length === 0) {
+      log.info('⏰ Reminder batch 2: nothing remaining');
+      return { sent: 0, failed: 0 };
+    }
+
+    log.info(`⏰ Reminder batch 2: ${remaining.length} members`);
+    return runBatch(remaining, getSock, botDir, state, 'Reminder batch 2');
+  }
+
+  return { sendReminders, sendRemindersSecondBatch, sendToMember };
 }

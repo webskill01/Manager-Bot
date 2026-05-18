@@ -3,6 +3,14 @@ import { randomBetween, sleep, normalizePhone } from './globalConfig.js';
 export function createGroupManager(sock, config, log) {
   const { paidGroups, rateLimits } = config;
 
+  // Sequential operation queue — prevents concurrent group ops from racing
+  let _opQueue = Promise.resolve();
+  function enqueue(fn) {
+    const next = _opQueue.then(() => fn());
+    _opQueue = next.catch(() => {});
+    return next;
+  }
+
   async function gapBetweenOps() {
     const ms = randomBetween(rateLimits.groupOpGapMinMs, rateLimits.groupOpGapMaxMs);
     log.info(`⏳ Group op gap: ${(ms / 1000).toFixed(1)}s`);
@@ -14,7 +22,16 @@ export function createGroupManager(sock, config, log) {
     return `91${digits}@s.whatsapp.net`;
   }
 
-  async function addToAllGroups(phone, name) {
+  // Classify Baileys groupParticipantsUpdate errors into meaningful categories
+  function classifyAddError(err) {
+    const msg = (err.message || '').toLowerCase();
+    const statusCode = err?.output?.statusCode || err?.data?.status || 0;
+    if (statusCode === 403 || msg.includes('not-authorized') || msg.includes('not authorized')) return 'not_admin';
+    if (statusCode === 409 || msg.includes('already in') || msg.includes('participant already')) return 'already_member';
+    return 'privacy_restricted';
+  }
+
+  async function _addToAllGroups(phone, name) {
     const jid = toJid(phone);
     const added = [];
     const failed = [];
@@ -28,8 +45,21 @@ export function createGroupManager(sock, config, log) {
         added.push(groupId);
         log.info(`✅ Added to ${groupId}`);
       } catch (err) {
-        failed.push({ groupId, reason: err.message });
-        log.warn(`❌ Failed ${groupId}: ${err.message}`);
+        const reason = classifyAddError(err);
+        let groupName = groupId;
+        let inviteLink = null;
+        try {
+          const meta = await sock.groupMetadata(groupId);
+          groupName = meta.subject || groupId;
+          if (reason === 'privacy_restricted') {
+            const code = await sock.groupInviteCode(groupId);
+            inviteLink = `https://chat.whatsapp.com/${code}`;
+          }
+        } catch (metaErr) {
+          log.warn(`⚠️  Metadata fetch failed ${groupId}: ${metaErr.message}`);
+        }
+        failed.push({ groupId, groupName, reason, inviteLink });
+        log.warn(`❌ Failed ${groupName} [${reason}]: ${err.message}`);
       }
       if (i < paidGroups.length - 1) await gapBetweenOps();
     }
@@ -37,7 +67,7 @@ export function createGroupManager(sock, config, log) {
     return { added, failed };
   }
 
-  async function removeFromAllGroups(phone) {
+  async function _removeFromAllGroups(phone) {
     const jid = toJid(phone);
     const removed = [];
     const failed = [];
@@ -60,6 +90,10 @@ export function createGroupManager(sock, config, log) {
     return { removed, failed };
   }
 
+  // Public wrappers — all group ops run sequentially via the op queue
+  function addToAllGroups(phone, name) { return enqueue(() => _addToAllGroups(phone, name)); }
+  function removeFromAllGroups(phone) { return enqueue(() => _removeFromAllGroups(phone)); }
+
   async function approvePendingRequests(phone) {
     const jid = toJid(phone);
     const approved = [];
@@ -68,9 +102,10 @@ export function createGroupManager(sock, config, log) {
     for (let i = 0; i < paidGroups.length; i++) {
       const groupId = paidGroups[i];
       try {
-        const metadata = await sock.groupMetadata(groupId);
-        const pending = metadata.participants?.filter(p => p.jid === jid && p.pending === true);
-        if (pending && pending.length > 0) {
+        // groupRequestParticipantsList is the correct Baileys API for pending join requests
+        const pendingList = await sock.groupRequestParticipantsList(groupId);
+        const match = pendingList?.find(p => p.jid === jid);
+        if (match) {
           await sock.groupRequestParticipantsUpdate(groupId, [jid], 'approve');
           approved.push(groupId);
           log.info(`✅ Approved in ${groupId}`);
@@ -132,5 +167,57 @@ export function createGroupManager(sock, config, log) {
     return { inGroups, notInGroups };
   }
 
-  return { addToAllGroups, removeFromAllGroups, approvePendingRequests, getInviteLinksForMissing, checkMembership };
+  // Scan all groups for pending join requests using the correct Baileys API
+  async function getAllPendingRequests() {
+    const result = [];
+    for (let i = 0; i < paidGroups.length; i++) {
+      const groupId = paidGroups[i];
+      try {
+        const pendingList = await sock.groupRequestParticipantsList(groupId);
+        if (pendingList && pendingList.length > 0) {
+          let groupName = groupId;
+          try {
+            const meta = await sock.groupMetadata(groupId);
+            groupName = meta.subject || groupId;
+          } catch {}
+          result.push({
+            groupId,
+            groupName,
+            pending: pendingList.map(p => ({ jid: p.jid })),
+          });
+        }
+      } catch (err) {
+        log.warn(`❌ Pending scan failed ${groupId}: ${err.message}`);
+      }
+      if (i < paidGroups.length - 1) await gapBetweenOps();
+    }
+    return result;
+  }
+
+  // Approve all pending join requests across all groups
+  async function approveAllPendingRequests() {
+    const pendingByGroup = await getAllPendingRequests();
+    const approved = [];
+    const failed = [];
+    let totalApproved = 0;
+
+    for (let i = 0; i < pendingByGroup.length; i++) {
+      const { groupId, groupName, pending } = pendingByGroup[i];
+      const jids = pending.map(p => p.jid);
+      try {
+        await sock.groupRequestParticipantsUpdate(groupId, jids, 'approve');
+        approved.push({ groupId, groupName, count: jids.length });
+        totalApproved += jids.length;
+        log.info(`✅ Approved ${jids.length} in ${groupName}`);
+      } catch (err) {
+        failed.push({ groupId, groupName, reason: err.message });
+        log.warn(`❌ Approve failed ${groupName}: ${err.message}`);
+      }
+      if (i < pendingByGroup.length - 1) await gapBetweenOps();
+    }
+
+    return { approved, failed, totalApproved, totalGroups: pendingByGroup.length };
+  }
+
+  return { addToAllGroups, removeFromAllGroups, approvePendingRequests, getInviteLinksForMissing, checkMembership, getAllPendingRequests, approveAllPendingRequests };
 }

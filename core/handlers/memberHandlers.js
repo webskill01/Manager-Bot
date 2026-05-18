@@ -21,7 +21,8 @@ export function createMemberHandlers(store, groupManager, config, log) {
 
     inFlightAdds.add(phone);
     try {
-      const billingDate = formatDate(new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
+      const now = new Date();
+      const billingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, now.getDate()));
 
       if (existing && existing.status === 'REMOVED') {
         await store.update(phone, {
@@ -45,9 +46,23 @@ export function createMemberHandlers(store, groupManager, config, log) {
       const { added, failed } = await groupManager.addToAllGroups(phone, name);
       let reply = `✅ Added ${name} to ${added.length}/${config.paidGroups.length} groups`;
       if (failed.length > 0) {
-        const failedNames = failed.map(f => `   • ${f.groupId}`).join('\n');
-        reply += `\n❌ Failed ${failed.length} groups (privacy restricted):\n${failedNames}`;
-        reply += `\n\nReply: links ${phone}  (to get invite links for failed groups)`;
+        const privacyFailed = failed.filter(f => f.reason === 'privacy_restricted');
+        const otherFailed = failed.filter(f => f.reason !== 'privacy_restricted');
+
+        if (privacyFailed.length > 0) {
+          reply += `\n\n🔒 Privacy-restricted — share these invite links (${privacyFailed.length}):`;
+          for (const f of privacyFailed) {
+            reply += `\n• ${f.groupName}`;
+            if (f.inviteLink) reply += `\n  ${f.inviteLink}`;
+          }
+        }
+        if (otherFailed.length > 0) {
+          const reasonLabel = r => r === 'not_admin' ? 'bot not admin' : r === 'already_member' ? 'already a member' : 'unknown';
+          reply += `\n\n❌ Other failures (${otherFailed.length}):`;
+          for (const f of otherFailed) {
+            reply += `\n• ${f.groupName}: ${reasonLabel(f.reason)}`;
+          }
+        }
       }
       return reply;
     } finally {
@@ -145,5 +160,23 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return reply;
   }
 
-  return { handleAdd, handleKick, handleSkip, handleUnskip, handleApprove, handleLinks, handleGroupCheck };
+  async function handleApproveAll() {
+    const { approved, failed, totalApproved, totalGroups } = await groupManager.approveAllPendingRequests();
+
+    if (totalGroups === 0) return '✅ No pending join requests across any group.';
+
+    let reply = `✅ Approved ${totalApproved} pending request(s) across ${approved.length} group(s):`;
+    for (const { groupName, count } of approved) {
+      reply += `\n   • ${groupName}: ${count} approved`;
+    }
+    if (failed.length > 0) {
+      reply += `\n\n❌ Failed in ${failed.length} group(s):`;
+      for (const { groupName, reason } of failed) {
+        reply += `\n   • ${groupName}: ${reason}`;
+      }
+    }
+    return reply;
+  }
+
+  return { handleAdd, handleKick, handleSkip, handleUnskip, handleApprove, handleLinks, handleGroupCheck, handleApproveAll };
 }

@@ -32,26 +32,27 @@ export async function startBot(config, log, authDir) {
   let qrTimestamp = null;
   let commandParser = null;
   let schedulerStarted = false;
-  const botSentIds = new Set();
-  let ownerLidJid = null;
 
-  const ownerJid = `${config.ownerNumber.replace(/\D/g, '')}@s.whatsapp.net`;
-  log.info(`👑 Owner JID: ${ownerJid}`);
-
-  // Allowed JIDs for fromMe=false command path — phone format + explicit LID overrides
+  // Allowed LID JIDs — only these can send commands (no self-chat)
   const allowedCommandJids = new Set([
     ...(config.allowedNumbers || []).map(n => `91${n.replace(/\D/g, '').slice(-10)}@s.whatsapp.net`),
     ...(config.allowedLids    || []).map(lid => `${String(lid).replace(/@lid$/, '').split(':')[0]}@lid`),
   ]);
-  if (allowedCommandJids.size > 0) {
-    log.info(`📱 Allowed command JIDs: ${[...allowedCommandJids].join(', ')}`);
-  }
+  log.info(`📱 Allowed command JIDs (${allowedCommandJids.size}): ${[...allowedCommandJids].join(', ')}`);
+
+  // JIDs that receive proactive broadcasts (morning digest, evening summary)
+  const broadcastJids = [
+    ...(config.allowedNumbers || []).map(n => `91${n.replace(/\D/g, '').slice(-10)}@s.whatsapp.net`),
+  ];
+  // Always deduplicate broadcastJids
+  const broadcastSet = new Set(broadcastJids);
+  const getBroadcastJids = () => [...broadcastSet];
 
   const getSock = () => sock;
   const scheduler = createScheduler(config, log);
   const reminderSender = createReminderSender(config, log);
   const overdueEngine = createOverdueEngine(config, log);
-  const lidToPhoneJid = new Map(); // @lid → @s.whatsapp.net resolved from contacts sync
+  const lidToPhoneJid = new Map();
 
   log.info('📊 Connecting to Google Sheets...');
   const sheetClient = await createSheetClient(config.serviceAccountPath, config.sheetId);
@@ -90,34 +91,32 @@ export async function startBot(config, log, authDir) {
     }, delay);
   }
 
+  async function broadcast(text) {
+    const s = getSock();
+    if (!s?.user) return;
+    for (const jid of getBroadcastJids()) {
+      try {
+        await s.sendMessage(jid, { text });
+      } catch (err) {
+        log.warn(`⚠️  Broadcast failed to ${jid}: ${err.message}`);
+      }
+    }
+  }
+
   async function handleMessage(msg) {
     const jid = msg.key.remoteJid || '';
-    const isPhone = jid.endsWith('@s.whatsapp.net');
-    const isLid   = jid.endsWith('@lid');
 
-    // Only handle direct messages — not groups, broadcasts, status
-    if (!isPhone && !isLid) return;
+    // Ignore group messages, broadcasts, status updates
+    if (!jid.endsWith('@s.whatsapp.net') && !jid.endsWith('@lid')) return;
 
-    let replyJid;
+    // Ignore self-sent messages entirely (no self-chat)
+    if (msg.key.fromMe) return;
 
-    if (msg.key.fromMe) {
-      // Self-chat (Saved Messages) — bot is sending to itself
-      if (botSentIds.has(msg.key.id)) return;
-      const isSelfPhone = isPhone && jid === ownerJid;
-      const isSelfLid   = isLid   && jid === ownerLidJid;
-      if (!isSelfPhone && !isSelfLid) return;
-      replyJid = ownerJid;
-    } else {
-      // For @lid JIDs, resolve to phone JID first (WhatsApp routes via LID in multi-device)
-      const resolvedJid = (isLid && lidToPhoneJid.has(jid)) ? lidToPhoneJid.get(jid) : jid;
-      if (!allowedCommandJids.has(jid) && !allowedCommandJids.has(resolvedJid)) {
-        const lidNum = jid.replace('@lid', '').split(':')[0];
-        log.warn(`🚫 Non-allowed: ${jid}`);
-        if (isLid) log.warn(`   To allow: add "${lidNum}" to config allowedLids array`);
-        return;
-      }
-      replyJid = jid; // reply to whatever JID they messaged from
-    }
+    // Resolve @lid to phone JID if we have the mapping
+    const resolvedJid = (jid.endsWith('@lid') && lidToPhoneJid.has(jid)) ? lidToPhoneJid.get(jid) : jid;
+
+    // Early reject — only allowedCommandJids can send commands
+    if (!allowedCommandJids.has(jid) && !allowedCommandJids.has(resolvedJid)) return;
 
     const text =
       msg.message?.conversation ||
@@ -131,12 +130,8 @@ export async function startBot(config, log, authDir) {
     const reply = await commandParser.parse(text);
     if (reply) {
       try {
-        const sent = await sock.sendMessage(replyJid, { text: reply });
-        if (sent?.key?.id) {
-          botSentIds.add(sent.key.id);
-          if (botSentIds.size > 100) botSentIds.delete(botSentIds.values().next().value);
-        }
-        log.info(`📤 Reply sent to ${replyJid} (${reply.length} chars)`);
+        await sock.sendMessage(jid, { text: reply });
+        log.info(`📤 Reply sent to ${jid} (${reply.length} chars)`);
       } catch (err) {
         log.error(`❌ Send failed: ${err.message}`);
       }
@@ -182,21 +177,18 @@ export async function startBot(config, log, authDir) {
       const groupManager = createGroupManager(sock, config, log);
       commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME);
 
-      // Build LID → phone JID map from contacts sync (fires on startup)
       const syncContacts = (contacts) => {
         for (const c of contacts) {
           if (!c.id || !c.lid) continue;
-          // Normalize LID: strip device suffix, ensure @lid suffix
           const rawLid = String(c.lid).split(':')[0].replace(/@lid$/, '');
           const lidJid = `${rawLid}@lid`;
-          // c.id is phone JID (@s.whatsapp.net) when c.lid is the LID
           if (c.id.endsWith('@s.whatsapp.net')) {
             lidToPhoneJid.set(lidJid, c.id);
           }
         }
       };
-      sock.ev.on('contacts.upsert', (contacts) => { syncContacts(contacts); });
-      sock.ev.on('contacts.update', (contacts) => { syncContacts(contacts); });
+      sock.ev.on('contacts.upsert',       (contacts) => syncContacts(contacts));
+      sock.ev.on('contacts.update',       (contacts) => syncContacts(contacts));
       sock.ev.on('messaging-history.set', ({ contacts }) => { if (contacts?.length) syncContacts(contacts); });
 
       sock.ev.on('creds.update', async () => { if (saveCreds) await saveCreds(); });
@@ -212,16 +204,12 @@ export async function startBot(config, log, authDir) {
 
         if (connection === 'open') {
           log.info('✅ CONNECTED — Member Bot operational');
-          log.info(`👑 Owner: ${ownerJid}`);
-          const rawLid = sock.user?.lid;
-          ownerLidJid = rawLid ? `${String(rawLid).split(':')[0]}@lid` : null;
-          if (ownerLidJid) log.info(`🪪 Owner LID: ${ownerLidJid}`);
           latestQR = null;
           reconnectAttempts = 0;
           await store.refresh();
           log.info(`📊 Cache refreshed: ${store.getAll().length} members`);
 
-          // Resolve allowed numbers → actual JIDs (WhatsApp may route as @lid)
+          // Resolve allowedNumbers to actual JIDs (WhatsApp may route as @lid)
           for (const phone of config.allowedNumbers || []) {
             try {
               const normalized = `91${phone.replace(/\D/g, '').slice(-10)}`;
@@ -243,21 +231,22 @@ export async function startBot(config, log, authDir) {
                 if (!getSock()?.user) return;
                 const { createReportHandlers } = await import('./handlers/reportHandlers.js');
                 const reportH = createReportHandlers(store, config, BOT_START_TIME, log);
-                const msg = reportH.handleSummary([]);
-                await getSock().sendMessage(ownerJid, { text: `☀️ Morning Digest\n\n${msg}` });
+                await broadcast(reportH.handleMorningDigest());
               },
               reminderSend: async () => {
                 await reminderSender.sendReminders(store, getSock, config.botDir);
               },
+              reminderSend2: async () => {
+                await reminderSender.sendRemindersSecondBatch(store, getSock, config.botDir);
+              },
               overdueCheck: async () => {
-                await overdueEngine.runOverdueCheck(store, getSock, ownerJid);
+                await overdueEngine.runOverdueCheck(store, getSock, getBroadcastJids());
               },
               eveningSummary: async () => {
                 if (!getSock()?.user) return;
                 const { createReportHandlers } = await import('./handlers/reportHandlers.js');
                 const reportH = createReportHandlers(store, config, BOT_START_TIME, log);
-                const msg = reportH.handleSummary([]);
-                await getSock().sendMessage(ownerJid, { text: `🌙 Evening Summary\n\n${msg}` });
+                await broadcast(`🌙 Evening Summary\n\n${reportH.handleSummary()}`);
               },
             });
           }
@@ -328,13 +317,13 @@ export async function startBot(config, log, authDir) {
     process.exit(0);
   }
 
-  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-  process.on('SIGHUP', () => gracefulShutdown('SIGHUP'));
+  process.on('SIGHUP',  () => gracefulShutdown('SIGHUP'));
 
   log.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   log.info(`🚀 ${config.botName} — Member Management Bot`);
-  log.info(`   Groups: ${config.paidGroups.length} | Owner DM only`);
+  log.info(`   Groups: ${config.paidGroups.length} | LID-only command mode`);
   log.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
   startHttpServer();
