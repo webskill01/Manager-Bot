@@ -135,6 +135,7 @@ export function createGroupManager(sock, config, log) {
 
   async function approvePendingRequests(phone) {
     const jid = toJid(phone);
+    const rawPhone = normalizePhone(phone); // 10 digits, used for suffix match
     const approved = [];
     const failed = [];
 
@@ -143,11 +144,25 @@ export function createGroupManager(sock, config, log) {
       const groupId = paidGroups[i];
       try {
         const pendingList = await sock.groupRequestParticipantsList(groupId);
-        const match = pendingList?.find(p => p.jid === jid);
+        log.info(`🔍 ${groupId}: ${pendingList?.length ?? 0} pending request(s)`);
+
+        // Match by exact JID or by phone suffix (handles country-code variations)
+        const match = (pendingList || []).find(p => {
+          if (!p?.jid) return false;
+          if (p.jid === jid) return true;
+          if (p.jid.endsWith('@s.whatsapp.net')) {
+            return p.jid.replace(/@s\.whatsapp\.net$/, '').endsWith(rawPhone);
+          }
+          return false;
+        });
+
         if (match) {
-          await sock.groupRequestParticipantsUpdate(groupId, [jid], 'approve');
+          await sock.groupRequestParticipantsUpdate(groupId, [match.jid], 'approve');
           approved.push(groupId);
-          log.info(`✅ Approved in ${groupId}`);
+          log.info(`✅ Approved ${match.jid} in ${groupId}`);
+        } else if (pendingList?.length > 0) {
+          // JID format mismatch — log so we can diagnose LID vs phone JID issues
+          log.info(`ℹ️  No match for ${jid} — pending: ${pendingList.map(p => p.jid).join(', ')}`);
         }
       } catch (err) {
         if (_aborted) { log.warn('⚠️  Session lost — stopping'); break; }
@@ -157,7 +172,6 @@ export function createGroupManager(sock, config, log) {
       if (i < paidGroups.length - 1) await gapBetweenOps();
     }
 
-    _lastBatchEndMs = Date.now();
     return { approved, failed };
   }
 

@@ -32,7 +32,7 @@
     "memberToMemberGapMaxMs": 10000,
     "groupOpGapMinMs": 8000,
     "groupOpGapMaxMs": 12000,
-    "batchCooldownMs": 600000,
+    "batchCooldownMs": 300000,
     "batchSize": 20,
     "secondBatchDelayMs": 3600000,
     "circuitBreakerThreshold": 10,
