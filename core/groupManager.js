@@ -262,5 +262,25 @@ export function createGroupManager(sock, config, log) {
     return { approved, failed, totalApproved, totalGroups: pendingByGroup.length };
   }
 
-  return { addToAllGroups, removeFromAllGroups, approvePendingRequests, getInviteLinksForMissing, checkMembership, getAllPendingRequests, approveAllPendingRequests, markAborted };
+  // Send a sequence of messages to a member's number with a small gap between each.
+  // Used for the invite-link onboarding flow in handleAdd.
+  async function sendToMember(phone, messages) {
+    const jid = toJid(phone);
+    let sent = 0;
+    let failed = 0;
+    for (let i = 0; i < messages.length; i++) {
+      if (_aborted) break;
+      try {
+        await sock.sendMessage(jid, { text: messages[i] });
+        sent++;
+      } catch (err) {
+        failed++;
+        log.warn(`⚠️  Message ${i + 1}/${messages.length} to ${phone} failed: ${err.message}`);
+      }
+      if (i < messages.length - 1) await sleep(1200);
+    }
+    return { sent, failed };
+  }
+
+  return { addToAllGroups, removeFromAllGroups, approvePendingRequests, getInviteLinksForMissing, checkMembership, getAllPendingRequests, approveAllPendingRequests, markAborted, sendToMember };
 }

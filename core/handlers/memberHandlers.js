@@ -57,19 +57,23 @@ export function createMemberHandlers(store, groupManager, config, log) {
         });
       }
 
-      // Invite-link flow: safer than direct groupParticipantsUpdate
-      const links = await groupManager.getInviteLinksForMissing(phone);
+      // Build the message sequence from config: group links + welcome message
+      const groupLinks = config.groupLinks || [];
+      const welcome = config.welcomeMessage
+        ? config.welcomeMessage.replace(/\{name\}/g, name)
+        : null;
+      const messages = welcome ? [...groupLinks, welcome] : [...groupLinks];
 
-      if (links.length === 0) {
-        return `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}\n✅ Already in all ${config.paidGroups.length} groups.`;
+      if (messages.length === 0) {
+        return `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}\n⚠️ No groupLinks configured — add them to config.json`;
       }
 
-      let reply = `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}\n\n`;
-      reply += `🔗 Share ${links.length} invite link${links.length !== 1 ? 's' : ''} with ${name}:\n\n`;
-      for (let i = 0; i < links.length; i++) {
-        reply += `${i + 1}. ${links[i].groupName}\n   ${links[i].link}\n\n`;
-      }
-      reply += `After they join, use:\napprove ${phone}`;
+      const { sent, failed } = await groupManager.sendToMember(phone, messages);
+
+      let reply = `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}\n`;
+      reply += `📨 Sent ${sent}/${messages.length} messages to ${phone}`;
+      if (failed > 0) reply += ` (${failed} failed — check if number is on WhatsApp)`;
+      reply += `\n\nWhen they join, use:\napprove ${phone}`;
       return reply;
     } finally {
       inFlightAdds.delete(phone);

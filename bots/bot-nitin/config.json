@@ -38,6 +38,21 @@
     "circuitBreakerThreshold": 10,
     "circuitBreakerCooldownMs": 60000
   },
+  "groupLinks": [
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    ""
+  ],
+  "welcomeMessage": "",
   "allowedNumbers": ["6283380110", "9914623976"],
   "allowedLids": ["242902009692413"],
   "schedule": {

@@ -179,7 +179,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
     return `📋 MEMBER BOT — COMMANDS
 
 👤 Members
-add [name] [phone]          Add member — sends invite links
+add [name] [phone]          Add member — bot sends 12 links + welcome to their number
 add [name] [phone] [date]   Add with custom billing day (e.g. add Sunil 98XXXXXXXX 17)
 kick [phone]                Remove from all groups
 skip [phone] [reason]       Skip this month
