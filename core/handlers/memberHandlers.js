@@ -40,6 +40,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
 
       if (existing && existing.status === 'REMOVED') {
         await store.update(phone, {
+          name,
           status: 'ACTIVE',
           billingDate,
           joinDate: todayStr(),
@@ -190,5 +191,28 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return reply;
   }
 
-  return { handleAdd, handleKick, handleSkip, handleUnskip, handleApprove, handleLinks, handleGroupCheck, handleApproveAll };
+  async function handleSendLinks(args) {
+    if (args.length < 1) return '❌ Format: sendlinks [phone]';
+    const phone = normalizePhone(args[0]);
+    if (phone.length !== 10) return '❌ Invalid number.';
+
+    const member = store.findByPhone(phone);
+    if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
+
+    const groupLinks = config.groupLinks || [];
+    const welcome = config.welcomeMessage
+      ? config.welcomeMessage.replace(/\{name\}/g, member.name)
+      : null;
+    const messages = welcome ? [...groupLinks, welcome] : [...groupLinks];
+
+    if (messages.length === 0) return '⚠️ No groupLinks configured in config.json';
+
+    const { sent, failed } = await groupManager.sendToMember(phone, messages);
+    let reply = `📨 Sent ${sent}/${messages.length} messages to ${member.name} (${phone})`;
+    if (failed > 0) reply += `\n⚠️ ${failed} failed — check if number is on WhatsApp`;
+    reply += `\n\nWhen they join, use:\napprove ${phone}`;
+    return reply;
+  }
+
+  return { handleAdd, handleKick, handleSkip, handleUnskip, handleApprove, handleLinks, handleGroupCheck, handleApproveAll, handleSendLinks };
 }

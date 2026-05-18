@@ -2,8 +2,6 @@
   "botName": "bot-nitin",
   "paidGroups": [
     "120363423482434246@g.us",
-    "120363404132182917@g.us",
-    "120363406228877039@g.us",
     "120363406216444790@g.us",
     "120363420990654823@g.us",
     "120363422444161150@g.us",
@@ -12,6 +10,8 @@
     "120363403650334256@g.us",
     "120363422601115995@g.us",
     "120363422636858624@g.us",
+    "120363404132182917@g.us",
+    "120363406228877039@g.us",
     "120363423042952422@g.us"
   ],
   "upiQrPath": "./qr-payment.jpg",
@@ -30,8 +30,8 @@
   "rateLimits": {
     "memberToMemberGapMinMs": 7000,
     "memberToMemberGapMaxMs": 10000,
-    "groupOpGapMinMs": 15000,
-    "groupOpGapMaxMs": 25000,
+    "groupOpGapMinMs": 8000,
+    "groupOpGapMaxMs": 12000,
     "batchCooldownMs": 600000,
     "batchSize": 20,
     "secondBatchDelayMs": 3600000,
@@ -39,20 +39,20 @@
     "circuitBreakerCooldownMs": 60000
   },
   "groupLinks": [
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    ""
+    "Follow this link to join my WhatsApp group: https://chat.whatsapp.com/GBbwPjt7Us0K6sHs3TgBtc?mode=gi_t",
+    "Follow this link to join my WhatsApp group: https://chat.whatsapp.com/L7pNhCSll4C3qpkqPgQ31R?mode=gi_t",
+    "Follow this link to join my WhatsApp group: https://chat.whatsapp.com/Id7o8YFrbSJ92izv41fEz8?mode=gi_t",
+    "Follow this link to join my WhatsApp group: https://chat.whatsapp.com/BeNpspoptQvCfCNecJegYF?mode=gi_t",
+    "Follow this link to join my WhatsApp group: https://chat.whatsapp.com/I3VziyK8vOs2b0MaX93USP?mode=gi_t",
+    "Follow this link to join my WhatsApp group: https://chat.whatsapp.com/HhZeBI3AHEE3zp95EzXRST?mode=gi_t",
+    "Follow this link to join my WhatsApp group: https://chat.whatsapp.com/Jo87gC0cTXvDJr8Ov0jaBP?mode=gi_t",
+    "Follow this link to join my WhatsApp group: https://chat.whatsapp.com/LaM1NCBCOXl9TmILQCrJa4?mode=gi_t",
+    "Follow this link to join my WhatsApp group: https://chat.whatsapp.com/LVzLYayD3En5B2zaOz4PpW?mode=gi_t",
+    "Follow this link to join my WhatsApp group: https://chat.whatsapp.com/FqCKuvX4OhGBPTprBRLnRK?mode=gi_t",
+    "Follow this link to join my WhatsApp group: https://chat.whatsapp.com/FvY0XpYdzu3Aa5RVC58cuk?mode=gi_t",
+    "Follow this link to join my WhatsApp group: https://chat.whatsapp.com/FiDM8tp2xEAJhX9hPAYaaj?mode=gi_t"
   ],
-  "welcomeMessage": "",
+  "welcomeMessage": "Group ch duty 120+ group cho forward krde aa veer is krke advance Paytm kise nu ni Krna 🚨 \n\n Group ch free and exchange da msg allowed ni haiga ji ⚠️\n\n Group ch je kisi fraud number di duty share hove ta sanu personally usda number msg krdo 🙏",
   "allowedNumbers": ["6283380110", "9914623976"],
   "allowedLids": ["242902009692413"],
   "schedule": {
@@ -64,8 +64,8 @@
     "timezone": "Asia/Kolkata"
   },
   "messages": {
-    "reminder": "Sat Sri Akal {name} paaji 🙏\n\n Aaj tohada ik mahina pura hogya.\niss mahine lyi iste 90/- pay krdo ji 🙏🏻\n",
-    "overdue": "Sat Sri Akal {name} paaji 🙏\n\n🚨 🚨 Hnji paaji aaj last date aaji renew krke dss deyo. 🙏",
+    "reminder": "Sat Sri Akal {name} paaji 🙏\n\n Aaj tohada ik mahina pura hogya.\n iss mahine lyi iste 90/- pay krdo ji 🙏🏻\n",
+    "overdue": "Sat Sri Akal {name} paaji 🙏\n\n 🚨🚨 Aaj last date aaji renew krke dss deyo. 🙏",
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
   }
 }

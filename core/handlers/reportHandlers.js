@@ -186,7 +186,8 @@ skip [phone] [reason]       Skip this month
 unskip [phone]              Revert skip
 approve [phone]             Approve pending join requests
 approveall                  Approve ALL pending requests (all groups)
-links [phone]               Invite links for missing groups
+sendlinks [phone]           Re-send all group links to an existing member
+links [phone]               Show admin which groups member is missing from
 groupcheck [phone]          Which groups is member in?
 
 💰 Renewals
