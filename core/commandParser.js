@@ -72,6 +72,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'approveall': return memberH.handleApproveAll();
         case 'links':      return memberH.handleLinks(args);
         case 'sendlinks':  return memberH.handleSendLinks(args);
+        case 'rejoin':     return memberH.handleRejoin(args);
         case 'groupcheck': return memberH.handleGroupCheck(args);
 
         case 'renewed':    return renewalH.handleRenewed(args);

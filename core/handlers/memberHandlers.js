@@ -31,6 +31,9 @@ export function createMemberHandlers(store, groupManager, config, log) {
     if (existing && existing.status === 'ACTIVE') {
       return `⚠️ ${existing.name} (${phone}) already ACTIVE. Use 'renewed' to update billing.`;
     }
+    if (existing && existing.status === 'REMOVED') {
+      return `⚠️ ${existing.name} (${phone}) was previously removed. Use: rejoin ${phone}`;
+    }
 
     inFlightAdds.add(phone);
     try {
@@ -38,25 +41,13 @@ export function createMemberHandlers(store, groupManager, config, log) {
       const day = billingDay ?? now.getDate();
       const billingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, day));
 
-      if (existing && existing.status === 'REMOVED') {
-        await store.update(phone, {
-          name,
-          status: 'ACTIVE',
-          billingDate,
-          joinDate: todayStr(),
-          paidLast: config.joining.fee,
-          skipReason: '',
-        });
-        log.info(`♻️  Reactivated ${name} (${phone})`);
-      } else {
-        await store.add({
-          name,
-          phone,
-          joinDate: todayStr(),
-          billingDate,
-          paidLast: config.joining.fee,
-        });
-      }
+      await store.add({
+        name,
+        phone,
+        joinDate: todayStr(),
+        billingDate,
+        paidLast: config.joining.fee,
+      });
 
       // Build the message sequence from config: group links + welcome message
       const groupLinks = config.groupLinks || [];
@@ -191,6 +182,58 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return reply;
   }
 
+  async function handleRejoin(args) {
+    if (args.length < 1) return '❌ Format: rejoin [phone]  or  rejoin [phone] [date 1-31]';
+    const phone = normalizePhone(args[0]);
+    if (phone.length !== 10) return '❌ Invalid number. Format: rejoin 98551XXXXX';
+
+    const member = store.findByPhone(phone);
+    if (!member) return `❌ No member found for ${args[0]}. New member? Use: add Name ${args[0]}`;
+    if (member.status !== 'REMOVED') return `⚠️ ${member.name} is ${member.status}, not REMOVED. Use 'renewed' for billing update.`;
+
+    if (inFlightAdds.has(phone)) return `⏳ Operation for ${phone} already in progress.`;
+
+    let billingDay = null;
+    if (args[1] && /^\d{1,2}$/.test(args[1]) && parseInt(args[1]) >= 1 && parseInt(args[1]) <= 31) {
+      billingDay = parseInt(args[1]);
+    }
+
+    inFlightAdds.add(phone);
+    try {
+      const now = new Date();
+      const day = billingDay ?? now.getDate();
+      const billingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, day));
+
+      await store.update(phone, {
+        status: 'ACTIVE',
+        billingDate,
+        joinDate: todayStr(),
+        paidLast: config.joining.fee,
+        skipReason: '',
+      });
+      log.info(`♻️  Rejoined ${member.name} (${phone})`);
+
+      const groupLinks = config.groupLinks || [];
+      const welcome = config.welcomeMessage
+        ? config.welcomeMessage.replace(/\{name\}/g, member.name)
+        : null;
+      const messages = welcome ? [...groupLinks, welcome] : [...groupLinks];
+
+      if (messages.length === 0) {
+        return `✅ ${member.name} reactivated.\n📅 Billing: ${billingDate}\n⚠️ No groupLinks in config.json`;
+      }
+
+      const { sent, failed } = await groupManager.sendToMember(phone, messages);
+      let reply = `✅ ${member.name} reactivated.\n📅 Billing: ${billingDate}\n`;
+      reply += `📨 Sent ${sent}/${messages.length} messages to ${phone}`;
+      if (failed > 0) reply += ` (${failed} failed)`;
+      reply += `\n\nWhen they join, use:\napprove ${phone}`;
+      return reply;
+    } finally {
+      inFlightAdds.delete(phone);
+    }
+  }
+
   async function handleSendLinks(args) {
     if (args.length < 1) return '❌ Format: sendlinks [phone]';
     const phone = normalizePhone(args[0]);
@@ -214,5 +257,5 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return reply;
   }
 
-  return { handleAdd, handleKick, handleSkip, handleUnskip, handleApprove, handleLinks, handleGroupCheck, handleApproveAll, handleSendLinks };
+  return { handleAdd, handleKick, handleSkip, handleUnskip, handleApprove, handleLinks, handleGroupCheck, handleApproveAll, handleSendLinks, handleRejoin };
 }

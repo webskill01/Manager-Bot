@@ -29,10 +29,6 @@ export function createReportHandlers(store, config, botStartTime, log) {
   function handleMorningDigest() {
     const all = store.getAll();
     const dueToday = all.filter(m => m.status === 'ACTIVE' && daysFromToday(m.billingDate) === 0);
-    const dueSoon = all.filter(m => {
-      const d = daysFromToday(m.billingDate);
-      return m.status === 'ACTIVE' && d !== null && d > 0 && d <= 3;
-    });
     const overdue = all.filter(m => {
       const d = daysFromToday(m.billingDate);
       return m.status === 'ACTIVE' && d !== null && d < 0;
@@ -49,11 +45,6 @@ export function createReportHandlers(store, config, botStartTime, log) {
     msg += `📅 DUE TODAY: ${dueToday.length} member${dueToday.length !== 1 ? 's' : ''}\n`;
     if (dueToday.length > 0) {
       msg += dueToday.map(m => `   • ${m.name}  ${m.phone}`).join('\n') + '\n';
-    }
-
-    msg += `\n📆 DUE NEXT 3 DAYS: ${dueSoon.length} member${dueSoon.length !== 1 ? 's' : ''}\n`;
-    if (dueSoon.length > 0) {
-      msg += dueSoon.map(m => `   • ${m.name}  (${daysFromToday(m.billingDate)}d)`).join('\n') + '\n';
     }
 
     msg += `\n⚠️ OVERDUE: ${overdue.length} member${overdue.length !== 1 ? 's' : ''}\n`;
@@ -179,16 +170,18 @@ export function createReportHandlers(store, config, botStartTime, log) {
     return `📋 MEMBER BOT — COMMANDS
 
 👤 Members
-add [name] [phone]          Add member — bot sends 12 links + welcome to their number
-add [name] [phone] [date]   Add with custom billing day (e.g. add Sunil 98XXXXXXXX 17)
-kick [phone]                Remove from all groups
-skip [phone] [reason]       Skip this month
-unskip [phone]              Revert skip
-approve [phone]             Approve pending join requests
-approveall                  Approve ALL pending requests (all groups)
-sendlinks [phone]           Re-send all group links to an existing member
-links [phone]               Show admin which groups member is missing from
-groupcheck [phone]          Which groups is member in?
+add [name] [phone]          New member — sends 12 links + welcome to their number
+add [name] [phone] [date]   New member with custom billing day (e.g. 17)
+rejoin [phone]              Returning member (was removed) — reactivates + sends links
+rejoin [phone] [date]       Returning member with custom billing day
+kick [phone]                Remove from all groups + mark REMOVED
+skip [phone] [reason]       Skip this month (won't appear in overdue)
+unskip [phone]              Revert skip → ACTIVE
+approve [phone]             Approve pending join requests from this number
+approveall                  Approve ALL pending requests across all groups
+sendlinks [phone]           Re-send all 12 group links to an existing member
+links [phone]               Show admin the invite links for groups member is missing
+groupcheck [phone]          Show which groups member is currently in vs missing
 
 💰 Renewals
 renewed [phone]             Mark renewed ₹${config.renewal.fullAmount} (default)
