@@ -135,19 +135,25 @@ export function createGroupManager(sock, config, log) {
 
   async function approvePendingRequests(phone) {
     const jid = toJid(phone);
-    const rawPhone = normalizePhone(phone); // 10 digits, used for suffix match
+    const rawPhone = normalizePhone(phone);
     const approved = [];
     const failed = [];
+    const skipped = []; // groups with multiple pending requests (ambiguous)
 
     for (let i = 0; i < paidGroups.length; i++) {
       if (_aborted) { log.warn('⚠️  Session lost mid-approve — stopping'); break; }
       const groupId = paidGroups[i];
       try {
         const pendingList = await sock.groupRequestParticipantsList(groupId);
-        log.info(`🔍 ${groupId}: ${pendingList?.length ?? 0} pending request(s)`);
 
-        // Match by exact JID or by phone suffix (handles country-code variations)
-        const match = (pendingList || []).find(p => {
+        if (!pendingList || pendingList.length === 0) {
+          // Nobody pending here — member not yet requested or already in group
+          if (i < paidGroups.length - 1) await gapBetweenOps();
+          continue;
+        }
+
+        // Try exact / phone-suffix match first (works when pending list has @s.whatsapp.net JIDs)
+        const exactMatch = pendingList.find(p => {
           if (!p?.jid) return false;
           if (p.jid === jid) return true;
           if (p.jid.endsWith('@s.whatsapp.net')) {
@@ -156,14 +162,26 @@ export function createGroupManager(sock, config, log) {
           return false;
         });
 
-        if (match) {
-          await sock.groupRequestParticipantsUpdate(groupId, [match.jid], 'approve');
-          approved.push(groupId);
-          log.info(`✅ Approved ${match.jid} in ${groupId}`);
-        } else if (pendingList?.length > 0) {
-          // JID format mismatch — log so we can diagnose LID vs phone JID issues
-          log.info(`ℹ️  No match for ${jid} — pending: ${pendingList.map(p => p.jid).join(', ')}`);
+        let targetJid = exactMatch?.jid ?? null;
+
+        if (!targetJid) {
+          // WhatsApp returns per-group @lid JIDs — can't reverse-map to phone.
+          // If only 1 person is pending, it's almost certainly the person just invited.
+          if (pendingList.length === 1) {
+            targetJid = pendingList[0].jid;
+            log.info(`🔍 ${groupId}: approving sole pending LID ${targetJid} for ${rawPhone}`);
+          } else {
+            // Multiple pending and can't identify which is the target
+            log.warn(`⚠️  ${groupId}: ${pendingList.length} pending, cannot identify ${rawPhone} — skipping`);
+            skipped.push(groupId);
+            if (i < paidGroups.length - 1) await gapBetweenOps();
+            continue;
+          }
         }
+
+        await sock.groupRequestParticipantsUpdate(groupId, [targetJid], 'approve');
+        approved.push(groupId);
+        log.info(`✅ Approved in ${groupId}`);
       } catch (err) {
         if (_aborted) { log.warn('⚠️  Session lost — stopping'); break; }
         failed.push({ groupId, reason: err.message });
@@ -172,7 +190,7 @@ export function createGroupManager(sock, config, log) {
       if (i < paidGroups.length - 1) await gapBetweenOps();
     }
 
-    return { approved, failed };
+    return { approved, failed, skipped };
   }
 
   async function getInviteLinksForMissing(phone) {

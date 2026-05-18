@@ -127,9 +127,11 @@ export function createMemberHandlers(store, groupManager, config, log) {
     const member = store.findByPhone(phone);
     if (!member) return `❌ No member found for ${args[0]}.`;
 
-    const { approved } = await groupManager.approvePendingRequests(phone);
-    if (approved.length === 0) return `⚠️ No pending requests found for ${member.name}.`;
-    return `✅ Approved ${member.name} in ${approved.length} group(s).`;
+    const { approved, skipped } = await groupManager.approvePendingRequests(phone);
+    if (approved.length === 0 && (!skipped || skipped.length === 0)) return `⚠️ No pending requests found for ${member.name}.`;
+    let reply = `✅ Approved ${member.name} in ${approved.length} group(s).`;
+    if (skipped?.length > 0) reply += `\n⚠️ ${skipped.length} group(s) had multiple pending requests — run 'approveall' to clear them.`;
+    return reply;
   }
 
   async function handleLinks(args) {
