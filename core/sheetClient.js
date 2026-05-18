@@ -2,7 +2,7 @@ import { google } from 'googleapis';
 import { formatDateTime } from './globalConfig.js';
 
 const SHEET_NAME = 'MEMBERS';
-const DATA_RANGE = `${SHEET_NAME}!A2:K`;
+const DATA_RANGE = `${SHEET_NAME}!A2:L`;
 
 function rowToMember(row, rowIndex) {
   return {
@@ -18,6 +18,7 @@ function rowToMember(row, rowIndex) {
     skipReason: row[8] || '',
     addedBy: row[9] || '',
     lastUpdated: row[10] || '',
+    lastRenewed: row[11] || '',
   };
 }
 
@@ -34,6 +35,7 @@ function memberToRow(member) {
     member.skipReason || '',
     member.addedBy || '',
     formatDateTime(new Date()),
+    member.lastRenewed || '',
   ];
 }
 
@@ -57,14 +59,14 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
   async function appendRow(member) {
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${SHEET_NAME}!A:K`,
+      range: `${SHEET_NAME}!A:L`,
       valueInputOption: 'RAW',
       requestBody: { values: [memberToRow(member)] },
     });
   }
 
   async function updateRow(rowIndex, member) {
-    const range = `${SHEET_NAME}!A${rowIndex}:K${rowIndex}`;
+    const range = `${SHEET_NAME}!A${rowIndex}:L${rowIndex}`;
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range,
@@ -84,7 +86,7 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
     if (members.length === 0) return;
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${SHEET_NAME}!A:K`,
+      range: `${SHEET_NAME}!A:L`,
       valueInputOption: 'RAW',
       requestBody: { values: members.map(memberToRow) },
     });

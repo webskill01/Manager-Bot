@@ -1,4 +1,4 @@
-import { normalizePhone, formatDate, todayStr, daysFromToday } from '../globalConfig.js';
+import { normalizePhone, formatDate, todayStr, daysFromToday, formatDateTime } from '../globalConfig.js';
 
 export function createRenewalHandlers(store, config, log) {
 
@@ -32,6 +32,7 @@ export function createRenewalHandlers(store, config, log) {
       billingDate: newBillingDate,
       renewals: member.renewals + 1,
       paidLast: amount,
+      lastRenewed: formatDateTime(new Date()),
     });
 
     const type = amount === config.renewal.fullAmount ? 'full' : 'referral';

@@ -8,17 +8,30 @@ export function createMemberHandlers(store, groupManager, config, log) {
 
     const mutableArgs = [...args];
 
-    // Optional billing day: last arg if it's 1–2 digits and ≤ 31
+    // Pop optional billing day (1-2 digits, 1–31) from end
     let billingDay = null;
     const maybeDate = mutableArgs[mutableArgs.length - 1];
     if (/^\d{1,2}$/.test(maybeDate) && parseInt(maybeDate) >= 1 && parseInt(maybeDate) <= 31) {
       billingDay = parseInt(mutableArgs.pop());
     }
 
-    if (mutableArgs.length < 2) return '❌ Format: add [name] [phone]  or  add [name] [phone] [date 1-31]';
+    // Extract phone from the right: collect consecutive phone-part tokens
+    // (3+ digits, or starts with + followed by digits). Stops when it hits a name token.
+    // Leaves at least 1 token in mutableArgs for the name.
+    const phoneParts = [];
+    while (mutableArgs.length > 1) {
+      const last = mutableArgs[mutableArgs.length - 1];
+      if (/^\+\d+$/.test(last) || /^\d{3,}$/.test(last)) {
+        phoneParts.unshift(last.replace(/\D/g, ''));
+        mutableArgs.pop();
+      } else {
+        break;
+      }
+    }
 
-    // Last remaining arg is the phone number
-    const phone = normalizePhone(mutableArgs.pop());
+    if (phoneParts.length === 0) return '❌ Format: add [name] [phone]  or  add [name] [phone] [date 1-31]';
+
+    const phone = normalizePhone(phoneParts.join(''));
     if (phone.length !== 10) return '❌ Invalid number. Format: add Name 98551XXXXX';
     const name = mutableArgs.join(' ').trim();
     if (name.length < 2) return '❌ Name too short. Format: add Name 98551XXXXX';

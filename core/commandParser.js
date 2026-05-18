@@ -6,6 +6,23 @@ import { createReportHandlers } from './handlers/reportHandlers.js';
 
 let activeOverdueList = [];
 
+// Merge consecutive phone-part tokens at the start of args into one token.
+// Phone parts: starts with + followed by digits, OR 3+ digit string.
+// All other args (billing day 1-31, amount 45) are max 2 digits — no collision.
+// Example: ['+91', '70158', '26065', '17'] → ['917015826065', '17']
+// Example: ['91151', '18954', '17']        → ['9115118954', '17']
+function mergePhoneFromStart(args) {
+  if (args.length < 2) return args;
+  const phoneParts = [];
+  let i = 0;
+  while (i < args.length && (/^\+\d+$/.test(args[i]) || /^\d{3,}$/.test(args[i]))) {
+    phoneParts.push(args[i].replace(/\D/g, ''));
+    i++;
+  }
+  if (phoneParts.length < 2) return args;
+  return [phoneParts.join(''), ...args.slice(i)];
+}
+
 export function createCommandParser(store, groupManager, config, log, sock, botStartTime) {
   const memberH = createMemberHandlers(store, groupManager, config, log);
   const renewalH = createRenewalHandlers(store, config, log);
@@ -65,17 +82,17 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     try {
       switch (cmd) {
         case 'add':        return memberH.handleAdd(args);
-        case 'kick':       return memberH.handleKick(args);
-        case 'skip':       return memberH.handleSkip(args);
-        case 'unskip':     return memberH.handleUnskip(args);
-        case 'approve':    return memberH.handleApprove(args);
+        case 'kick':       return memberH.handleKick(mergePhoneFromStart(args));
+        case 'skip':       return memberH.handleSkip(mergePhoneFromStart(args));
+        case 'unskip':     return memberH.handleUnskip(mergePhoneFromStart(args));
+        case 'approve':    return memberH.handleApprove(mergePhoneFromStart(args));
         case 'approveall': return memberH.handleApproveAll();
-        case 'links':      return memberH.handleLinks(args);
-        case 'sendlinks':  return memberH.handleSendLinks(args);
-        case 'rejoin':     return memberH.handleRejoin(args);
-        case 'groupcheck': return memberH.handleGroupCheck(args);
+        case 'links':      return memberH.handleLinks(mergePhoneFromStart(args));
+        case 'sendlinks':  return memberH.handleSendLinks(mergePhoneFromStart(args));
+        case 'rejoin':     return memberH.handleRejoin(mergePhoneFromStart(args));
+        case 'groupcheck': return memberH.handleGroupCheck(mergePhoneFromStart(args));
 
-        case 'renewed':    return renewalH.handleRenewed(args);
+        case 'renewed':    return renewalH.handleRenewed(mergePhoneFromStart(args));
         case 'due':        return renewalH.handleDue(args);
         case 'overdue': {
           const result = renewalH.handleOverdue();
@@ -88,7 +105,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'pending':    return renewalH.handlePending();
 
         case 'find':       return lookupH.handleFind(args);
-        case 'status':     return lookupH.handleStatus(args);
+        case 'status':     return lookupH.handleStatus(mergePhoneFromStart(args));
 
         case 'summary':    return reportH.handleSummary(args);
         case 'stats':      return reportH.handleStats();

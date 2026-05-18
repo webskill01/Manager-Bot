@@ -1,5 +1,27 @@
 # WhatsApp Member Management Bot — Sprint 1 Implementation Plan
 
+> **STATUS: Sprint 1 COMPLETE ✅ — Bot live, all commands working, sheet integration verified.**
+> See post-sprint improvements below for features added after initial launch.
+
+---
+
+## Post-Sprint Improvements (2026-05-18)
+
+| Feature | Files Changed | Notes |
+|---|---|---|
+| Spaced phone formats | `commandParser.js`, `memberHandlers.js` | Accepts `+91 70158 26065` and `91151 18954` — merges tokens where other args are max 2 digits |
+| Summary per-person revenue | `reportHandlers.js` | Shows `₹total ÷ 2` — revenue split between two operators |
+| Summary backdating | `reportHandlers.js` | `summary 1` = yesterday, `summary 2` = 2 days ago (up to 30) |
+| Monthly revenue accuracy | `sheetClient.js`, `renewalHandlers.js`, `reportHandlers.js` | Added column L `lastRenewed` — only set by `renewed` command, not by any other operation. Monthly revenue filters on this instead of `lastUpdated` |
+| Monthly revenue per-person | `reportHandlers.js` | Revenue command also shows per-person split and separates joins from renewals |
+| Help redesign | `reportHandlers.js` | Bullet-list format instead of column-aligned — readable on narrow mobile screens |
+| Calendar-aware billing dates | `renewalHandlers.js` | Uses JS Date month overflow instead of flat +30 days |
+| Approve LID JID matching | `groupManager.js` | Handles WhatsApp's per-group LID JIDs for approval matching |
+
+**Sheet schema change:** Column L added (`LAST_RENEWED`). Add this header to row 1 of the MEMBERS sheet. Existing rows leave it empty — only future `renewed` commands populate it.
+
+---
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a live WhatsApp bot on the support number that reads/writes a Google Sheet and responds to all owner commands (add, kick, renewed, find, due, overdue, etc.)

@@ -137,7 +137,8 @@ export function createReportHandlers(store, config, botStartTime, log) {
 
     msg += `💰 Today's Revenue: ₹${totalRevenue}\n`;
     if (joinRevenue > 0 || renewalRevenue > 0) {
-      msg += `   (Joins ₹${joinRevenue} + Renewals ₹${renewalRevenue})\n\n`;
+      msg += `   (Joins ₹${joinRevenue} + Renewals ₹${renewalRevenue})\n`;
+      msg += `   Per person: ₹${Math.round(totalRevenue / 2)}\n\n`;
     } else {
       msg += '\n';
     }
@@ -166,13 +167,41 @@ export function createReportHandlers(store, config, botStartTime, log) {
   function handleRevenue() {
     const all = store.getAll();
     const now = new Date();
-    const thisMonth = all.filter(m => isUpdatedThisMonth(m.lastUpdated) && m.paidLast > 0);
-    const total = thisMonth.reduce((sum, m) => sum + m.paidLast, 0);
-    const fullCount = thisMonth.filter(m => m.paidLast === config.renewal.fullAmount).length;
-    const referralCount = thisMonth.filter(m => m.paidLast === config.renewal.referralAmount).length;
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const yyyy = String(now.getFullYear());
 
+    // Renewals: only count entries where the "renewed" command was actually run this month.
+    // Uses lastRenewed (set exclusively by handleRenewed) so kicks/skips/other ops don't pollute the count.
+    const renewedThisMonth = all.filter(m => m.lastRenewed && isUpdatedThisMonth(m.lastRenewed));
+    const fullRenewals = renewedThisMonth.filter(m => m.paidLast === config.renewal.fullAmount);
+    const referralRenewals = renewedThisMonth.filter(m => m.paidLast === config.renewal.referralAmount);
+    const renewalRevenue =
+      fullRenewals.length * config.renewal.fullAmount +
+      referralRenewals.length * config.renewal.referralAmount;
+
+    // New joins this month (by joinDate)
+    const joinsThisMonth = all.filter(m => {
+      if (!m.joinDate || m.joinDate.length < 10) return false;
+      return m.joinDate.slice(3, 5) === mm && m.joinDate.slice(6, 10) === yyyy;
+    });
+    const joinRevenue = joinsThisMonth.length * config.joining.fee;
+
+    const totalRevenue = renewalRevenue + joinRevenue;
+    const perPerson = Math.round(totalRevenue / 2);
     const monthName = now.toLocaleString('en-IN', { month: 'long' });
-    return `💰 Revenue — ${monthName} ${now.getFullYear()}\n\nTotal: ₹${total}\n• ${fullCount} full renewals @ ₹${config.renewal.fullAmount}\n• ${referralCount} referral renewals @ ₹${config.renewal.referralAmount}`;
+
+    let msg = `💰 Revenue — ${monthName} ${yyyy}\n\n`;
+    msg += `Total: ₹${totalRevenue}\n`;
+    msg += `Per person: ₹${perPerson}\n\n`;
+    msg += `♻️ Renewals: ${renewedThisMonth.length} (₹${renewalRevenue})\n`;
+    if (fullRenewals.length > 0)
+      msg += `   • ${fullRenewals.length} full @ ₹${config.renewal.fullAmount}\n`;
+    if (referralRenewals.length > 0)
+      msg += `   • ${referralRenewals.length} referral @ ₹${config.renewal.referralAmount}\n`;
+    if (joinsThisMonth.length > 0)
+      msg += `\n➕ New joins: ${joinsThisMonth.length} (₹${joinRevenue})`;
+
+    return msg;
   }
 
   function handleGroups() {
@@ -188,50 +217,42 @@ export function createReportHandlers(store, config, botStartTime, log) {
   }
 
   function handleHelp() {
-    return `📋 MEMBER BOT — COMMANDS
+    return `📋 BOT COMMANDS
 
-👤 Members
-add [name] [phone]          New member — sends 12 links + welcome to their number
-add [name] [phone] [date]   New member with custom billing day (e.g. 17)
-rejoin [phone]              Returning member (was removed) — reactivates + sends links
-rejoin [phone] [date]       Returning member with custom billing day
-kick [phone]                Remove from all groups + mark REMOVED
-skip [phone] [reason]       Skip this month (won't appear in overdue)
-unskip [phone]              Revert skip → ACTIVE
-approve [phone]             Approve pending join requests from this number
-approveall                  Approve ALL pending requests across all groups
-sendlinks [phone]           Re-send all 12 group links to an existing member
-links [phone]               Show admin the invite links for groups member is missing
-groupcheck [phone]          Show which groups member is currently in vs missing
+👤 MEMBERS
+• add [Name] [phone]
+• add [Name] [phone] [day 1-31]
+• rejoin [phone] / [phone] [day]
+• kick [phone]
+• skip [phone] [reason]
+• unskip [phone]
+• approve [phone]
+• approveall
+• sendlinks [phone]
+• links [phone]
+• groupcheck [phone]
 
-💰 Renewals
-renewed [phone]             Mark renewed ₹${config.renewal.fullAmount} (default)
-renewed [phone] 45          Mark renewed ₹${config.renewal.referralAmount} (referral)
-renewed [phone] [date]      Renewed with custom billing day (e.g. renewed 98XX 17)
-renewed [phone] [date] 45   Referral + custom date
-due                         Due today
-due tomorrow                Due tomorrow
-overdue                     Overdue list
-pending                     Due but not confirmed
+💰 RENEWALS
+• renewed [phone]  →  ₹${config.renewal.fullAmount}
+• renewed [phone] 45  →  ₹${config.renewal.referralAmount}
+• renewed [phone] [day 1-31]
+• renewed [phone] [day] 45
+• due / due tomorrow
+• overdue / pending
 
-🔍 Lookup
-find [phone/name]           Member details (partial name match)
-status [phone]              Quick status + days till renewal
+🔍 LOOKUP
+• find [phone or name]
+• status [phone]
 
-📊 Reports
-summary                     Today's summary with revenue
-summary 1                   Yesterday's summary
-summary 2                   Summary from 2 days ago (up to 30)
-stats                       Active / removed / overdue counts
-revenue                     This month's revenue
-groups                      List all ${config.paidGroups.length} group IDs
+📊 REPORTS
+• summary / summary 1 / summary 2
+• stats / revenue / groups / ping
 
-⚙️ Bot
-help                        This list
-ping                        Check bot alive + uptime
-
-📋 Overdue Actions (reply to overdue list)
-R[n] = Remove  S[n] = Skip  W[n] = Warn
+⚡ OVERDUE ACTIONS
+Send "overdue" first, then reply:
+• R[n] — Remove member
+• S[n] — Skip member
+• W[n] — Send warning
 Example: R1 R2 S3`;
   }
 
