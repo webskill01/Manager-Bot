@@ -30,8 +30,9 @@
   "rateLimits": {
     "memberToMemberGapMinMs": 7000,
     "memberToMemberGapMaxMs": 10000,
-    "groupOpGapMinMs": 5000,
-    "groupOpGapMaxMs": 8000,
+    "groupOpGapMinMs": 15000,
+    "groupOpGapMaxMs": 25000,
+    "batchCooldownMs": 600000,
     "batchSize": 20,
     "secondBatchDelayMs": 3600000,
     "circuitBreakerThreshold": 10,

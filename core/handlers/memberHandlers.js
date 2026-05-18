@@ -43,7 +43,9 @@ export function createMemberHandlers(store, groupManager, config, log) {
         });
       }
 
-      const { added, failed } = await groupManager.addToAllGroups(phone, name);
+      const result = await groupManager.addToAllGroups(phone, name);
+      if (result.blocked) return result.blocked;
+      const { added, failed } = result;
       let reply = `✅ Added ${name} to ${added.length}/${config.paidGroups.length} groups`;
       if (failed.length > 0) {
         const privacyFailed = failed.filter(f => f.reason === 'privacy_restricted');
@@ -79,7 +81,9 @@ export function createMemberHandlers(store, groupManager, config, log) {
     if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
     if (member.status === 'REMOVED') return '⚠️ Already marked REMOVED. Not in any groups.';
 
-    const { removed, failed } = await groupManager.removeFromAllGroups(phone);
+    const result = await groupManager.removeFromAllGroups(phone);
+    if (result.blocked) return result.blocked;
+    const { removed, failed } = result;
     await store.update(phone, { status: 'REMOVED' });
 
     let reply = `✅ Removed ${member.name} from ${removed.length}/${config.paidGroups.length} groups`;

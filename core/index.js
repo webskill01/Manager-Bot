@@ -258,8 +258,24 @@ export async function startBot(config, log, authDir) {
           destroySocket('closed');
 
           if (statusCode === DisconnectReason.loggedOut) {
-            log.error('❌ LOGGED OUT — delete baileys_auth/ and restart');
-            process.exit(1);
+            log.error('❌ LOGGED OUT by WhatsApp — clearing auth for fresh QR scan');
+            // Abort any in-flight group operations immediately
+            groupManager.markAborted();
+            // Reset in-memory auth state so next connect starts clean
+            authState = null;
+            saveCreds = null;
+            // Delete baileys_auth/ so next connect generates a new QR instead of looping 401
+            try {
+              const { rm } = await import('fs/promises');
+              await rm(authDir, { recursive: true, force: true });
+              log.info('🗑️  Auth cleared — scan the new QR code to reconnect');
+            } catch (e) {
+              log.warn(`⚠️  Auth clear failed: ${e.message} — delete baileys_auth/ manually`);
+            }
+            // Reset counter and reconnect — will show fresh QR (no exit = no PM2 loop)
+            reconnectAttempts = 0;
+            scheduleReconnect('reauth-qr');
+            return;
           }
 
           scheduleReconnect(`statusCode=${statusCode}`);

@@ -3,6 +3,23 @@ import { randomBetween, sleep, normalizePhone } from './globalConfig.js';
 export function createGroupManager(sock, config, log) {
   const { paidGroups, rateLimits } = config;
 
+  // Set when the session dies mid-operation so loops abort gracefully
+  let _aborted = false;
+  function markAborted() { _aborted = true; }
+
+  // Track last batch end time for cooldown enforcement
+  let _lastBatchEndMs = 0;
+  const _batchCooldownMs = rateLimits.batchCooldownMs ?? 600000; // 10 min default
+
+  function checkCooldown(opName) {
+    const elapsed = Date.now() - _lastBatchEndMs;
+    if (_lastBatchEndMs > 0 && elapsed < _batchCooldownMs) {
+      const waitSec = Math.ceil((_batchCooldownMs - elapsed) / 1000);
+      return `⏳ ${opName} blocked — last group batch finished ${Math.floor(elapsed / 1000)}s ago. Wait ${waitSec}s before next batch.`;
+    }
+    return null;
+  }
+
   // Sequential operation queue — prevents concurrent group ops from racing
   let _opQueue = Promise.resolve();
   function enqueue(fn) {
@@ -12,6 +29,7 @@ export function createGroupManager(sock, config, log) {
   }
 
   async function gapBetweenOps() {
+    if (_aborted) return;
     const ms = randomBetween(rateLimits.groupOpGapMinMs, rateLimits.groupOpGapMaxMs);
     log.info(`⏳ Group op gap: ${(ms / 1000).toFixed(1)}s`);
     await sleep(ms);
@@ -39,12 +57,17 @@ export function createGroupManager(sock, config, log) {
     log.info(`👤 Adding ${name} (${phone}) to ${paidGroups.length} groups...`);
 
     for (let i = 0; i < paidGroups.length; i++) {
+      if (_aborted) {
+        log.warn('⚠️  Session lost mid-add — aborting remaining groups');
+        break;
+      }
       const groupId = paidGroups[i];
       try {
         await sock.groupParticipantsUpdate(groupId, [jid], 'add');
         added.push(groupId);
         log.info(`✅ Added to ${groupId}`);
       } catch (err) {
+        if (_aborted) { log.warn('⚠️  Session lost — stopping'); break; }
         const reason = classifyAddError(err);
         let groupName = groupId;
         let inviteLink = null;
@@ -64,6 +87,7 @@ export function createGroupManager(sock, config, log) {
       if (i < paidGroups.length - 1) await gapBetweenOps();
     }
 
+    _lastBatchEndMs = Date.now();
     return { added, failed };
   }
 
@@ -75,24 +99,39 @@ export function createGroupManager(sock, config, log) {
     log.info(`🚫 Removing ${phone} from ${paidGroups.length} groups...`);
 
     for (let i = 0; i < paidGroups.length; i++) {
+      if (_aborted) {
+        log.warn('⚠️  Session lost mid-remove — aborting remaining groups');
+        break;
+      }
       const groupId = paidGroups[i];
       try {
         await sock.groupParticipantsUpdate(groupId, [jid], 'remove');
         removed.push(groupId);
         log.info(`✅ Removed from ${groupId}`);
       } catch (err) {
+        if (_aborted) { log.warn('⚠️  Session lost — stopping'); break; }
         failed.push({ groupId, reason: err.message });
         log.warn(`❌ Failed ${groupId}: ${err.message}`);
       }
       if (i < paidGroups.length - 1) await gapBetweenOps();
     }
 
+    _lastBatchEndMs = Date.now();
     return { removed, failed };
   }
 
   // Public wrappers — all group ops run sequentially via the op queue
-  function addToAllGroups(phone, name) { return enqueue(() => _addToAllGroups(phone, name)); }
-  function removeFromAllGroups(phone) { return enqueue(() => _removeFromAllGroups(phone)); }
+  // Cooldown is checked before queuing to give instant feedback
+  function addToAllGroups(phone, name) {
+    const blocked = checkCooldown('Add');
+    if (blocked) return Promise.resolve({ added: [], failed: [], blocked });
+    return enqueue(() => _addToAllGroups(phone, name));
+  }
+  function removeFromAllGroups(phone) {
+    const blocked = checkCooldown('Kick');
+    if (blocked) return Promise.resolve({ removed: [], failed: [], blocked });
+    return enqueue(() => _removeFromAllGroups(phone));
+  }
 
   async function approvePendingRequests(phone) {
     const jid = toJid(phone);
@@ -100,9 +139,9 @@ export function createGroupManager(sock, config, log) {
     const failed = [];
 
     for (let i = 0; i < paidGroups.length; i++) {
+      if (_aborted) { log.warn('⚠️  Session lost mid-approve — stopping'); break; }
       const groupId = paidGroups[i];
       try {
-        // groupRequestParticipantsList is the correct Baileys API for pending join requests
         const pendingList = await sock.groupRequestParticipantsList(groupId);
         const match = pendingList?.find(p => p.jid === jid);
         if (match) {
@@ -111,12 +150,14 @@ export function createGroupManager(sock, config, log) {
           log.info(`✅ Approved in ${groupId}`);
         }
       } catch (err) {
+        if (_aborted) { log.warn('⚠️  Session lost — stopping'); break; }
         failed.push({ groupId, reason: err.message });
         log.warn(`❌ Approve failed ${groupId}: ${err.message}`);
       }
       if (i < paidGroups.length - 1) await gapBetweenOps();
     }
 
+    _lastBatchEndMs = Date.now();
     return { approved, failed };
   }
 
@@ -171,6 +212,7 @@ export function createGroupManager(sock, config, log) {
   async function getAllPendingRequests() {
     const result = [];
     for (let i = 0; i < paidGroups.length; i++) {
+      if (_aborted) { log.warn('⚠️  Session lost mid-scan — stopping'); break; }
       const groupId = paidGroups[i];
       try {
         const pendingList = await sock.groupRequestParticipantsList(groupId);
@@ -187,6 +229,7 @@ export function createGroupManager(sock, config, log) {
           });
         }
       } catch (err) {
+        if (_aborted) break;
         log.warn(`❌ Pending scan failed ${groupId}: ${err.message}`);
       }
       if (i < paidGroups.length - 1) await gapBetweenOps();
@@ -219,5 +262,5 @@ export function createGroupManager(sock, config, log) {
     return { approved, failed, totalApproved, totalGroups: pendingByGroup.length };
   }
 
-  return { addToAllGroups, removeFromAllGroups, approvePendingRequests, getInviteLinksForMissing, checkMembership, getAllPendingRequests, approveAllPendingRequests };
+  return { addToAllGroups, removeFromAllGroups, approvePendingRequests, getInviteLinksForMissing, checkMembership, getAllPendingRequests, approveAllPendingRequests, markAborted };
 }
