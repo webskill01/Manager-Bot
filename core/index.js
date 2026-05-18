@@ -4,6 +4,7 @@ import {
   useMultiFileAuthState,
   makeCacheableSignalKeyStore,
   fetchLatestBaileysVersion,
+  Browsers,
 } from '@whiskeysockets/baileys';
 
 import express from 'express';
@@ -127,9 +128,17 @@ export async function startBot(config, log, authDir) {
 
     log.info(`📥 Command from ${jid}: "${text.substring(0, 80)}"`);
 
+    // Capture the socket reference now — if it changes during a long op (e.g. 401 mid-Add),
+    // we detect it at send time and drop the reply rather than crashing on the new socket.
+    const activeSock = sock;
+
     const reply = await commandParser.parse(text);
     if (reply) {
       try {
+        if (activeSock !== sock || !sock?.user) {
+          log.warn(`⚠️  Session ended while processing "${text.substring(0, 40)}" — reply dropped`);
+          return;
+        }
         await sock.sendMessage(jid, { text: reply });
         log.info(`📤 Reply sent to ${jid} (${reply.length} chars)`);
       } catch (err) {
@@ -164,8 +173,8 @@ export async function startBot(config, log, authDir) {
           keys: makeCacheableSignalKeyStore(authState.keys, baileysLogger),
         },
         logger: baileysLogger,
-        printQRInTerminal: true,
-        browser: ['Member Bot', 'Chrome', '120.0'],
+        printQRInTerminal: false,
+        browser: Browsers.ubuntu('Chrome'),
         markOnlineOnConnect: false,
         syncFullHistory: false,
         getMessage: async () => undefined,
