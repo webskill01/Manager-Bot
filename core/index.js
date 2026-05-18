@@ -33,6 +33,7 @@ export async function startBot(config, log, authDir) {
   let qrTimestamp = null;
   let commandParser = null;
   let schedulerStarted = false;
+  const notifiedUnknownLids = new Set(); // notify admin once per unknown LID per session
 
   // Allowed LID JIDs — only these can send commands (no self-chat)
   const allowedCommandJids = new Set([
@@ -117,7 +118,22 @@ export async function startBot(config, log, authDir) {
     const resolvedJid = (jid.endsWith('@lid') && lidToPhoneJid.has(jid)) ? lidToPhoneJid.get(jid) : jid;
 
     // Early reject — only allowedCommandJids can send commands
-    if (!allowedCommandJids.has(jid) && !allowedCommandJids.has(resolvedJid)) return;
+    if (!allowedCommandJids.has(jid) && !allowedCommandJids.has(resolvedJid)) {
+      // LID discovery: when an unknown @lid sends any text, notify admin once so
+      // they can copy the LID into config.json allowedLids
+      if (jid.endsWith('@lid') && !notifiedUnknownLids.has(jid)) {
+        const probe = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+        if (probe.trim()) {
+          notifiedUnknownLids.add(jid);
+          const rawLid = jid.replace('@lid', '');
+          const hint = `🔔 Unknown LID messaged the bot:\n${jid}\n\nIf this is your number (${rawLid}), add it to config.json:\n"allowedLids": ["${rawLid}"]`;
+          for (const adminJid of getBroadcastJids()) {
+            try { await sock?.sendMessage(adminJid, { text: hint }); } catch (_) {}
+          }
+        }
+      }
+      return;
+    }
 
     const text =
       msg.message?.conversation ||
