@@ -1,4 +1,4 @@
-import { normalizePhone, formatDate, todayStr, daysFromToday } from '../globalConfig.js';
+import { normalizePhone, formatDate, todayStr, daysFromToday, parseDate } from '../globalConfig.js';
 
 export function createRenewalHandlers(store, config, log) {
 
@@ -23,12 +23,23 @@ export function createRenewalHandlers(store, config, log) {
 
     let newBillingDate;
     if (billingDay !== null) {
+      // Custom day supplied — next occurrence of that day in next calendar month
       const now = new Date();
       newBillingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, billingDay));
     } else {
-      newBillingDate = formatDate(
-        new Date(Date.now() + config.renewal.billingCycleDays * 24 * 60 * 60 * 1000)
-      );
+      // Month-aware: advance current billing date by one month, repeating if still in the past
+      // (handles overdue members without skipping to an arbitrary +30 day offset)
+      const current = parseDate(member.billingDate);
+      const anchorDay = current ? current.getDate() : new Date().getDate();
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      let next = current
+        ? new Date(current.getFullYear(), current.getMonth() + 1, anchorDay)
+        : new Date(today.getFullYear(), today.getMonth() + 1, anchorDay);
+      // If the member is overdue by multiple months, advance until the date is in the future
+      while (next <= today) {
+        next = new Date(next.getFullYear(), next.getMonth() + 1, anchorDay);
+      }
+      newBillingDate = formatDate(next);
     }
 
     await store.update(phone, {
