@@ -3,17 +3,33 @@ import { normalizePhone, formatDate, todayStr, daysFromToday } from '../globalCo
 export function createRenewalHandlers(store, config, log) {
 
   async function handleRenewed(args) {
-    if (args.length < 1) return '❌ Missing arguments. Format: renewed [phone] OR renewed [phone] 45';
+    if (args.length < 1) return '❌ Format: renewed [phone]  or  renewed [phone] 45  or  renewed [phone] [date 1-31]  or  renewed [phone] [date] 45';
     const phone = normalizePhone(args[0]);
     if (phone.length !== 10) return '❌ Invalid number. Use 10 digits: renewed 98551XXXXX';
 
     const member = store.findByPhone(phone);
     if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
 
-    const amount = args[1] === '45' ? config.renewal.referralAmount : config.renewal.fullAmount;
-    const newBillingDate = formatDate(
-      new Date(Date.now() + config.renewal.billingCycleDays * 24 * 60 * 60 * 1000)
-    );
+    // Parse remaining args: '45' → referral, a number 1–31 → custom billing day
+    let amount = config.renewal.fullAmount;
+    let billingDay = null;
+    for (const arg of args.slice(1)) {
+      if (arg === '45') {
+        amount = config.renewal.referralAmount;
+      } else if (/^\d{1,2}$/.test(arg) && parseInt(arg) >= 1 && parseInt(arg) <= 31) {
+        billingDay = parseInt(arg);
+      }
+    }
+
+    let newBillingDate;
+    if (billingDay !== null) {
+      const now = new Date();
+      newBillingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, billingDay));
+    } else {
+      newBillingDate = formatDate(
+        new Date(Date.now() + config.renewal.billingCycleDays * 24 * 60 * 60 * 1000)
+      );
+    }
 
     await store.update(phone, {
       status: 'ACTIVE',

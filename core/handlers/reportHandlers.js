@@ -179,36 +179,39 @@ export function createReportHandlers(store, config, botStartTime, log) {
     return `📋 MEMBER BOT — COMMANDS
 
 👤 Members
-add [phone] [name]       Add new member
-kick [phone]             Remove from all groups
-skip [phone] [reason]    Skip this month
-unskip [phone]           Revert skip
-approve [phone]          Approve pending join requests
-approveall               Approve ALL pending requests (all groups)
-links [phone]            Invite links for missing groups
-groupcheck [phone]       Which groups is member in?
+add [name] [phone]          Add member — sends invite links
+add [name] [phone] [date]   Add with custom billing day (e.g. add Sunil 98XXXXXXXX 17)
+kick [phone]                Remove from all groups
+skip [phone] [reason]       Skip this month
+unskip [phone]              Revert skip
+approve [phone]             Approve pending join requests
+approveall                  Approve ALL pending requests (all groups)
+links [phone]               Invite links for missing groups
+groupcheck [phone]          Which groups is member in?
 
 💰 Renewals
-renewed [phone]          Mark renewed ₹${config.renewal.fullAmount} (default)
-renewed [phone] 45       Mark renewed ₹${config.renewal.referralAmount} (referral)
-due                      Due today
-due tomorrow             Due tomorrow
-overdue                  Overdue list
-pending                  Due but not confirmed
+renewed [phone]             Mark renewed ₹${config.renewal.fullAmount} (default)
+renewed [phone] 45          Mark renewed ₹${config.renewal.referralAmount} (referral)
+renewed [phone] [date]      Renewed with custom billing day (e.g. renewed 98XX 17)
+renewed [phone] [date] 45   Referral + custom date
+due                         Due today
+due tomorrow                Due tomorrow
+overdue                     Overdue list
+pending                     Due but not confirmed
 
 🔍 Lookup
-find [phone/name]        Member details (partial name match)
-status [phone]           Quick status + days till renewal
+find [phone/name]           Member details (partial name match)
+status [phone]              Quick status + days till renewal
 
 📊 Reports
-summary                  Today's summary with revenue
-stats                    Active / removed / overdue counts
-revenue                  This month's revenue
-groups                   List all ${config.paidGroups.length} group IDs
+summary                     Today's summary with revenue
+stats                       Active / removed / overdue counts
+revenue                     This month's revenue
+groups                      List all ${config.paidGroups.length} group IDs
 
 ⚙️ Bot
-help                     This list
-ping                     Check bot alive + uptime
+help                        This list
+ping                        Check bot alive + uptime
 
 📋 Overdue Actions (reply to overdue list)
 R[n] = Remove  S[n] = Skip  W[n] = Warn

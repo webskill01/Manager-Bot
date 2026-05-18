@@ -265,11 +265,13 @@ export async function startBot(config, log, authDir) {
           const statusCode = lastDisconnect?.error?.output?.statusCode;
           log.warn(`⚠️  Connection closed — status ${statusCode}`);
           destroySocket('closed');
+          // Abort in-flight group ops on ANY disconnect — prevents dead-socket
+          // operations continuing after 408 timeout or other non-401 closures
+          groupManager.markAborted();
 
           if (statusCode === DisconnectReason.loggedOut) {
             log.error('❌ LOGGED OUT by WhatsApp — clearing auth for fresh QR scan');
-            // Abort any in-flight group operations immediately
-            groupManager.markAborted();
+            // Abort was already called above
             // Reset in-memory auth state so next connect starts clean
             authState = null;
             saveCreds = null;

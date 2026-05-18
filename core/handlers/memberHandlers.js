@@ -4,11 +4,24 @@ export function createMemberHandlers(store, groupManager, config, log) {
   const inFlightAdds = new Set();
 
   async function handleAdd(args) {
-    if (args.length < 2) return '❌ Missing arguments. Format: add [phone] [name]';
-    const phone = normalizePhone(args[0]);
-    if (phone.length !== 10) return `❌ Invalid number. Use 10 digits: add 98551XXXXX Name`;
-    const name = args.slice(1).join(' ').trim();
-    if (name.length < 2) return '❌ Name too short. Format: add [phone] [name]';
+    if (args.length < 2) return '❌ Format: add [name] [phone]  or  add [name] [phone] [date 1-31]';
+
+    const mutableArgs = [...args];
+
+    // Optional billing day: last arg if it's 1–2 digits and ≤ 31
+    let billingDay = null;
+    const maybeDate = mutableArgs[mutableArgs.length - 1];
+    if (/^\d{1,2}$/.test(maybeDate) && parseInt(maybeDate) >= 1 && parseInt(maybeDate) <= 31) {
+      billingDay = parseInt(mutableArgs.pop());
+    }
+
+    if (mutableArgs.length < 2) return '❌ Format: add [name] [phone]  or  add [name] [phone] [date 1-31]';
+
+    // Last remaining arg is the phone number
+    const phone = normalizePhone(mutableArgs.pop());
+    if (phone.length !== 10) return '❌ Invalid number. Format: add Name 98551XXXXX';
+    const name = mutableArgs.join(' ').trim();
+    if (name.length < 2) return '❌ Name too short. Format: add Name 98551XXXXX';
 
     if (inFlightAdds.has(phone)) {
       return `⏳ Add for ${phone} already in progress — wait for it to finish.`;
@@ -22,7 +35,8 @@ export function createMemberHandlers(store, groupManager, config, log) {
     inFlightAdds.add(phone);
     try {
       const now = new Date();
-      const billingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, now.getDate()));
+      const day = billingDay ?? now.getDate();
+      const billingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, day));
 
       if (existing && existing.status === 'REMOVED') {
         await store.update(phone, {
@@ -43,29 +57,19 @@ export function createMemberHandlers(store, groupManager, config, log) {
         });
       }
 
-      const result = await groupManager.addToAllGroups(phone, name);
-      if (result.blocked) return result.blocked;
-      const { added, failed } = result;
-      let reply = `✅ Added ${name} to ${added.length}/${config.paidGroups.length} groups`;
-      if (failed.length > 0) {
-        const privacyFailed = failed.filter(f => f.reason === 'privacy_restricted');
-        const otherFailed = failed.filter(f => f.reason !== 'privacy_restricted');
+      // Invite-link flow: safer than direct groupParticipantsUpdate
+      const links = await groupManager.getInviteLinksForMissing(phone);
 
-        if (privacyFailed.length > 0) {
-          reply += `\n\n🔒 Privacy-restricted — share these invite links (${privacyFailed.length}):`;
-          for (const f of privacyFailed) {
-            reply += `\n• ${f.groupName}`;
-            if (f.inviteLink) reply += `\n  ${f.inviteLink}`;
-          }
-        }
-        if (otherFailed.length > 0) {
-          const reasonLabel = r => r === 'not_admin' ? 'bot not admin' : r === 'already_member' ? 'already a member' : 'unknown';
-          reply += `\n\n❌ Other failures (${otherFailed.length}):`;
-          for (const f of otherFailed) {
-            reply += `\n• ${f.groupName}: ${reasonLabel(f.reason)}`;
-          }
-        }
+      if (links.length === 0) {
+        return `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}\n✅ Already in all ${config.paidGroups.length} groups.`;
       }
+
+      let reply = `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}\n\n`;
+      reply += `🔗 Share ${links.length} invite link${links.length !== 1 ? 's' : ''} with ${name}:\n\n`;
+      for (let i = 0; i < links.length; i++) {
+        reply += `${i + 1}. ${links[i].groupName}\n   ${links[i].link}\n\n`;
+      }
+      reply += `After they join, use:\napprove ${phone}`;
       return reply;
     } finally {
       inFlightAdds.delete(phone);
