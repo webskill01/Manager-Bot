@@ -64,8 +64,9 @@
     "timezone": "Asia/Kolkata"
   },
   "messages": {
-    "reminder": "Sat Sri Akal {name} paaji 🙏\n\n Aaj tohada ik mahina pura hogya.\n iss mahine lyi iste 90/- pay krdo ji 🙏🏻\n",
-    "overdue": "Sat Sri Akal {name} paaji 🙏\n\n 🚨🚨 Aaj last date aaji renew krke dss deyo. 🙏",
+    "reminder": "Sat Sri Akal {name} paaji 🙏🏻\nAaj tohada ik mahina pura hogya.\niss mahine lyi iste 90/- pay krdo ji 🙏🏻",
+    "referralReminder": "Sat Sri Akal {name} paaji 🙏🏻\nAaj tohada ik mahina pura hogya.\nTusi ik banda add kraya si, iss lyi iste sirf ₹45/- pay krdo ji 🙏🏻",
+    "overdue": "Sat Sri Akal {name} paaji 🙏🏻\n🚨🚨 Aaj last date aaji renew krke dss deyo. 🙏🏻",
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
   }
 }

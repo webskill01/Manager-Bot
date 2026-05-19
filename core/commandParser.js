@@ -79,14 +79,24 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     const cmd = parts[0].toLowerCase();
     const args = parts.slice(1);
 
+    // Pattern: "[phone] ref [refPhone]" — update referrer on an existing member
+    if (parts.length >= 3 && parts[1]?.toLowerCase() === 'ref' && /^\+?\d{10,13}$/.test(parts[0])) {
+      try { return await memberH.handleRef(parts); }
+      catch (err) {
+        log.error(`❌ Handler error for ref command: ${err.message}`);
+        return `❌ Error processing command: ${err.message}`;
+      }
+    }
+
     try {
       switch (cmd) {
         case 'add':        return memberH.handleAdd(args);
         case 'kick':       return memberH.handleKick(mergePhoneFromStart(args));
         case 'skip':       return memberH.handleSkip(mergePhoneFromStart(args));
         case 'unskip':     return memberH.handleUnskip(mergePhoneFromStart(args));
-        case 'approve':    return memberH.handleApprove(mergePhoneFromStart(args));
+        case 'approve':    return memberH.handleApproveAll();
         case 'approveall': return memberH.handleApproveAll();
+        case 'rejectall':  return memberH.handleRejectAll();
         case 'links':      return memberH.handleLinks(mergePhoneFromStart(args));
         case 'sendlinks':  return memberH.handleSendLinks(mergePhoneFromStart(args));
         case 'rejoin':     return memberH.handleRejoin(mergePhoneFromStart(args));
@@ -103,6 +113,8 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           return result;
         }
         case 'pending':    return renewalH.handlePending();
+
+        case 'refs':       return memberH.handleRefs(mergePhoneFromStart(args));
 
         case 'find':       return lookupH.handleFind(args);
         case 'status':     return lookupH.handleStatus(mergePhoneFromStart(args));

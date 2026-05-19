@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod } from './globalConfig.js';
 
 export function createReminderSender(config, log) {
   let consecutiveFailures = 0;
@@ -36,7 +36,7 @@ export function createReminderSender(config, log) {
     fs.renameSync(tmp, stateFile);
   }
 
-  async function sendToMember(getSock, phone, name, botDir) {
+  async function sendToMember(getSock, phone, name, botDir, type = 'normal') {
     if (checkCircuit()) {
       log.warn(`⚡ Circuit open — skipping ${name}`);
       return false;
@@ -49,7 +49,10 @@ export function createReminderSender(config, log) {
     }
 
     const jid = `91${normalizePhone(phone)}@s.whatsapp.net`;
-    const caption = config.messages.reminder.replace('{name}', name);
+    const template = type === 'referral' && config.messages.referralReminder
+      ? config.messages.referralReminder
+      : config.messages.reminder;
+    const caption = template.replace('{name}', name);
 
     try {
       const qrPath = path.resolve(botDir, config.upiQrPath);
@@ -59,7 +62,7 @@ export function createReminderSender(config, log) {
       } else {
         await sock.sendMessage(jid, { text: caption });
       }
-      log.info(`📨 Reminder sent: ${name} (${phone})`);
+      log.info(`📨 Reminder sent (${type}): ${name} (${phone})`);
       consecutiveFailures = 0;
       return true;
     } catch (err) {
@@ -74,25 +77,55 @@ export function createReminderSender(config, log) {
     }
   }
 
-  async function runBatch(members, getSock, botDir, state, label) {
-    let sent = 0, failed = 0;
+  async function runBatch(members, getSock, botDir, state, label, store) {
+    const all = store.getAll();
+    let sent = 0, referralSent = 0, failed = 0;
+    const autoRenewed = [];
+
     for (let i = 0; i < members.length; i++) {
       const m = members[i];
-      if (await sendToMember(getSock, m.phone, m.name, botDir)) {
-        sent++;
-        state.sentPhones.push(m.phone);
-        saveState(botDir, state);
+      const refs = getReferralsInBillingPeriod(m.phone, m.billingDate, all).length;
+
+      if (refs >= 2) {
+        try {
+          const billing = parseDate(m.billingDate);
+          const newBillingDate = formatDate(
+            new Date(billing.getFullYear(), billing.getMonth() + 1, billing.getDate())
+          );
+          await store.update(m.phone, {
+            status: 'ACTIVE',
+            billingDate: newBillingDate,
+            renewals: (m.renewals || 0) + 1,
+            paidLast: 0,
+            lastRenewed: formatDateTime(new Date()),
+          });
+          autoRenewed.push({ name: m.name, phone: m.phone });
+          state.sentPhones.push(m.phone);
+          saveState(botDir, state);
+          log.info(`🎁 Auto-renewed ${m.name} (${m.phone}) — ${refs} refs`);
+        } catch (err) {
+          failed++;
+          log.warn(`❌ Auto-renew failed [${m.name}]: ${err.message}`);
+        }
       } else {
-        failed++;
+        const type = refs === 1 ? 'referral' : 'normal';
+        if (await sendToMember(getSock, m.phone, m.name, botDir, type)) {
+          if (refs === 1) referralSent++; else sent++;
+          state.sentPhones.push(m.phone);
+          saveState(botDir, state);
+        } else {
+          failed++;
+        }
       }
+
       if (i < members.length - 1) {
         const gap = randomBetween(config.rateLimits.memberToMemberGapMinMs, config.rateLimits.memberToMemberGapMaxMs);
         log.info(`⏳ Next reminder in ${(gap / 1000).toFixed(1)}s`);
         await sleep(gap);
       }
     }
-    log.info(`⏰ ${label} done: ${sent} sent, ${failed} failed`);
-    return { sent, failed };
+    log.info(`⏰ ${label} done: ${sent} normal, ${referralSent} referral, ${autoRenewed.length} auto-renewed, ${failed} failed`);
+    return { sent, referralSent, autoRenewed, failed };
   }
 
   // Batch 1 (6:30 AM cron) — sends up to batchSize members, skips already-sent
@@ -102,13 +135,13 @@ export function createReminderSender(config, log) {
 
     if (dueToday.length === 0) {
       log.info('⏰ Reminder batch 1: no members due today');
-      return { sent: 0, failed: 0, queued: 0 };
+      return { sent: 0, referralSent: 0, autoRenewed: [], failed: 0, queued: 0 };
     }
 
     const pending = dueToday.filter(m => !state.sentPhones.includes(m.phone));
     if (pending.length === 0) {
       log.info('⏰ Reminder batch 1: all members already sent today');
-      return { sent: 0, failed: 0, queued: 0 };
+      return { sent: 0, referralSent: 0, autoRenewed: [], failed: 0, queued: 0 };
     }
 
     const batch = pending.slice(0, config.rateLimits.batchSize);
@@ -116,7 +149,7 @@ export function createReminderSender(config, log) {
 
     log.info(`⏰ Reminder batch 1: ${batch.length} members (${state.sentPhones.length} already sent, ${remainder.length} held for batch 2)`);
 
-    const result = await runBatch(batch, getSock, botDir, state, 'Reminder batch 1');
+    const result = await runBatch(batch, getSock, botDir, state, 'Reminder batch 1', store);
     if (remainder.length > 0) {
       log.info(`📋 ${remainder.length} members held for batch 2 at 7:30 AM`);
     }
@@ -131,11 +164,11 @@ export function createReminderSender(config, log) {
 
     if (remaining.length === 0) {
       log.info('⏰ Reminder batch 2: nothing remaining');
-      return { sent: 0, failed: 0 };
+      return { sent: 0, referralSent: 0, autoRenewed: [], failed: 0 };
     }
 
     log.info(`⏰ Reminder batch 2: ${remaining.length} members`);
-    return runBatch(remaining, getSock, botDir, state, 'Reminder batch 2');
+    return runBatch(remaining, getSock, botDir, state, 'Reminder batch 2', store);
   }
 
   return { sendReminders, sendRemindersSecondBatch, sendToMember };

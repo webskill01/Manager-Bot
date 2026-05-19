@@ -1,4 +1,4 @@
-import { daysFromToday, todayStr } from '../globalConfig.js';
+import { daysFromToday, todayStr, getReferralsInBillingPeriod } from '../globalConfig.js';
 
 export function createReportHandlers(store, config, botStartTime, log) {
 
@@ -32,6 +32,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
   function handleMorningDigest() {
     const all = store.getAll();
     const dueToday = all.filter(m => m.status === 'ACTIVE' && daysFromToday(m.billingDate) === 0);
+
     const overdue = all.filter(m => {
       const d = daysFromToday(m.billingDate);
       return m.status === 'ACTIVE' && d !== null && d < 0;
@@ -47,7 +48,11 @@ export function createReportHandlers(store, config, botStartTime, log) {
 
     msg += `📅 DUE TODAY: ${dueToday.length} member${dueToday.length !== 1 ? 's' : ''}\n`;
     if (dueToday.length > 0) {
-      msg += dueToday.map(m => `   • ${m.name}  ${m.phone}`).join('\n') + '\n';
+      msg += dueToday.map(m => {
+        const refs = getReferralsInBillingPeriod(m.phone, m.billingDate, all).length;
+        const refTag = refs >= 2 ? '  🎉 2 refs → auto-renew' : refs === 1 ? '  💰 1 ref → ₹45' : '';
+        return `   • ${m.name}  ${m.phone}${refTag}`;
+      }).join('\n') + '\n';
     }
 
     msg += `\n⚠️ OVERDUE: ${overdue.length} member${overdue.length !== 1 ? 's' : ''}\n`;
@@ -89,7 +94,12 @@ export function createReportHandlers(store, config, botStartTime, log) {
 
     const newToday = all.filter(m => m.joinDate === targetDateStr);
     const renewedToday = all.filter(m =>
-      isUpdatedOn(m.lastUpdated, targetDateStr) && m.renewals > 0 && m.joinDate !== targetDateStr
+      isUpdatedOn(m.lastUpdated, targetDateStr) && m.renewals > 0
+      && m.joinDate !== targetDateStr && Number(m.paidLast) !== 0
+    );
+    const autoRenewedToday = all.filter(m =>
+      isUpdatedOn(m.lastUpdated, targetDateStr) && m.renewals > 0
+      && m.joinDate !== targetDateStr && Number(m.paidLast) === 0
     );
     const removedToday = all.filter(m =>
       m.status === 'REMOVED' && isUpdatedOn(m.lastUpdated, targetDateStr)
@@ -124,12 +134,21 @@ export function createReportHandlers(store, config, botStartTime, log) {
       msg += `➕ New Members: 0\n\n`;
     }
 
-    if (renewedToday.length > 0) {
-      msg += `♻️ Renewals: ${renewedToday.length}\n`;
-      if (fullRenewals.length > 0)
+    const totalRenewals = renewedToday.length + autoRenewedToday.length;
+    if (totalRenewals > 0) {
+      msg += `♻️ Renewals: ${totalRenewals}\n`;
+      if (fullRenewals.length > 0) {
         msg += `   • ${fullRenewals.length} full @ ₹${config.renewal.fullAmount} = ₹${fullRenewals.length * config.renewal.fullAmount}\n`;
-      if (referralRenewals.length > 0)
+        msg += fullRenewals.map(m => `      ${m.name} • ${m.phone}`).join('\n') + '\n';
+      }
+      if (referralRenewals.length > 0) {
         msg += `   • ${referralRenewals.length} referral @ ₹${config.renewal.referralAmount} = ₹${referralRenewals.length * config.renewal.referralAmount}\n`;
+        msg += referralRenewals.map(m => `      ${m.name} • ${m.phone}`).join('\n') + '\n';
+      }
+      if (autoRenewedToday.length > 0) {
+        msg += `   • ${autoRenewedToday.length} ref-free @ ₹0 (2 referrals)\n`;
+        msg += autoRenewedToday.map(m => `      ${m.name} • ${m.phone}`).join('\n') + '\n';
+      }
       msg += '\n';
     } else {
       msg += `♻️ Renewals: 0\n\n`;
@@ -222,12 +241,13 @@ export function createReportHandlers(store, config, botStartTime, log) {
 👤 MEMBERS
 • add [Name] [phone]
 • add [Name] [phone] [day 1-31]
+• add [Name] [phone] ref [refPhone]
 • rejoin [phone] / [phone] [day]
 • kick [phone]
 • skip [phone] [reason]
 • unskip [phone]
-• approve [phone]
-• approveall
+• approve / approveall
+• rejectall
 • sendlinks [phone]
 • links [phone]
 • groupcheck [phone]
@@ -239,6 +259,10 @@ export function createReportHandlers(store, config, botStartTime, log) {
 • renewed [phone] [day] 45
 • due / due tomorrow
 • overdue / pending
+
+👥 REFERRALS
+• [phone] ref [refPhone]
+• refs [phone]
 
 🔍 LOOKUP
 • find [phone or name]

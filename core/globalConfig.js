@@ -102,3 +102,22 @@ export function daysFromToday(dateStr) {
 export function todayStr() {
   return formatDate(new Date());
 }
+
+// Returns members referred by referrerPhone whose JOIN_DATE falls within
+// [billingDate - 1 month, billingDate) — the referrer's current billing window.
+export function getReferralsInBillingPeriod(referrerPhone, billingDate, members) {
+  const billing = parseDate(billingDate);
+  if (!billing) return [];
+  billing.setHours(0, 0, 0, 0);
+  const windowStart = new Date(billing);
+  windowStart.setMonth(windowStart.getMonth() - 1);
+  const normalized = normalizePhone(referrerPhone);
+  return members.filter(m => {
+    if (!m.reference) return false;
+    if (normalizePhone(m.reference) !== normalized) return false;
+    const joinDate = parseDate(m.joinDate);
+    if (!joinDate) return false;
+    joinDate.setHours(0, 0, 0, 0);
+    return joinDate >= windowStart && joinDate < billing;
+  });
+}

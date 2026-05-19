@@ -1,4 +1,4 @@
-import { normalizePhone, formatDate, todayStr, daysFromToday, formatDateTime } from '../globalConfig.js';
+import { normalizePhone, formatDate, todayStr, daysFromToday, formatDateTime, getReferralsInBillingPeriod } from '../globalConfig.js';
 
 export function createRenewalHandlers(store, config, log) {
 
@@ -50,7 +50,13 @@ export function createRenewalHandlers(store, config, log) {
 
     if (due.length === 0) return `📅 No members due ${label} (${dateStr}).`;
 
-    const lines = due.map(m => `• ${m.name} • ${m.phone}`).join('\n');
+    const all = store.getAll();
+    const lines = due.map(m => {
+      const refs = getReferralsInBillingPeriod(m.phone, m.billingDate, all).length;
+      const refTag = refs >= 2 ? '  🎁 2 refs this month — auto-renew'
+        : refs === 1 ? '  ★ 1 ref — ₹45' : '';
+      return `• ${m.name} • ${m.phone}${refTag}`;
+    }).join('\n');
     return `📅 Due ${label} — ${dateStr} (${due.length} members):\n\n${lines}`;
   }
 
@@ -82,10 +88,13 @@ export function createRenewalHandlers(store, config, log) {
 
     if (pending.length === 0) return '✅ No pending renewals.';
 
+    const all = store.getAll();
     const lines = pending.map(m => {
       const days = Math.abs(daysFromToday(m.billingDate));
       const label = days === 0 ? 'due today' : `${days}d overdue`;
-      return `• ${m.name} • ${m.phone} • ${label}`;
+      const refs = getReferralsInBillingPeriod(m.phone, m.billingDate, all).length;
+      const refTag = refs >= 2 ? '  🎁 2 refs' : refs === 1 ? '  ★ 1 ref' : '';
+      return `• ${m.name} • ${m.phone} • ${label}${refTag}`;
     }).join('\n');
 
     return `⏳ PENDING RENEWALS (${pending.length}):\n\n${lines}`;

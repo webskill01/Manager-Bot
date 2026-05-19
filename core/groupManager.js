@@ -133,66 +133,6 @@ export function createGroupManager(sock, config, log) {
     return enqueue(() => _removeFromAllGroups(phone));
   }
 
-  async function approvePendingRequests(phone) {
-    const jid = toJid(phone);
-    const rawPhone = normalizePhone(phone);
-    const approved = [];
-    const failed = [];
-    const skipped = []; // groups with multiple pending requests (ambiguous)
-
-    for (let i = 0; i < paidGroups.length; i++) {
-      if (_aborted) { log.warn('⚠️  Session lost mid-approve — stopping'); break; }
-      const groupId = paidGroups[i];
-      try {
-        const pendingList = await sock.groupRequestParticipantsList(groupId);
-
-        if (!pendingList || pendingList.length === 0) {
-          // Nobody pending here — member not yet requested or already in group
-          if (i < paidGroups.length - 1) await gapBetweenOps();
-          continue;
-        }
-
-        // Try exact / phone-suffix match first (works when pending list has @s.whatsapp.net JIDs)
-        const exactMatch = pendingList.find(p => {
-          if (!p?.jid) return false;
-          if (p.jid === jid) return true;
-          if (p.jid.endsWith('@s.whatsapp.net')) {
-            return p.jid.replace(/@s\.whatsapp\.net$/, '').endsWith(rawPhone);
-          }
-          return false;
-        });
-
-        let targetJid = exactMatch?.jid ?? null;
-
-        if (!targetJid) {
-          // WhatsApp returns per-group @lid JIDs — can't reverse-map to phone.
-          // If only 1 person is pending, it's almost certainly the person just invited.
-          if (pendingList.length === 1) {
-            targetJid = pendingList[0].jid;
-            log.info(`🔍 ${groupId}: approving sole pending LID ${targetJid} for ${rawPhone}`);
-          } else {
-            // Multiple pending and can't identify which is the target
-            log.warn(`⚠️  ${groupId}: ${pendingList.length} pending, cannot identify ${rawPhone} — skipping`);
-            skipped.push(groupId);
-            if (i < paidGroups.length - 1) await gapBetweenOps();
-            continue;
-          }
-        }
-
-        await sock.groupRequestParticipantsUpdate(groupId, [targetJid], 'approve');
-        approved.push(groupId);
-        log.info(`✅ Approved in ${groupId}`);
-      } catch (err) {
-        if (_aborted) { log.warn('⚠️  Session lost — stopping'); break; }
-        failed.push({ groupId, reason: err.message });
-        log.warn(`❌ Approve failed ${groupId}: ${err.message}`);
-      }
-      if (i < paidGroups.length - 1) await gapBetweenOps();
-    }
-
-    return { approved, failed, skipped };
-  }
-
   async function getInviteLinksForMissing(phone) {
     const jid = toJid(phone);
     const links = [];
@@ -270,7 +210,7 @@ export function createGroupManager(sock, config, log) {
   }
 
   // Approve all pending join requests across all groups
-  async function approveAllPendingRequests() {
+  async function _approveAllPendingRequests() {
     const pendingByGroup = await getAllPendingRequests();
     const approved = [];
     const failed = [];
@@ -294,6 +234,35 @@ export function createGroupManager(sock, config, log) {
     return { approved, failed, totalApproved, totalGroups: pendingByGroup.length };
   }
 
+  // Reject all pending join requests across all groups
+  async function _rejectAllPendingRequests() {
+    const pendingByGroup = await getAllPendingRequests();
+    const rejected = [];
+    const failed = [];
+    let totalRejected = 0;
+
+    for (let i = 0; i < pendingByGroup.length; i++) {
+      const { groupId, groupName, pending } = pendingByGroup[i];
+      const jids = pending.map(p => p.jid);
+      try {
+        await sock.groupRequestParticipantsUpdate(groupId, jids, 'reject');
+        rejected.push({ groupId, groupName, count: jids.length });
+        totalRejected += jids.length;
+        log.info(`🚫 Rejected ${jids.length} in ${groupName}`);
+      } catch (err) {
+        failed.push({ groupId, groupName, reason: err.message });
+        log.warn(`❌ Reject failed ${groupName}: ${err.message}`);
+      }
+      if (i < pendingByGroup.length - 1) await gapBetweenOps();
+    }
+
+    return { rejected, failed, totalRejected, totalGroups: pendingByGroup.length };
+  }
+
+  // Public wrappers — run through the op queue to prevent concurrent execution
+  function approveAllPendingRequests() { return enqueue(() => _approveAllPendingRequests()); }
+  function rejectAllPendingRequests()  { return enqueue(() => _rejectAllPendingRequests()); }
+
   // Send a sequence of messages to a member's number with a small gap between each.
   // Used for the invite-link onboarding flow in handleAdd.
   async function sendToMember(phone, messages) {
@@ -314,5 +283,5 @@ export function createGroupManager(sock, config, log) {
     return { sent, failed };
   }
 
-  return { addToAllGroups, removeFromAllGroups, approvePendingRequests, getInviteLinksForMissing, checkMembership, getAllPendingRequests, approveAllPendingRequests, markAborted, sendToMember };
+  return { addToAllGroups, removeFromAllGroups, getInviteLinksForMissing, checkMembership, getAllPendingRequests, approveAllPendingRequests, rejectAllPendingRequests, markAborted, sendToMember };
 }

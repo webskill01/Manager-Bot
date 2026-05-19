@@ -1,4 +1,4 @@
-import { normalizePhone, formatDate, todayStr } from '../globalConfig.js';
+import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod } from '../globalConfig.js';
 
 export function createMemberHandlers(store, groupManager, config, log) {
   const inFlightAdds = new Set();
@@ -7,6 +7,18 @@ export function createMemberHandlers(store, groupManager, config, log) {
     if (args.length < 2) return '❌ Format: add [name] [phone]  or  add [name] [phone] [date 1-31]';
 
     const mutableArgs = [...args];
+
+    // Extract optional "ref <refPhone>" suffix before any other parsing
+    let referrerPhone = null;
+    const refIdx = mutableArgs.findIndex(a => a.toLowerCase() === 'ref');
+    if (refIdx !== -1) {
+      const refParts = mutableArgs.splice(refIdx); // removes 'ref' and everything after
+      refParts.shift(); // drop 'ref' keyword
+      if (refParts.length > 0) {
+        const refNorm = normalizePhone(refParts.map(p => p.replace(/\D/g, '')).join(''));
+        if (refNorm.length === 10) referrerPhone = refNorm;
+      }
+    }
 
     // Pop optional billing day (1-2 digits, 1–31) from end
     let billingDay = null;
@@ -60,7 +72,22 @@ export function createMemberHandlers(store, groupManager, config, log) {
         joinDate: todayStr(),
         billingDate,
         paidLast: config.joining.fee,
+        reference: referrerPhone || '',
       });
+
+      // Build referrer note (computed after add so store cache includes new member)
+      let refNote = '';
+      if (referrerPhone) {
+        const referrer = store.findByPhone(referrerPhone);
+        if (referrer) {
+          const refs = getReferralsInBillingPeriod(referrerPhone, referrer.billingDate, store.getAll()).length;
+          const refTag = refs >= 2 ? `🎁 ${refs} refs this month — free renewal`
+            : refs === 1 ? `★ 1 ref this month — ₹45` : '0 refs';
+          refNote = `\n👥 Referrer: ${referrer.name} — ${refTag}`;
+        } else {
+          refNote = `\n⚠️ Referrer ${referrerPhone} not found in sheet.`;
+        }
+      }
 
       // Build the message sequence from config: group links + welcome message
       const groupLinks = config.groupLinks || [];
@@ -70,12 +97,12 @@ export function createMemberHandlers(store, groupManager, config, log) {
       const messages = welcome ? [...groupLinks, welcome] : [...groupLinks];
 
       if (messages.length === 0) {
-        return `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}\n⚠️ No groupLinks configured — add them to config.json`;
+        return `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}${refNote}\n⚠️ No groupLinks configured — add them to config.json`;
       }
 
       const { sent, failed } = await groupManager.sendToMember(phone, messages);
 
-      let reply = `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}\n`;
+      let reply = `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}${refNote}\n`;
       reply += `📨 Sent ${sent}/${messages.length} messages to ${phone}`;
       if (failed > 0) reply += ` (${failed} failed — check if number is on WhatsApp)`;
       reply += `\n\nWhen they join, use:\napprove ${phone}`;
@@ -132,21 +159,6 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return `✅ ${member.name} reverted to ACTIVE.`;
   }
 
-  async function handleApprove(args) {
-    if (args.length < 1) return '❌ Missing arguments. Format: approve [phone]';
-    const phone = normalizePhone(args[0]);
-    if (phone.length !== 10) return '❌ Invalid number.';
-
-    const member = store.findByPhone(phone);
-    if (!member) return `❌ No member found for ${args[0]}.`;
-
-    const { approved, skipped } = await groupManager.approvePendingRequests(phone);
-    if (approved.length === 0 && (!skipped || skipped.length === 0)) return `⚠️ No pending requests found for ${member.name}.`;
-    let reply = `✅ Approved ${member.name} in ${approved.length} group(s).`;
-    if (skipped?.length > 0) reply += `\n⚠️ ${skipped.length} group(s) had multiple pending requests — run 'approveall' to clear them.`;
-    return reply;
-  }
-
   async function handleLinks(args) {
     if (args.length < 1) return '❌ Missing arguments. Format: links [phone]';
     const phone = normalizePhone(args[0]);
@@ -187,6 +199,24 @@ export function createMemberHandlers(store, groupManager, config, log) {
     let reply = `✅ Approved ${totalApproved} pending request(s) across ${approved.length} group(s):`;
     for (const { groupName, count } of approved) {
       reply += `\n   • ${groupName}: ${count} approved`;
+    }
+    if (failed.length > 0) {
+      reply += `\n\n❌ Failed in ${failed.length} group(s):`;
+      for (const { groupName, reason } of failed) {
+        reply += `\n   • ${groupName}: ${reason}`;
+      }
+    }
+    return reply;
+  }
+
+  async function handleRejectAll() {
+    const { rejected, failed, totalRejected, totalGroups } = await groupManager.rejectAllPendingRequests();
+
+    if (totalGroups === 0) return '✅ No pending join requests to reject.';
+
+    let reply = `🚫 Rejected ${totalRejected} pending request(s) across ${rejected.length} group(s):`;
+    for (const { groupName, count } of rejected) {
+      reply += `\n   • ${groupName}: ${count} rejected`;
     }
     if (failed.length > 0) {
       reply += `\n\n❌ Failed in ${failed.length} group(s):`;
@@ -272,5 +302,78 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return reply;
   }
 
-  return { handleAdd, handleKick, handleSkip, handleUnskip, handleApprove, handleLinks, handleGroupCheck, handleApproveAll, handleSendLinks, handleRejoin };
+  async function handleRef(parts) {
+    // parts: [memberPhone, 'ref', ...referrerPhoneParts]
+    if (parts.length < 3) return '❌ Format: [phone] ref [refPhone]  Example: 9876543210 ref 6284001093';
+    const phone = normalizePhone(parts[0]);
+    if (phone.length !== 10) return '❌ Invalid member phone.';
+
+    const refNorm = normalizePhone(parts.slice(2).map(p => p.replace(/\D/g, '')).join(''));
+    if (refNorm.length !== 10) return '❌ Invalid referrer phone.';
+    if (phone === refNorm) return '❌ Cannot set yourself as your own referrer.';
+
+    const member = store.findByPhone(phone);
+    if (!member) return `❌ No member found for ${parts[0]}. Try: find [name]`;
+
+    const referrer = store.findByPhone(refNorm);
+    let warning = referrer ? '' : `\n⚠️ Referrer ${refNorm} not found in sheet — reference recorded anyway.`;
+
+    await store.update(phone, { reference: refNorm });
+
+    if (referrer) {
+      const refs = getReferralsInBillingPeriod(refNorm, referrer.billingDate, store.getAll()).length;
+      const refTag = refs >= 2 ? `🎁 ${refs} refs this month — free renewal`
+        : refs === 1 ? `★ 1 ref this month — ₹45` : '0 refs this month';
+      return `✅ ${member.name}'s referrer set to ${referrer.name} (${refNorm})\n${referrer.name}: ${refTag}`;
+    }
+
+    return `✅ ${member.name}'s referrer set to ${refNorm}${warning}`;
+  }
+
+  function handleRefs(args) {
+    if (args.length < 1) return '❌ Format: refs [phone]';
+    const phone = normalizePhone(args[0]);
+    if (phone.length !== 10) return '❌ Invalid number.';
+
+    const member = store.findByPhone(phone);
+    if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
+
+    const all = store.getAll();
+    const currentRefs = getReferralsInBillingPeriod(phone, member.billingDate, all);
+    const allTimeRefs = all.filter(m => m.reference && normalizePhone(m.reference) === phone);
+
+    const billingObj = parseDate(member.billingDate);
+    let periodStart = '?';
+    if (billingObj) {
+      const d = new Date(billingObj);
+      d.setMonth(d.getMonth() - 1);
+      periodStart = formatDate(d);
+    }
+
+    let msg = `📊 Refs for ${member.name} (${phone})\n`;
+    msg += `Billing period (${periodStart} → ${member.billingDate}):\n`;
+    if (currentRefs.length > 0) {
+      msg += currentRefs.map(m => `  • ${m.name}  ${m.phone}  Joined ${m.joinDate}`).join('\n') + '\n';
+    }
+    const countLine = currentRefs.length === 0
+      ? `  Count: 0`
+      : currentRefs.length >= 2
+        ? `  Count: ${currentRefs.length} → 🎉 Free renewal on ${member.billingDate}`
+        : `  Count: 1 → 💰 ₹45 on ${member.billingDate}`;
+    msg += `${countLine}\n`;
+
+    msg += `\nAll-time (${allTimeRefs.length} total):`;
+    if (allTimeRefs.length > 0) {
+      const sorted = [...allTimeRefs].sort((a, b) => {
+        const da = parseDate(a.joinDate), db = parseDate(b.joinDate);
+        return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+      });
+      msg += '\n' + sorted.slice(0, 10).map(m => `  • ${m.name}  ${m.phone}  ${m.joinDate}`).join('\n');
+      if (allTimeRefs.length > 10) msg += `\n  ... +${allTimeRefs.length - 10} more`;
+    }
+
+    return msg;
+  }
+
+  return { handleAdd, handleKick, handleSkip, handleUnskip, handleLinks, handleGroupCheck, handleApproveAll, handleRejectAll, handleSendLinks, handleRejoin, handleRef, handleRefs };
 }

@@ -7,6 +7,18 @@ import {
   Browsers,
 } from '@whiskeysockets/baileys';
 
+// Silence Baileys Signal Protocol session noise — these bypass pino and write directly to stdout
+const _origStdoutWrite = process.stdout.write.bind(process.stdout);
+process.stdout.write = (chunk, encoding, callback) => {
+  const str = typeof chunk === 'string' ? chunk : chunk.toString();
+  if (str.includes('Closing session:') || str.includes('Removing old closed session:')) {
+    if (typeof encoding === 'function') encoding();
+    else if (typeof callback === 'function') callback();
+    return true;
+  }
+  return _origStdoutWrite(chunk, encoding, callback);
+};
+
 import express from 'express';
 import QRCode from 'qrcode';
 import pino from 'pino';
@@ -262,10 +274,18 @@ export async function startBot(config, log, authDir) {
                 await broadcast(reportH.handleMorningDigest());
               },
               reminderSend: async () => {
-                await reminderSender.sendReminders(store, getSock, config.botDir);
+                const result = await reminderSender.sendReminders(store, getSock, config.botDir);
+                if (result.autoRenewed?.length > 0) {
+                  const lines = result.autoRenewed.map(m => `  • ${m.name}  ${m.phone}`).join('\n');
+                  await broadcast(`🎁 Auto-renewed (2 refs) — no reminder sent:\n${lines}`);
+                }
               },
               reminderSend2: async () => {
-                await reminderSender.sendRemindersSecondBatch(store, getSock, config.botDir);
+                const result = await reminderSender.sendRemindersSecondBatch(store, getSock, config.botDir);
+                if (result.autoRenewed?.length > 0) {
+                  const lines = result.autoRenewed.map(m => `  • ${m.name}  ${m.phone}`).join('\n');
+                  await broadcast(`🎁 Auto-renewed (2 refs) — batch 2:\n${lines}`);
+                }
               },
               overdueCheck: async () => {
                 await overdueEngine.runOverdueCheck(store, getSock, getBroadcastJids());
