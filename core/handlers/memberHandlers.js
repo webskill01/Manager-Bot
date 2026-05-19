@@ -105,7 +105,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
       let reply = `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}${refNote}\n`;
       reply += `📨 Sent ${sent}/${messages.length} messages to ${phone}`;
       if (failed > 0) reply += ` (${failed} failed — check if number is on WhatsApp)`;
-      reply += `\n\nWhen they join, use:\napprove ${phone}`;
+      reply += `\n\nWhen they join, use:\napprove  (approves all pending across all groups)`;
       return reply;
     } finally {
       inFlightAdds.delete(phone);
@@ -192,8 +192,10 @@ export function createMemberHandlers(store, groupManager, config, log) {
   }
 
   async function handleApproveAll() {
-    const { approved, failed, totalApproved, totalGroups } = await groupManager.approveAllPendingRequests();
+    const result = await groupManager.approveAllPendingRequests();
+    if (result.alreadyRunning) return '⏳ Approve already in progress — wait for it to finish before sending again.';
 
+    const { approved, failed, totalApproved, totalGroups } = result;
     if (totalGroups === 0) return '✅ No pending join requests across any group.';
 
     let reply = `✅ Approved ${totalApproved} pending request(s) across ${approved.length} group(s):`;
@@ -272,7 +274,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
       let reply = `✅ ${member.name} reactivated.\n📅 Billing: ${billingDate}\n`;
       reply += `📨 Sent ${sent}/${messages.length} messages to ${phone}`;
       if (failed > 0) reply += ` (${failed} failed)`;
-      reply += `\n\nWhen they join, use:\napprove ${phone}`;
+      reply += `\n\nWhen they join, use:\napprove  (approves all pending across all groups)`;
       return reply;
     } finally {
       inFlightAdds.delete(phone);
@@ -298,7 +300,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
     const { sent, failed } = await groupManager.sendToMember(phone, messages);
     let reply = `📨 Sent ${sent}/${messages.length} messages to ${member.name} (${phone})`;
     if (failed > 0) reply += `\n⚠️ ${failed} failed — check if number is on WhatsApp`;
-    reply += `\n\nWhen they join, use:\napprove ${phone}`;
+    reply += `\n\nWhen they join, use:\napprove  (approves all pending across all groups)`;
     return reply;
   }
 

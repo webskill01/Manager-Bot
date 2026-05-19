@@ -7,11 +7,18 @@ import {
   Browsers,
 } from '@whiskeysockets/baileys';
 
-// Silence Baileys Signal Protocol session noise — these bypass pino and write directly to stdout
+// Silence Baileys/libsignal Signal Protocol noise — these bypass pino and write directly to stdout
 const _origStdoutWrite = process.stdout.write.bind(process.stdout);
 process.stdout.write = (chunk, encoding, callback) => {
   const str = typeof chunk === 'string' ? chunk : chunk.toString();
-  if (str.includes('Closing session:') || str.includes('Removing old closed session:')) {
+  if (
+    str.includes('Closing session:') ||
+    str.includes('Removing old closed session:') ||
+    str.includes('Session error:') ||
+    str.includes('Bad MAC') ||
+    str.includes('Closing open session in favor of') ||
+    str.includes('/libsignal/')
+  ) {
     if (typeof encoding === 'function') encoding();
     else if (typeof callback === 'function') callback();
     return true;
@@ -30,6 +37,7 @@ import { createCommandParser } from './commandParser.js';
 import { createScheduler } from './scheduler.js';
 import { createReminderSender } from './reminderSender.js';
 import { createOverdueEngine } from './overdueEngine.js';
+import { createTrialRemovalEngine } from './trialRemovalEngine.js';
 
 const BOT_START_TIME = Date.now();
 
@@ -66,6 +74,7 @@ export async function startBot(config, log, authDir) {
   const scheduler = createScheduler(config, log);
   const reminderSender = createReminderSender(config, log);
   const overdueEngine = createOverdueEngine(config, log);
+  const trialEngine = createTrialRemovalEngine(config, log, getSock, getBroadcastJids);
   const lidToPhoneJid = new Map();
 
   log.info('📊 Connecting to Google Sheets...');
@@ -215,7 +224,7 @@ export async function startBot(config, log, authDir) {
       });
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine);
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {
@@ -248,6 +257,7 @@ export async function startBot(config, log, authDir) {
           reconnectAttempts = 0;
           await store.refresh();
           log.info(`📊 Cache refreshed: ${store.getAll().length} members`);
+          trialEngine.resume();
 
           // Resolve allowedNumbers to actual JIDs (WhatsApp may route as @lid)
           for (const phone of config.allowedNumbers || []) {

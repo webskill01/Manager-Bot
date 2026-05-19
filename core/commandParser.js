@@ -23,7 +23,7 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine) {
   const memberH = createMemberHandlers(store, groupManager, config, log);
   const renewalH = createRenewalHandlers(store, config, log);
   const lookupH = createLookupHandlers(store, config, log);
@@ -94,8 +94,10 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'kick':       return memberH.handleKick(mergePhoneFromStart(args));
         case 'skip':       return memberH.handleSkip(mergePhoneFromStart(args));
         case 'unskip':     return memberH.handleUnskip(mergePhoneFromStart(args));
-        case 'approve':    return memberH.handleApproveAll();
-        case 'approveall': return memberH.handleApproveAll();
+        case 'approve':
+        case 'approveall':
+          if (args.length > 0) return '❌ Phone-specific approve is not supported — it never was.\nJust send "approve" (no number) to approve all pending join requests across all groups.';
+          return memberH.handleApproveAll();
         case 'rejectall':  return memberH.handleRejectAll();
         case 'links':      return memberH.handleLinks(mergePhoneFromStart(args));
         case 'sendlinks':  return memberH.handleSendLinks(mergePhoneFromStart(args));
@@ -125,6 +127,13 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'groups':     return reportH.handleGroups();
         case 'ping':       return reportH.handlePing(sock);
         case 'help':       return reportH.handleHelp();
+
+        case 'start':
+          if (args[0]?.toLowerCase() === 'removal') return trialEngine.start();
+          return `❓ Unknown command. Did you mean "start removal"?`;
+        case 'stop':
+          if (args[0]?.toLowerCase() === 'removal') return trialEngine.stopCommand();
+          return `❓ Unknown command. Did you mean "stop removal"?`;
 
         default:
           return `❓ Unknown command: "${cmd}". Send 'help' for full list.`;

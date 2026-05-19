@@ -133,6 +133,7 @@ export function createGroupManager(sock, config, log) {
     return enqueue(() => _removeFromAllGroups(phone));
   }
 
+
   async function getInviteLinksForMissing(phone) {
     const jid = toJid(phone);
     const links = [];
@@ -259,9 +260,14 @@ export function createGroupManager(sock, config, log) {
     return { rejected, failed, totalRejected, totalGroups: pendingByGroup.length };
   }
 
-  // Public wrappers — run through the op queue to prevent concurrent execution
-  function approveAllPendingRequests() { return enqueue(() => _approveAllPendingRequests()); }
-  function rejectAllPendingRequests()  { return enqueue(() => _rejectAllPendingRequests()); }
+  // Approve/reject — deduped so rapid repeat commands don't stack in the queue
+  let _approvePending = false;
+  function approveAllPendingRequests() {
+    if (_approvePending) return Promise.resolve({ approved: [], failed: [], totalApproved: 0, totalGroups: 0, alreadyRunning: true });
+    _approvePending = true;
+    return enqueue(() => _approveAllPendingRequests().finally(() => { _approvePending = false; }));
+  }
+  function rejectAllPendingRequests() { return enqueue(() => _rejectAllPendingRequests()); }
 
   // Send a sequence of messages to a member's number with a small gap between each.
   // Used for the invite-link onboarding flow in handleAdd.

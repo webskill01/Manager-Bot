@@ -73,7 +73,8 @@ export function createReportHandlers(store, config, botStartTime, log) {
     return msg;
   }
 
-  function handleSummary(args = []) {
+  async function handleSummary(args = []) {
+    await store.refresh();
     const all = store.getAll();
 
     // Parse optional days-ago argument: "summary 1" = yesterday, "summary 2" = 2 days ago
@@ -277,7 +278,11 @@ Send "overdue" first, then reply:
 • R[n] — Remove member
 • S[n] — Skip member
 • W[n] — Send warning
-Example: R1 R2 S3`;
+Example: R1 R2 S3
+
+🔁 TRIAL GROUP
+• start removal — begin removal cycle (3-5 batches today)
+• stop removal  — cancel active cycle`;
   }
 
   return { handleMorningDigest, handleSummary, handleStats, handleRevenue, handleGroups, handlePing, handleHelp };

@@ -6,6 +6,8 @@ bots/*/baileys_auth/
 bots/*/.env
 bots/*/service-account.json
 bots/*/qr-payment.jpg
+bots/*/trial-image.jpeg
+bots/*/trial-video.mp4
 
 # Logs
 logs/
@@ -13,6 +15,7 @@ logs/
 
 # CRG graph (local dev tool — not needed on VPS)
 .code-review-graph/
+docs/
 
 # Checkpoint / progress files (local only)
 GOAL.md
