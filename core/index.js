@@ -76,7 +76,6 @@ export async function startBot(config, log, authDir) {
   const reminderSender = createReminderSender(config, log);
   const overdueEngine = createOverdueEngine(config, log);
   const trialEngine = createTrialRemovalEngine(config, log, getSock, getBroadcastJids);
-  const removalEngine = createRemovalEngine(config, log, getSock, store, getBroadcastJids);
   const lidToPhoneJid = new Map();
 
   log.info('📊 Connecting to Google Sheets...');
@@ -84,6 +83,8 @@ export async function startBot(config, log, authDir) {
   const store = createMemberStore(sheetClient, config.botName);
   await store.initialize();
   log.info(`✅ Sheet loaded: ${store.getAll().length} members in cache`);
+
+  const removalEngine = createRemovalEngine(config, log, getSock, store, getBroadcastJids);
 
   function destroySocket(reason) {
     if (!sock) return;
