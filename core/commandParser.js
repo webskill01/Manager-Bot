@@ -1,4 +1,6 @@
-import { daysFromToday } from './globalConfig.js';
+import fs from 'fs';
+import path from 'path';
+import { daysFromToday, normalizePhone as normPhone, getReferralsInBillingPeriod } from './globalConfig.js';
 import { createMemberHandlers } from './handlers/memberHandlers.js';
 import { createRenewalHandlers } from './handlers/renewalHandlers.js';
 import { createLookupHandlers } from './handlers/lookupHandlers.js';
@@ -135,6 +137,49 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'skipped':    return reportH.handleSkippedList();
         case 'ping':       return reportH.handlePing(sock);
         case 'help':       return reportH.handleHelp();
+
+        case 'upcoming':   return reportH.handleUpcoming(args);
+        case 'toprefs':    return reportH.handleTopRefs();
+        case 'loyal':      return reportH.handleLoyal(args);
+        case 'growth':     return reportH.handleGrowth();
+        case 'forecast':   return reportH.handleForecast();
+        case 'trend':      return reportH.handleTrend();
+        case 'churn':      return reportH.handleChurn();
+        case 'norenew':    return reportH.handleNoRenew();
+        case 'collection': return reportH.handleCollection();
+        case 'tenure':     return reportH.handleTenure();
+        case 'weekly':     return reportH.handleWeekly();
+        case 'monthly':    return reportH.handleMonthly(args);
+        case 'audit':      return reportH.handleAudit();
+
+        case 'remind': {
+          const phone = normPhone(mergePhoneFromStart(args)[0] || '');
+          if (phone.length !== 10) return '❌ Format: remind [phone]';
+          const member = store.findByPhone(phone);
+          if (!member) return `❌ No member found for ${args[0] || phone}. Try: find [name]`;
+          if (member.status !== 'ACTIVE') return `⚠️ ${member.name} is ${member.status} — remind only works for ACTIVE members.`;
+          const all = store.getAll();
+          const refs = getReferralsInBillingPeriod(member.phone, member.billingDate, all).length;
+          if (refs >= 2) return `ℹ️ ${member.name} has ${refs} refs — they'll be auto-renewed, no reminder needed.`;
+          const type = refs === 1 ? 'referral' : 'normal';
+          const template = (type === 'referral' && config.messages.referralReminder)
+            ? config.messages.referralReminder : config.messages.reminder;
+          const caption = template.replace('{name}', member.name);
+          const jid = `91${member.phone}@s.whatsapp.net`;
+          try {
+            const qrPath = config.upiQrPath ? path.resolve(config.botDir, config.upiQrPath) : null;
+            if (qrPath && fs.existsSync(qrPath)) {
+              const image = fs.readFileSync(qrPath);
+              await sock.sendMessage(jid, { image, caption });
+            } else {
+              await sock.sendMessage(jid, { text: caption });
+            }
+            const amount = refs === 1 ? config.renewal.referralAmount : config.renewal.fullAmount;
+            return `✅ Reminder sent to ${member.name} (${member.phone}) — ₹${amount}`;
+          } catch (err) {
+            return `❌ Failed to send reminder: ${err.message}`;
+          }
+        }
 
         case 'removal':    return removalEngine.handleRemoval();
         case 'warnall':    return removalEngine.warnall();

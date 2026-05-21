@@ -1,4 +1,4 @@
-import { normalizePhone, daysFromToday } from '../globalConfig.js';
+import { normalizePhone, daysFromToday, getReferralsInBillingPeriod } from '../globalConfig.js';
 
 export function createLookupHandlers(store, config, log) {
 
@@ -38,14 +38,23 @@ export function createLookupHandlers(store, config, log) {
   function formatMemberDetail(m) {
     const days = daysFromToday(m.billingDate);
     const daysLabel = days === null ? 'unknown' : days >= 0 ? `${days}d remaining` : `${Math.abs(days)}d OVERDUE`;
+
+    const all = store.getAll();
+    const currentRefs = getReferralsInBillingPeriod(m.phone, m.billingDate, all);
+    const allTimeRefs = all.filter(r => r.reference && normalizePhone(r.reference) === m.phone);
+    const refLine = allTimeRefs.length > 0
+      ? `👥 Refs: ${currentRefs.length} this period (${currentRefs.length >= 2 ? '🎉 free renewal' : currentRefs.length === 1 ? '💰 ₹45' : '₹90'}) | ${allTimeRefs.length} all-time`
+      : '';
+
     return [
       `👤 ${m.name}`,
       `📱 ${m.phone}`,
       `📊 Status: ${m.status}`,
       `📅 Billing: ${m.billingDate} (${daysLabel})`,
       `🗓️ Joined: ${m.joinDate}`,
-      `🔄 Renewals: ${m.renewals} | Last: ₹${m.paidLast}`,
-      m.reference ? `👥 Referred by: ${m.reference}` : '',
+      `🔄 Renewals: ${m.renewals} | Last paid: ₹${m.paidLast}`,
+      m.reference ? `🤝 Referred by: ${m.reference}` : '',
+      refLine,
       m.skipReason ? `⏭️ Skip reason: ${m.skipReason}` : '',
     ].filter(Boolean).join('\n');
   }

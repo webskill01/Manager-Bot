@@ -24,6 +24,9 @@ PROGRESS.md
 PROGRESS_ARCHIVE.md
 .learn-pending
 
+# Setup guides (local reference only — contains server paths)
+NEW_BOT_SETUP.md
+
 # Scripts (one-time migration — not needed on VPS)
 scripts/raw_members.txt
 scripts/staging.csv
