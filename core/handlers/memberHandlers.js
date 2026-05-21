@@ -297,34 +297,44 @@ export function createMemberHandlers(store, groupManager, config, log) {
 
     const member = store.findByPhone(phone);
     if (!member) return `❌ ${phone} not in sheet.\n\nIf this is a previous member not tracked by bot, add them first:\naddsilent [Name] ${phone}\nThen run: rejoin ${phone}`;
-    if (member.status !== 'REMOVED') return `⚠️ ${member.name} is ${member.status}, not REMOVED. Use 'renewed' for billing update.`;
+    if (member.status === 'SKIPPED') return `⚠️ ${member.name} is SKIPPED. Use 'unskip ${phone}' first, then rejoin.`;
+    if (member.status !== 'REMOVED' && member.status !== 'ACTIVE') return `⚠️ ${member.name} is ${member.status}. Cannot rejoin.`;
 
     if (inFlightAdds.has(phone)) return `⏳ Operation for ${phone} already in progress.`;
 
+    // ACTIVE = addsilent flow (already in sheet, just needs group add — don't touch billing)
+    // REMOVED = full reactivation (update sheet + group add)
+    const isReactivation = member.status === 'REMOVED';
+
     let billingDay = null;
-    if (args[1] && /^\d{1,2}$/.test(args[1]) && parseInt(args[1]) >= 1 && parseInt(args[1]) <= 31) {
+    if (isReactivation && args[1] && /^\d{1,2}$/.test(args[1]) && parseInt(args[1]) >= 1 && parseInt(args[1]) <= 31) {
       billingDay = parseInt(args[1]);
     }
 
     inFlightAdds.add(phone);
     try {
-      const now = new Date();
-      const day = billingDay ?? now.getDate();
-      const billingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, day));
+      let billingDate = member.billingDate;
 
-      await store.update(phone, {
-        status: 'ACTIVE',
-        billingDate,
-        joinDate: todayStr(),
-        paidLast: config.joining.fee,
-        skipReason: '',
-      });
-      log.info(`♻️  Rejoined ${member.name} (${phone})`);
+      if (isReactivation) {
+        const now = new Date();
+        const day = billingDay ?? now.getDate();
+        billingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, day));
+        await store.update(phone, {
+          status: 'ACTIVE',
+          billingDate,
+          joinDate: todayStr(),
+          paidLast: config.joining.fee,
+          skipReason: '',
+        });
+      }
+      log.info(`♻️  Rejoining ${member.name} (${phone}) [${isReactivation ? 'reactivation' : 'addsilent flow'}]`);
 
       // Try direct group add first (bypasses cooldown since rejoin is a manual admin action)
       const addResult = await groupManager.rejoinAdd(phone, member.name);
 
-      let reply = `✅ ${member.name} reactivated.\n📅 Billing: ${billingDate}\n`;
+      let reply = isReactivation
+        ? `✅ ${member.name} reactivated.\n📅 Billing: ${billingDate}\n`
+        : `✅ ${member.name} added to groups.\n📅 Billing: ${billingDate}\n`;
 
       const { added, failed: addFailed } = addResult;
       const alreadyIn = addFailed.filter(f => f.reason === 'already_member');
