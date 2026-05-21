@@ -127,6 +127,11 @@ export function createGroupManager(sock, config, log) {
     if (blocked) return Promise.resolve({ added: [], failed: [], blocked });
     return enqueue(() => _addToAllGroups(phone, name));
   }
+  // rejoinAdd: direct add for a specific removed member — skips cooldown check
+  // since rejoin is a manual admin action, not a batch op
+  function rejoinAdd(phone, name) {
+    return enqueue(() => _addToAllGroups(phone, name));
+  }
   function removeFromAllGroups(phone) {
     const blocked = checkCooldown('Kick');
     if (blocked) return Promise.resolve({ removed: [], failed: [], blocked });
@@ -205,7 +210,8 @@ export function createGroupManager(sock, config, log) {
         if (_aborted) break;
         log.warn(`❌ Pending scan failed ${groupId}: ${err.message}`);
       }
-      if (i < paidGroups.length - 1) await gapBetweenOps();
+      // Short gap for read-only scan — no need for the full write-op gap
+      if (i < paidGroups.length - 1) await sleep(randomBetween(1000, 1500));
     }
     return result;
   }
@@ -289,5 +295,5 @@ export function createGroupManager(sock, config, log) {
     return { sent, failed };
   }
 
-  return { addToAllGroups, removeFromAllGroups, getInviteLinksForMissing, checkMembership, getAllPendingRequests, approveAllPendingRequests, rejectAllPendingRequests, markAborted, sendToMember };
+  return { addToAllGroups, rejoinAdd, removeFromAllGroups, getInviteLinksForMissing, checkMembership, getAllPendingRequests, approveAllPendingRequests, rejectAllPendingRequests, markAborted, sendToMember };
 }

@@ -24,7 +24,7 @@
     "fee": 90
   },
   "overdue": {
-    "autoReminderDays": 6,
+    "autoReminderDays": 5,
     "consolidatedListDays": 7
   },
   "rateLimits": {

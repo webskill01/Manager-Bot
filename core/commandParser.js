@@ -23,7 +23,7 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine) {
   const memberH = createMemberHandlers(store, groupManager, config, log);
   const renewalH = createRenewalHandlers(store, config, log);
   const lookupH = createLookupHandlers(store, config, log);
@@ -79,9 +79,14 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     const cmd = parts[0].toLowerCase();
     const args = parts.slice(1);
 
-    // Pattern: "[phone] ref [refPhone]" — update referrer on an existing member
-    if (parts.length >= 3 && parts[1]?.toLowerCase() === 'ref' && /^\+?\d{10,13}$/.test(parts[0])) {
-      try { return await memberH.handleRef(parts); }
+    // Pattern: "[phone] ref [refPhone]" — handles both compact and spaced formats:
+    // "9876543210 ref 9876543211"  or  "+91 98765 43210 ref +91 98765 43211"
+    const refPos = parts.findIndex(p => p.toLowerCase() === 'ref');
+    const isPhonePart = p => /^\+\d+$/.test(p) || /^\d{3,}$/.test(p);
+    if (refPos > 0 && refPos < parts.length - 1 && parts.slice(0, refPos).every(isPhonePart)) {
+      const memberPhone = parts.slice(0, refPos).map(p => p.replace(/\D/g, '')).join('');
+      const referrerPhone = parts.slice(refPos + 1).map(p => p.replace(/\D/g, '')).join('');
+      try { return await memberH.handleRef([memberPhone, 'ref', referrerPhone]); }
       catch (err) {
         log.error(`❌ Handler error for ref command: ${err.message}`);
         return `❌ Error processing command: ${err.message}`;
@@ -91,6 +96,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     try {
       switch (cmd) {
         case 'add':        return memberH.handleAdd(args);
+        case 'addsilent':  return memberH.handleSilentAdd(args);
         case 'kick':       return memberH.handleKick(mergePhoneFromStart(args));
         case 'skip':       return memberH.handleSkip(mergePhoneFromStart(args));
         case 'unskip':     return memberH.handleUnskip(mergePhoneFromStart(args));
@@ -125,15 +131,22 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'stats':      return reportH.handleStats();
         case 'revenue':    return reportH.handleRevenue();
         case 'groups':     return reportH.handleGroups();
+        case 'removed':    return reportH.handleRemovedList();
+        case 'skipped':    return reportH.handleSkippedList();
         case 'ping':       return reportH.handlePing(sock);
         case 'help':       return reportH.handleHelp();
+
+        case 'removal':    return removalEngine.handleRemoval();
+        case 'warnall':    return removalEngine.warnall();
+        case 'kickall':    return removalEngine.kickall();
 
         case 'start':
           if (args[0]?.toLowerCase() === 'removal') return trialEngine.start();
           return `❓ Unknown command. Did you mean "start removal"?`;
         case 'stop':
           if (args[0]?.toLowerCase() === 'removal') return trialEngine.stopCommand();
-          return `❓ Unknown command. Did you mean "stop removal"?`;
+          if (args[0]?.toLowerCase() === 'kickall') return removalEngine.stopKickall();
+          return `❓ Unknown command. Did you mean "stop removal" or "stop kickall"?`;
 
         default:
           return `❓ Unknown command: "${cmd}". Send 'help' for full list.`;

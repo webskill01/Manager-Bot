@@ -38,6 +38,7 @@ import { createScheduler } from './scheduler.js';
 import { createReminderSender } from './reminderSender.js';
 import { createOverdueEngine } from './overdueEngine.js';
 import { createTrialRemovalEngine } from './trialRemovalEngine.js';
+import { createRemovalEngine } from './removalEngine.js';
 
 const BOT_START_TIME = Date.now();
 
@@ -75,6 +76,7 @@ export async function startBot(config, log, authDir) {
   const reminderSender = createReminderSender(config, log);
   const overdueEngine = createOverdueEngine(config, log);
   const trialEngine = createTrialRemovalEngine(config, log, getSock, getBroadcastJids);
+  const removalEngine = createRemovalEngine(config, log, getSock, store, getBroadcastJids);
   const lidToPhoneJid = new Map();
 
   log.info('📊 Connecting to Google Sheets...');
@@ -224,7 +226,7 @@ export async function startBot(config, log, authDir) {
       });
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine);
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {
@@ -258,6 +260,7 @@ export async function startBot(config, log, authDir) {
           await store.refresh();
           log.info(`📊 Cache refreshed: ${store.getAll().length} members`);
           trialEngine.resume();
+          removalEngine.resume();
 
           // Resolve allowedNumbers to actual JIDs (WhatsApp may route as @lid)
           for (const phone of config.allowedNumbers || []) {
@@ -304,7 +307,7 @@ export async function startBot(config, log, authDir) {
                 if (!getSock()?.user) return;
                 const { createReportHandlers } = await import('./handlers/reportHandlers.js');
                 const reportH = createReportHandlers(store, config, BOT_START_TIME, log);
-                await broadcast(`🌙 Evening Summary\n\n${reportH.handleSummary()}`);
+                await broadcast(`🌙 Evening Summary\n\n${await reportH.handleSummary()}`);
               },
             });
           }

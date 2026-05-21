@@ -10,14 +10,29 @@ export function createRenewalHandlers(store, config, log) {
     const member = store.findByPhone(phone);
     if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
 
-    // Parse remaining args: '45' → referral, a number 1–31 → custom billing day
+    // Parse remaining args: '45' → referral, 1–31 → billing day, 'force' → override same-month block
     let amount = config.renewal.fullAmount;
     let billingDay = null;
+    const isForce = args.slice(1).some(a => a.toLowerCase() === 'force');
     for (const arg of args.slice(1)) {
       if (arg === '45') {
         amount = config.renewal.referralAmount;
       } else if (/^\d{1,2}$/.test(arg) && parseInt(arg) >= 1 && parseInt(arg) <= 31) {
         billingDay = parseInt(arg);
+      }
+    }
+
+    // Same-month renewal guard — blocks accidental double-renewal
+    if (!isForce && member.lastRenewed) {
+      const now = new Date();
+      const mm = String(now.getMonth() + 1).padStart(2, '0');
+      const yyyy = String(now.getFullYear());
+      const lr = member.lastRenewed;
+      const inThisMonth = (lr.length >= 10 && lr[2] === '-')
+        ? lr.slice(3, 5) === mm && lr.slice(6, 10) === yyyy
+        : lr.startsWith(`${yyyy}-${mm}`);
+      if (inThisMonth) {
+        return `⚠️ ${member.name} was already renewed this month (${member.lastRenewed}).\nTo override: renewed ${phone} force`;
       }
     }
 

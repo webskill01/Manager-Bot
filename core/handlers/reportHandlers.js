@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { daysFromToday, todayStr, getReferralsInBillingPeriod } from '../globalConfig.js';
 
 export function createReportHandlers(store, config, botStartTime, log) {
@@ -37,7 +39,9 @@ export function createReportHandlers(store, config, botStartTime, log) {
       const d = daysFromToday(m.billingDate);
       return m.status === 'ACTIVE' && d !== null && d < 0;
     }).sort((a, b) => (daysFromToday(a.billingDate) || 0) - (daysFromToday(b.billingDate) || 0));
-    const warnToday = overdue.filter(m => Math.abs(daysFromToday(m.billingDate) || 0) >= 6);
+
+    const warnDays = config.overdue?.autoReminderDays ?? 5;
+    const warnToday = overdue.filter(m => Math.abs(daysFromToday(m.billingDate) || 0) >= warnDays);
     const totalActive = all.filter(m => m.status === 'ACTIVE').length;
     const totalSkipped = all.filter(m => m.status === 'SKIPPED').length;
 
@@ -64,11 +68,29 @@ export function createReportHandlers(store, config, botStartTime, log) {
     }
 
     if (warnToday.length > 0) {
-      msg += `\n🚨 AUTO-WARN TODAY (6+ days): ${warnToday.length} member${warnToday.length !== 1 ? 's' : ''}\n`;
+      msg += `\n🚨 AUTO-WARN TODAY (${warnDays}+ days): ${warnToday.length} member${warnToday.length !== 1 ? 's' : ''}\n`;
       msg += warnToday.map(m => `   • ${m.name}  (${Math.abs(daysFromToday(m.billingDate))}d)`).join('\n') + '\n';
     }
 
     msg += `\n📊 Active: ${totalActive}  |  Overdue: ${overdue.length}  |  Due today: ${dueToday.length}  |  Skipped: ${totalSkipped}`;
+
+    // Trial removal schedule (if active)
+    try {
+      const stateFile = path.join(config.botDir, 'trial-state.json');
+      if (fs.existsSync(stateFile)) {
+        const trialState = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+        if (trialState?.active) {
+          const pending = trialState.batches.filter(b => !b.done);
+          if (pending.length > 0) {
+            msg += `\n\n🔄 Trial Removal — ${pending.length} batch${pending.length !== 1 ? 'es' : ''} today:\n`;
+            msg += pending.map(b => {
+              const d = new Date(b.scheduledAt);
+              return `   • ${d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })} IST`;
+            }).join('\n');
+          }
+        }
+      }
+    } catch (_) {}
 
     return msg;
   }
@@ -97,17 +119,21 @@ export function createReportHandlers(store, config, botStartTime, log) {
     const renewedToday = all.filter(m =>
       isUpdatedOn(m.lastUpdated, targetDateStr) && m.renewals > 0
       && m.joinDate !== targetDateStr && Number(m.paidLast) !== 0
-    );
+    ).sort((a, b) => (a.lastUpdated || '').localeCompare(b.lastUpdated || ''));
     const autoRenewedToday = all.filter(m =>
       isUpdatedOn(m.lastUpdated, targetDateStr) && m.renewals > 0
       && m.joinDate !== targetDateStr && Number(m.paidLast) === 0
-    );
+    ).sort((a, b) => (a.lastUpdated || '').localeCompare(b.lastUpdated || ''));
     const removedToday = all.filter(m =>
       m.status === 'REMOVED' && isUpdatedOn(m.lastUpdated, targetDateStr)
     );
+    const skippedToday = all.filter(m =>
+      m.status === 'SKIPPED' && isUpdatedOn(m.lastUpdated, targetDateStr)
+    );
+    const consolidatedDays = config.overdue?.consolidatedListDays ?? 7;
     const overdue = all.filter(m => {
       const days = daysFromToday(m.billingDate);
-      return m.status === 'ACTIVE' && days !== null && days < -5;
+      return m.status === 'ACTIVE' && days !== null && days <= -consolidatedDays;
     });
     const totalActive = all.filter(m => m.status === 'ACTIVE').length;
 
@@ -163,8 +189,21 @@ export function createReportHandlers(store, config, botStartTime, log) {
       msg += '\n';
     }
 
-    msg += `❌ Removals: ${removedToday.length}\n`;
-    msg += `⚠️ Overdue (6+ days): ${overdue.length}\n`;
+    if (removedToday.length > 0) {
+      msg += `❌ Removals: ${removedToday.length}\n`;
+      msg += removedToday.map(m => `   • ${m.name} • ${m.phone}`).join('\n') + '\n';
+    } else {
+      msg += `❌ Removals: 0\n`;
+    }
+
+    if (skippedToday.length > 0) {
+      msg += `⏭️ Skipped: ${skippedToday.length}\n`;
+      msg += skippedToday.map(m => `   • ${m.name} • ${m.phone}${m.skipReason ? ` (${m.skipReason})` : ''}`).join('\n') + '\n';
+    } else {
+      msg += `⏭️ Skipped: 0\n`;
+    }
+
+    msg += `⚠️ Overdue (${consolidatedDays}+ days): ${overdue.length}\n`;
     msg += `👥 Total Active: ${totalActive}`;
 
     return msg;
@@ -236,6 +275,34 @@ export function createReportHandlers(store, config, botStartTime, log) {
     return `🟢 Bot ${config.botName} is alive\nUptime: ${uptime} minutes\nWhatsApp: ${connected ? '✅ Connected' : '❌ Disconnected'}`;
   }
 
+  function handleRemovedList() {
+    const all = store.getAll();
+    const removed = all
+      .filter(m => m.status === 'REMOVED')
+      .sort((a, b) => (b.lastUpdated || '').localeCompare(a.lastUpdated || ''));
+
+    if (removed.length === 0) return '✅ No removed members.';
+
+    const show = removed.slice(0, 30);
+    const lines = show.map((m, i) => `${i + 1}. ${m.name} • ${m.phone}`).join('\n');
+    let msg = `❌ REMOVED MEMBERS (${removed.length} total — latest first):\n\n${lines}`;
+    if (removed.length > 30) msg += `\n... +${removed.length - 30} more`;
+    msg += `\n\nTo rejoin: rejoin [phone]`;
+    return msg;
+  }
+
+  function handleSkippedList() {
+    const all = store.getAll();
+    const skipped = all.filter(m => m.status === 'SKIPPED');
+
+    if (skipped.length === 0) return '✅ No skipped members.';
+
+    const lines = skipped.map((m, i) =>
+      `${i + 1}. ${m.name} • ${m.phone}${m.skipReason ? `\n   Reason: ${m.skipReason}` : ''}`
+    ).join('\n');
+    return `⏭️ SKIPPED MEMBERS (${skipped.length}):\n\n${lines}\n\nTo unskip: unskip [phone]`;
+  }
+
   function handleHelp() {
     return `📋 BOT COMMANDS
 
@@ -243,7 +310,8 @@ export function createReportHandlers(store, config, botStartTime, log) {
 • add [Name] [phone]
 • add [Name] [phone] [day 1-31]
 • add [Name] [phone] ref [refPhone]
-• rejoin [phone] / [phone] [day]
+• addsilent [Name] [phone]  →  sheet only, no links (use before rejoin for unknowns)
+• rejoin [phone] / [phone] [day]  →  direct group add
 • kick [phone]
 • skip [phone] [reason]
 • unskip [phone]
@@ -255,6 +323,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
 
 💰 RENEWALS
 • renewed [phone]  →  ₹${config.renewal.fullAmount}
+• renewed [phone] force  →  override same-month block
 • renewed [phone] 45  →  ₹${config.renewal.referralAmount}
 • renewed [phone] [day 1-31]
 • renewed [phone] [day] 45
@@ -272,6 +341,8 @@ export function createReportHandlers(store, config, botStartTime, log) {
 📊 REPORTS
 • summary / summary 1 / summary 2
 • stats / revenue / groups / ping
+• removed — list all removed members
+• skipped — list all skipped members
 
 ⚡ OVERDUE ACTIONS
 Send "overdue" first, then reply:
@@ -280,10 +351,16 @@ Send "overdue" first, then reply:
 • W[n] — Send warning
 Example: R1 R2 S3
 
+🚫 BULK REMOVAL (7+ days overdue)
+• removal — show removal list
+• warnall — send final warning to all on list
+• kickall — bulk remove with 15–30 min gaps
+• stop kickall — cancel kickall
+
 🔁 TRIAL GROUP
 • start removal — begin removal cycle (3-5 batches today)
 • stop removal  — cancel active cycle`;
   }
 
-  return { handleMorningDigest, handleSummary, handleStats, handleRevenue, handleGroups, handlePing, handleHelp };
+  return { handleMorningDigest, handleSummary, handleStats, handleRevenue, handleGroups, handleRemovedList, handleSkippedList, handlePing, handleHelp };
 }
