@@ -146,7 +146,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
 
     const existing = store.findByPhone(phone);
     if (existing) {
-      if (existing.status === 'ACTIVE') return `⚠️ ${existing.name} (${phone}) already ACTIVE.`;
+      if (existing.status === 'ACTIVE') return `⚠️ ${existing.name} (${phone}) already ACTIVE.\nTo add them to all groups: rejoin ${phone}`;
       if (existing.status === 'REMOVED') return `⚠️ ${existing.name} already in sheet as REMOVED. Use: rejoin ${phone}`;
       if (existing.status === 'SKIPPED') return `⚠️ ${existing.name} already SKIPPED. Use: unskip ${phone}`;
     }
@@ -203,8 +203,16 @@ export function createMemberHandlers(store, groupManager, config, log) {
     const member = store.findByPhone(phone);
     if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
 
-    await store.update(phone, { status: 'SKIPPED', skipReason: reason });
-    return `✅ ${member.name} marked SKIPPED — won't appear in auto-remove list.\nReason: ${reason}`;
+    // Advance billing date by one month so they aren't billed this cycle
+    const currentBilling = parseDate(member.billingDate);
+    let newBillingDate = member.billingDate;
+    if (currentBilling) {
+      const next = new Date(currentBilling.getFullYear(), currentBilling.getMonth() + 1, currentBilling.getDate());
+      newBillingDate = formatDate(next);
+    }
+
+    await store.update(phone, { status: 'SKIPPED', skipReason: reason, billingDate: newBillingDate });
+    return `✅ ${member.name} marked SKIPPED — won't appear in auto-remove list.\nReason: ${reason}\n📅 Billing pushed to: ${newBillingDate}`;
   }
 
   async function handleUnskip(args) {
@@ -461,5 +469,23 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return msg;
   }
 
-  return { handleAdd, handleSilentAdd, handleKick, handleSkip, handleUnskip, handleLinks, handleGroupCheck, handleApproveAll, handleRejectAll, handleSendLinks, handleRejoin, handleRef, handleRefs };
+  async function handleApprovePhone(args) {
+    if (args.length < 1) return '❌ Format: approve [phone]  or  approve (no number = all)';
+    const phone = normalizePhone(args[0]);
+    if (phone.length !== 10) return '❌ Invalid number. Use 10 digits.';
+    const { found, approved, failed } = await groupManager.approveByPhone(phone);
+    if (found === 0) return `❌ No pending request found for ${phone}. They may not have tried to join yet.`;
+    return `✅ Approved ${phone} in ${approved}/${found} group(s)${failed > 0 ? ` (${failed} failed)` : ''}`;
+  }
+
+  async function handleRejectPhone(args) {
+    if (args.length < 1) return '❌ Format: reject [phone]';
+    const phone = normalizePhone(args[0]);
+    if (phone.length !== 10) return '❌ Invalid number. Use 10 digits.';
+    const { found, rejected, failed } = await groupManager.rejectByPhone(phone);
+    if (found === 0) return `❌ No pending request found for ${phone}.`;
+    return `✅ Rejected ${phone} in ${rejected}/${found} group(s)${failed > 0 ? ` (${failed} failed)` : ''}`;
+  }
+
+  return { handleAdd, handleSilentAdd, handleKick, handleSkip, handleUnskip, handleLinks, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
 }

@@ -53,7 +53,7 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids)
 
   // ── Message sending ───────────────────────────────────────────────────────
 
-  async function sendBatchMessages() {
+  async function sendBatchMessages(batchIndex) {
     const sock = getSock();
     if (!sock?.user) throw new Error('Socket not connected');
     const groupJid = tc.groupId;
@@ -62,12 +62,14 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids)
     await sleep(randomBetween(3000, 5000));
 
     const hasVideo = !!tc.messages.video?.path;
-    const useVideo = hasVideo && Math.random() < 0.5;
+    const hasImage = !!tc.messages.image?.path;
+    // Alternate video/image by batch index parity — even=video, odd=image
+    const useVideo = hasVideo && (!hasImage || batchIndex % 2 === 0);
 
     if (useVideo) {
       const videoBuffer = fs.readFileSync(path.resolve(config.botDir, tc.messages.video.path));
       await sock.sendMessage(groupJid, { video: videoBuffer, caption: tc.messages.video.caption || '' });
-    } else {
+    } else if (hasImage) {
       const imageBuffer = fs.readFileSync(path.resolve(config.botDir, tc.messages.image.path));
       await sock.sendMessage(groupJid, { image: imageBuffer, caption: tc.messages.image.caption || '' });
     }
@@ -113,7 +115,7 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids)
       }
 
       try {
-        await sendBatchMessages();
+        await sendBatchMessages(batchIndex);
       } catch (err) {
         log.warn(`⚠️  Batch messages failed (continuing with removal): ${err.message}`);
       }
@@ -160,6 +162,12 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids)
         log.warn(`⚠️  Post-batch check failed: ${err.message}`);
       }
 
+      // If all today's batches are done but group still has members, auto-schedule next window
+      const autoState = loadState();
+      if (autoState?.active && autoState.batches.every(b => b.done)) {
+        await scheduleNextDay(autoState.totalRemoved || 0);
+      }
+
     } finally {
       _running = false;
     }
@@ -175,6 +183,41 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids)
       try { await sock.sendMessage(jid, { text: msg }); }
       catch (err) { log.warn(`⚠️  Completion notify failed ${jid}: ${err.message}`); }
     }
+  }
+
+  // ── Auto-continuation ─────────────────────────────────────────────────────
+  // Called when all batches for the current window are done but the group still
+  // has non-whitelisted members. Generates a fresh set of batches for the next
+  // available 10am–10pm IST window and persists + schedules them.
+
+  async function scheduleNextDay(accumulatedRemoved) {
+    const count = randomBetween(tc.batchesPerDay?.min ?? 3, tc.batchesPerDay?.max ?? 5);
+    const times = generateBatchTimes(count);
+    const state = {
+      active: true,
+      startedAt: new Date().toISOString(),
+      batches: times.map(t => ({ scheduledAt: new Date(t).toISOString(), done: false })),
+      totalRemoved: accumulatedRemoved,
+    };
+    saveState(state);
+    scheduleFromState(state);
+
+    const timeLabels = state.batches.map((b, i) => {
+      const t = new Date(b.scheduledAt).toLocaleTimeString('en-IN', {
+        hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata',
+      });
+      return `  ${i + 1}. ${t}`;
+    }).join('\n');
+
+    const sock = getSock();
+    if (sock?.user) {
+      const msg = `🔄 Trial removal continuing — ${count} batches scheduled:\n${timeLabels}`;
+      for (const jid of getBroadcastJids()) {
+        try { await sock.sendMessage(jid, { text: msg }); }
+        catch (err) { log.warn(`⚠️  Next-day notify failed ${jid}: ${err.message}`); }
+      }
+    }
+    log.info(`🔄 Trial removal auto-scheduled for next window — ${count} batches`);
   }
 
   // ── Scheduling ────────────────────────────────────────────────────────────
@@ -210,18 +253,41 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids)
   }
 
   function generateBatchTimes(count) {
-    const now = Date.now();
-    const windowMs   = 23 * 60 * 60 * 1000;  // 23hr window
-    const minFirstMs = 20 * 60 * 1000;         // first batch ≥ 20 min from now
-    const minGapMs   = 90 * 60 * 1000;         // ≥ 90 min between batches
+    const IST_OFFSET_MS  = 5.5 * 60 * 60 * 1000;   // UTC+5:30
+    const WINDOW_START_H = 10 * 60 * 60 * 1000;     // 10:00 as ms since midnight
+    const WINDOW_END_H   = 22 * 60 * 60 * 1000;     // 22:00 as ms since midnight
+    const minGapMs       = 90 * 60 * 1000;           // ≥90 min between batches
+    const minFirstMs     = 20 * 60 * 1000;           // first batch ≥ 20 min from now
+
+    const nowMs = Date.now();
+    // ms elapsed since last IST midnight (IST time of day)
+    const istTimeOfDay = (nowMs + IST_OFFSET_MS) % (24 * 60 * 60 * 1000);
+    // Unix ms of the most recent IST midnight
+    const todayIstMidnight = nowMs - istTimeOfDay;
+
+    let windowStart = todayIstMidnight + WINDOW_START_H;
+    let windowEnd   = todayIstMidnight + WINDOW_END_H;
+
+    // Past today's window — schedule in tomorrow's window
+    if (nowMs >= windowEnd) {
+      windowStart += 24 * 60 * 60 * 1000;
+      windowEnd   += 24 * 60 * 60 * 1000;
+    }
+
+    // First batch no earlier than window open or now+20min
+    let earliest = Math.max(windowStart, nowMs + minFirstMs);
+
+    // Edge: started right before end of window — push to tomorrow
+    if (earliest >= windowEnd) {
+      windowStart += 24 * 60 * 60 * 1000;
+      windowEnd   += 24 * 60 * 60 * 1000;
+      earliest = windowStart;
+    }
 
     const times = [];
-    let earliest = now + minFirstMs;
-    const deadline = now + windowMs;
-
     for (let i = 0; i < count; i++) {
       const remaining = count - i;
-      const latest = deadline - (remaining - 1) * minGapMs;
+      const latest = windowEnd - (remaining - 1) * minGapMs;
       const range = Math.max(0, latest - earliest);
       const t = earliest + Math.random() * range;
       times.push(t);

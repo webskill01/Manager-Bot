@@ -52,7 +52,7 @@ export function createReminderSender(config, log) {
     const template = type === 'referral' && config.messages.referralReminder
       ? config.messages.referralReminder
       : config.messages.reminder;
-    const caption = template.replace('{name}', name);
+    const caption = template.replace('{name}', name).replace('{date}', todayStr());
 
     try {
       const qrPath = path.resolve(botDir, config.upiQrPath);

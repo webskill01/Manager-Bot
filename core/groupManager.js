@@ -275,6 +275,58 @@ export function createGroupManager(sock, config, log) {
   }
   function rejectAllPendingRequests() { return enqueue(() => _rejectAllPendingRequests()); }
 
+  // Match a pending request JID to a phone number (handles 91XXXXXXXXXX@s.whatsapp.net format)
+  function jidMatchesPhone(jid, phone) {
+    if (!jid.endsWith('@s.whatsapp.net')) return false;
+    const digits = jid.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+    return normalizePhone(digits) === normalizePhone(phone);
+  }
+
+  async function _approveByPhone(phone) {
+    const pendingByGroup = await getAllPendingRequests();
+    let found = 0, approved = 0, failed = 0;
+    for (let i = 0; i < pendingByGroup.length; i++) {
+      const { groupId, groupName, pending } = pendingByGroup[i];
+      const match = pending.find(p => jidMatchesPhone(p.jid, phone));
+      if (!match) continue;
+      found++;
+      try {
+        await sock.groupRequestParticipantsUpdate(groupId, [match.jid], 'approve');
+        approved++;
+        log.info(`✅ Approved ${phone} in ${groupName}`);
+      } catch (err) {
+        failed++;
+        log.warn(`❌ Approve failed ${groupName}: ${err.message}`);
+      }
+      if (i < pendingByGroup.length - 1) await gapBetweenOps();
+    }
+    return { found, approved, failed };
+  }
+
+  async function _rejectByPhone(phone) {
+    const pendingByGroup = await getAllPendingRequests();
+    let found = 0, rejected = 0, failed = 0;
+    for (let i = 0; i < pendingByGroup.length; i++) {
+      const { groupId, groupName, pending } = pendingByGroup[i];
+      const match = pending.find(p => jidMatchesPhone(p.jid, phone));
+      if (!match) continue;
+      found++;
+      try {
+        await sock.groupRequestParticipantsUpdate(groupId, [match.jid], 'reject');
+        rejected++;
+        log.info(`🚫 Rejected ${phone} in ${groupName}`);
+      } catch (err) {
+        failed++;
+        log.warn(`❌ Reject failed ${groupName}: ${err.message}`);
+      }
+      if (i < pendingByGroup.length - 1) await gapBetweenOps();
+    }
+    return { found, rejected, failed };
+  }
+
+  function approveByPhone(phone) { return enqueue(() => _approveByPhone(phone)); }
+  function rejectByPhone(phone)  { return enqueue(() => _rejectByPhone(phone)); }
+
   // Send a sequence of messages to a member's number with a small gap between each.
   // Used for the invite-link onboarding flow in handleAdd.
   async function sendToMember(phone, messages) {
@@ -295,5 +347,5 @@ export function createGroupManager(sock, config, log) {
     return { sent, failed };
   }
 
-  return { addToAllGroups, rejoinAdd, removeFromAllGroups, getInviteLinksForMissing, checkMembership, getAllPendingRequests, approveAllPendingRequests, rejectAllPendingRequests, markAborted, sendToMember };
+  return { addToAllGroups, rejoinAdd, removeFromAllGroups, getInviteLinksForMissing, checkMembership, getAllPendingRequests, approveAllPendingRequests, rejectAllPendingRequests, approveByPhone, rejectByPhone, markAborted, sendToMember };
 }

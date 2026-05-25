@@ -241,8 +241,10 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
     if (!state?.active) return;
     const remaining = state.members.filter(m => !m.done).length;
     if (remaining === 0) { deleteState(); return; }
-    log.info(`🔄 Resuming kickall — ${remaining} pending from index ${state.currentIndex}`);
-    scheduleNext(state.currentIndex, 0);
+    // Use a 2-min reconnect grace period instead of 0 to avoid firing immediately
+    const delayMs = 2 * 60 * 1000;
+    log.info(`🔄 Resuming kickall — ${remaining} pending from index ${state.currentIndex} (starts in 2 min)`);
+    scheduleNext(state.currentIndex, delayMs);
   }
 
   return { handleRemoval, warnall, kickall, stopKickall, resume };

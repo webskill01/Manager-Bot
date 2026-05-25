@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, normalizePhone as normPhone, getReferralsInBillingPeriod } from './globalConfig.js';
+import { daysFromToday, normalizePhone as normPhone, getReferralsInBillingPeriod, todayStr } from './globalConfig.js';
 import { createMemberHandlers } from './handlers/memberHandlers.js';
 import { createRenewalHandlers } from './handlers/renewalHandlers.js';
 import { createLookupHandlers } from './handlers/lookupHandlers.js';
@@ -103,9 +103,12 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'skip':       return memberH.handleSkip(mergePhoneFromStart(args));
         case 'unskip':     return memberH.handleUnskip(mergePhoneFromStart(args));
         case 'approve':
-        case 'approveall':
-          if (args.length > 0) return '❌ Phone-specific approve is not supported — it never was.\nJust send "approve" (no number) to approve all pending join requests across all groups.';
+          if (args.length > 0) return memberH.handleApprovePhone(mergePhoneFromStart(args));
           return memberH.handleApproveAll();
+        case 'approveall': return memberH.handleApproveAll();
+        case 'reject':
+          if (args.length > 0) return memberH.handleRejectPhone(mergePhoneFromStart(args));
+          return memberH.handleRejectAll();
         case 'rejectall':  return memberH.handleRejectAll();
         case 'links':      return memberH.handleLinks(mergePhoneFromStart(args));
         case 'sendlinks':  return memberH.handleSendLinks(mergePhoneFromStart(args));
@@ -164,7 +167,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           const type = refs === 1 ? 'referral' : 'normal';
           const template = (type === 'referral' && config.messages.referralReminder)
             ? config.messages.referralReminder : config.messages.reminder;
-          const caption = template.replace('{name}', member.name);
+          const caption = template.replace('{name}', member.name).replace('{date}', todayStr());
           const jid = `91${member.phone}@s.whatsapp.net`;
           try {
             const qrPath = config.upiQrPath ? path.resolve(config.botDir, config.upiQrPath) : null;

@@ -55,6 +55,8 @@ export async function startBot(config, log, authDir) {
   let commandParser = null;
   let schedulerStarted = false;
   const notifiedUnknownLids = new Set(); // notify admin once per unknown LID per session
+  const seenMessageIds = new Map();     // msg id → timestamp, prevents double-processing duplicates
+  const DEDUP_TTL_MS = 60 * 1000;      // evict after 60s
 
   // Allowed LID JIDs — only these can send commands (no self-chat)
   const allowedCommandJids = new Set([
@@ -129,6 +131,17 @@ export async function startBot(config, log, authDir) {
     }
   }
 
+  function isDuplicateMessage(id) {
+    if (!id) return false;
+    const now = Date.now();
+    for (const [k, ts] of seenMessageIds) {
+      if (now - ts > DEDUP_TTL_MS) seenMessageIds.delete(k);
+    }
+    if (seenMessageIds.has(id)) return true;
+    seenMessageIds.set(id, now);
+    return false;
+  }
+
   async function handleMessage(msg) {
     const jid = msg.key.remoteJid || '';
 
@@ -137,6 +150,12 @@ export async function startBot(config, log, authDir) {
 
     // Ignore self-sent messages entirely (no self-chat)
     if (msg.key.fromMe) return;
+
+    // Deduplicate — WhatsApp sometimes delivers the same message event twice
+    if (isDuplicateMessage(msg.key.id)) {
+      log.warn(`⚠️  Duplicate message ${msg.key.id} — skipped`);
+      return;
+    }
 
     // Resolve @lid to phone JID if we have the mapping
     const resolvedJid = (jid.endsWith('@lid') && lidToPhoneJid.has(jid)) ? lidToPhoneJid.get(jid) : jid;

@@ -11,7 +11,7 @@ function rowToMember(row, rowIndex) {
     phone: row[1] || '',
     joinDate: row[2] || '',
     billingDate: row[3] || '',
-    status: row[4] || 'ACTIVE',
+    status: (row[4] || 'ACTIVE').trim().toUpperCase(),
     renewals: parseInt(row[5] || '0', 10),
     paidLast: parseInt(row[6] || '0', 10),
     reference: row[7] || '',
