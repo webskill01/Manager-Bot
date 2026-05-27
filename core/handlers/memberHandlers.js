@@ -8,14 +8,17 @@ export function createMemberHandlers(store, groupManager, config, log) {
 
     const mutableArgs = [...args];
 
-    // Extract optional "ref <refPhone>" suffix before any other parsing
+    // Extract optional "ref <refPhone> [prev|backdate]" suffix before any other parsing
     let referrerPhone = null;
+    let isBackdate = false;
     const refIdx = mutableArgs.findIndex(a => a.toLowerCase() === 'ref');
     if (refIdx !== -1) {
       const refParts = mutableArgs.splice(refIdx); // removes 'ref' and everything after
       refParts.shift(); // drop 'ref' keyword
-      if (refParts.length > 0) {
-        const refNorm = normalizePhone(refParts.map(p => p.replace(/\D/g, '')).join(''));
+      isBackdate = refParts.some(p => ['prev', 'backdate'].includes(p.toLowerCase()));
+      const phoneParts = refParts.filter(p => !['prev', 'backdate'].includes(p.toLowerCase()));
+      if (phoneParts.length > 0) {
+        const refNorm = normalizePhone(phoneParts.map(p => p.replace(/\D/g, '')).join(''));
         if (refNorm.length === 10) referrerPhone = refNorm;
       }
     }
@@ -66,6 +69,19 @@ export function createMemberHandlers(store, groupManager, config, log) {
       const day = billingDay ?? now.getDate();
       const billingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, day));
 
+      // Compute refCreditDate before add if backdating — pins referral to referrer's closing window
+      let refCreditDate = '';
+      if (referrerPhone && isBackdate) {
+        const ref = store.findByPhone(referrerPhone);
+        if (ref) {
+          const billing = parseDate(ref.billingDate);
+          if (billing) {
+            billing.setDate(billing.getDate() - 1);
+            refCreditDate = formatDate(billing);
+          }
+        }
+      }
+
       await store.add({
         name,
         phone,
@@ -73,6 +89,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
         billingDate,
         paidLast: config.joining.fee,
         reference: referrerPhone || '',
+        refCreditDate,
       });
 
       // Build referrer note (computed after add so store cache includes new member)
@@ -80,10 +97,21 @@ export function createMemberHandlers(store, groupManager, config, log) {
       if (referrerPhone) {
         const referrer = store.findByPhone(referrerPhone);
         if (referrer) {
+          // Append backdate audit log to referrer
+          if (isBackdate && refCreditDate) {
+            const billingObj = parseDate(referrer.billingDate);
+            const periodStart = billingObj
+              ? formatDate(new Date(billingObj.getFullYear(), billingObj.getMonth() - 1, billingObj.getDate()))
+              : '?';
+            const logEntry = `${name} (joined ${todayStr()}) backdated to ${periodStart}–${referrer.billingDate} on ${todayStr()}`;
+            const newLog = referrer.refLog ? `${referrer.refLog} | ${logEntry}` : logEntry;
+            await store.update(referrerPhone, { refLog: newLog });
+          }
           const refs = getReferralsInBillingPeriod(referrerPhone, referrer.billingDate, store.getAll()).length;
           const refTag = refs >= 2 ? `🎁 ${refs} refs this month — free renewal`
             : refs === 1 ? `★ 1 ref this month — ₹45` : '0 refs';
-          refNote = `\n👥 Referrer: ${referrer.name} — ${refTag}`;
+          const backdateNote = refCreditDate ? ' ⏪ backdated' : '';
+          refNote = `\n👥 Referrer: ${referrer.name} — ${refTag}${backdateNote}`;
         } else {
           refNote = `\n⚠️ Referrer ${referrerPhone} not found in sheet.`;
         }
@@ -179,18 +207,22 @@ export function createMemberHandlers(store, groupManager, config, log) {
     if (phone.length !== 10) return '❌ Invalid number. Use 10 digits: kick 98551XXXXX';
 
     const member = store.findByPhone(phone);
-    if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
-    if (member.status === 'REMOVED') return '⚠️ Already marked REMOVED. Not in any groups.';
+    if (member?.status === 'REMOVED') return '⚠️ Already marked REMOVED. Not in any groups.';
 
     const result = await groupManager.removeFromAllGroups(phone);
     if (result.blocked) return result.blocked;
     const { removed, failed } = result;
-    await store.update(phone, { status: 'REMOVED' });
 
-    let reply = `✅ Removed ${member.name} from ${removed.length}/${config.paidGroups.length} groups`;
-    if (failed.length > 0) {
-      reply += `\n⚠️ Failed ${failed.length} groups — removed from sheet anyway.`;
+    if (member) {
+      await store.update(phone, { status: 'REMOVED' });
+      let reply = `✅ Removed ${member.name} from ${removed.length}/${config.paidGroups.length} groups`;
+      if (failed.length > 0) reply += `\n⚠️ Failed ${failed.length} groups — removed from sheet anyway.`;
+      return reply;
     }
+
+    // Not in sheet — removed from groups only, no sheet update
+    let reply = `✅ Removed ${phone} from ${removed.length}/${config.paidGroups.length} groups (not in sheet)`;
+    if (failed.length > 0) reply += `\n⚠️ Failed ${failed.length} groups.`;
     return reply;
   }
 
@@ -335,37 +367,13 @@ export function createMemberHandlers(store, groupManager, config, log) {
           skipReason: '',
         });
       }
-      log.info(`♻️  Rejoining ${member.name} (${phone}) [${isReactivation ? 'reactivation' : 'addsilent flow'}]`);
-
-      // Try direct group add first (bypasses cooldown since rejoin is a manual admin action)
-      const addResult = await groupManager.rejoinAdd(phone, member.name);
+      log.info(`♻️  Reactivating ${member.name} (${phone}) in sheet [${isReactivation ? 'reactivation' : 'addsilent flow'}]`);
 
       let reply = isReactivation
-        ? `✅ ${member.name} reactivated.\n📅 Billing: ${billingDate}\n`
-        : `✅ ${member.name} added to groups.\n📅 Billing: ${billingDate}\n`;
+        ? `✅ ${member.name} reactivated in sheet.\n📅 Billing: ${billingDate}`
+        : `✅ ${member.name} sheet updated.\n📅 Billing: ${billingDate}`;
 
-      const { added, failed: addFailed } = addResult;
-      const alreadyIn = addFailed.filter(f => f.reason === 'already_member');
-      const privacyBlocked = addFailed.filter(f => f.reason === 'privacy_restricted');
-      const effectiveAdded = added.length + alreadyIn.length;
-
-      reply += `👤 Direct add: ${effectiveAdded}/${config.paidGroups.length} groups`;
-      if (alreadyIn.length > 0) reply += ` (${alreadyIn.length} already member)`;
-
-      if (privacyBlocked.length > 0) {
-        // Send invite links for groups where privacy blocked the direct add
-        const inviteMsgs = privacyBlocked.filter(f => f.inviteLink).map(f => `${f.groupName}:\n${f.inviteLink}`);
-        if (inviteMsgs.length > 0) {
-          reply += `\n\n⚠️ Privacy restricted (${privacyBlocked.length} groups) — sending invite links...`;
-          const { sent } = await groupManager.sendToMember(phone, inviteMsgs);
-          reply += `\n📨 Sent ${sent} invite links to ${phone}`;
-          reply += `\nWhen they join: approve`;
-        }
-      }
-
-      // Send welcome message
-      const welcome = config.welcomeMessage ? config.welcomeMessage.replace(/\{name\}/g, member.name) : null;
-      if (welcome) await groupManager.sendToMember(phone, [welcome]);
+      reply += `\n\n👆 Now manually add ${member.name} (${phone}) to all groups from your WhatsApp.`;
 
       return reply;
     } finally {
@@ -397,12 +405,17 @@ export function createMemberHandlers(store, groupManager, config, log) {
   }
 
   async function handleRef(parts) {
-    // parts: [memberPhone, 'ref', ...referrerPhoneParts]
+    // parts: [memberPhone, 'ref', ...referrerPhoneParts, optionally 'prev'/'backdate']
     if (parts.length < 3) return '❌ Format: [phone] ref [refPhone]  Example: 9876543210 ref 6284001093';
     const phone = normalizePhone(parts[0]);
     if (phone.length !== 10) return '❌ Invalid member phone.';
 
-    const refNorm = normalizePhone(parts.slice(2).map(p => p.replace(/\D/g, '')).join(''));
+    const afterRef = parts.slice(2);
+    const isBackdate = afterRef.some(p => ['prev', 'backdate'].includes(p.toLowerCase()));
+    const refNorm = normalizePhone(
+      afterRef.filter(p => !['prev', 'backdate'].includes(p.toLowerCase()))
+        .map(p => p.replace(/\D/g, '')).join('')
+    );
     if (refNorm.length !== 10) return '❌ Invalid referrer phone.';
     if (phone === refNorm) return '❌ Cannot set yourself as your own referrer.';
 
@@ -412,13 +425,38 @@ export function createMemberHandlers(store, groupManager, config, log) {
     const referrer = store.findByPhone(refNorm);
     let warning = referrer ? '' : `\n⚠️ Referrer ${refNorm} not found in sheet — reference recorded anyway.`;
 
-    await store.update(phone, { reference: refNorm });
+    // Compute refCreditDate: pin to one day before referrer's billing date
+    let refCreditDate = '';
+    let backdateNote = '';
+    if (isBackdate && referrer) {
+      const billing = parseDate(referrer.billingDate);
+      if (billing) {
+        const prev = new Date(billing);
+        prev.setDate(prev.getDate() - 1);
+        refCreditDate = formatDate(prev);
+        const periodStart = formatDate(new Date(billing.getFullYear(), billing.getMonth() - 1, billing.getDate()));
+        backdateNote = `\n⏪ Backdated to ${periodStart}–${referrer.billingDate} window`;
+      }
+    }
+
+    await store.update(phone, { reference: refNorm, ...(refCreditDate ? { refCreditDate } : {}) });
+
+    // Append audit log to referrer
+    if (isBackdate && referrer && refCreditDate) {
+      const billing = parseDate(referrer.billingDate);
+      const periodStart = billing
+        ? formatDate(new Date(billing.getFullYear(), billing.getMonth() - 1, billing.getDate()))
+        : '?';
+      const logEntry = `${member.name} (joined ${member.joinDate}) backdated to ${periodStart}–${referrer.billingDate} on ${todayStr()}`;
+      const newLog = referrer.refLog ? `${referrer.refLog} | ${logEntry}` : logEntry;
+      await store.update(refNorm, { refLog: newLog });
+    }
 
     if (referrer) {
       const refs = getReferralsInBillingPeriod(refNorm, referrer.billingDate, store.getAll()).length;
       const refTag = refs >= 2 ? `🎁 ${refs} refs this month — free renewal`
         : refs === 1 ? `★ 1 ref this month — ₹45` : '0 refs this month';
-      return `✅ ${member.name}'s referrer set to ${referrer.name} (${refNorm})\n${referrer.name}: ${refTag}`;
+      return `✅ ${member.name}'s referrer set to ${referrer.name} (${refNorm})\n${referrer.name}: ${refTag}${backdateNote}`;
     }
 
     return `✅ ${member.name}'s referrer set to ${refNorm}${warning}`;
@@ -447,7 +485,10 @@ export function createMemberHandlers(store, groupManager, config, log) {
     let msg = `📊 Refs for ${member.name} (${phone})\n`;
     msg += `Billing period (${periodStart} → ${member.billingDate}):\n`;
     if (currentRefs.length > 0) {
-      msg += currentRefs.map(m => `  • ${m.name}  ${m.phone}  Joined ${m.joinDate}`).join('\n') + '\n';
+      msg += currentRefs.map(m => {
+        const tag = m.refCreditDate ? ' ⏪ backdated' : '';
+        return `  • ${m.name}  ${m.phone}  Joined ${m.joinDate}${tag}`;
+      }).join('\n') + '\n';
     }
     const countLine = currentRefs.length === 0
       ? `  Count: 0`

@@ -2,7 +2,7 @@ import { google } from 'googleapis';
 import { formatDateTime } from './globalConfig.js';
 
 const SHEET_NAME = 'MEMBERS';
-const DATA_RANGE = `${SHEET_NAME}!A2:L`;
+const DATA_RANGE = `${SHEET_NAME}!A2:N`;
 
 function rowToMember(row, rowIndex) {
   return {
@@ -19,6 +19,8 @@ function rowToMember(row, rowIndex) {
     addedBy: row[9] || '',
     lastUpdated: row[10] || '',
     lastRenewed: row[11] || '',
+    refCreditDate: row[12] || '',
+    refLog: row[13] || '',
   };
 }
 
@@ -36,6 +38,8 @@ function memberToRow(member) {
     member.addedBy || '',
     formatDateTime(new Date()),
     member.lastRenewed || '',
+    member.refCreditDate || '',
+    member.refLog || '',
   ];
 }
 
@@ -59,14 +63,14 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
   async function appendRow(member) {
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${SHEET_NAME}!A:L`,
+      range: `${SHEET_NAME}!A:N`,
       valueInputOption: 'RAW',
       requestBody: { values: [memberToRow(member)] },
     });
   }
 
   async function updateRow(rowIndex, member) {
-    const range = `${SHEET_NAME}!A${rowIndex}:L${rowIndex}`;
+    const range = `${SHEET_NAME}!A${rowIndex}:N${rowIndex}`;
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range,

@@ -46,6 +46,14 @@ export function createLookupHandlers(store, config, log) {
       ? `👥 Refs: ${currentRefs.length} this period (${currentRefs.length >= 2 ? '🎉 free renewal' : currentRefs.length === 1 ? '💰 ₹45' : '₹90'}) | ${allTimeRefs.length} all-time`
       : '';
 
+    let referredByLine = '';
+    if (m.reference) {
+      const referrer = store.findByPhone(m.reference);
+      referredByLine = referrer
+        ? `🤝 Referred by: ${referrer.name} (${m.reference})`
+        : `🤝 Referred by: ${m.reference}`;
+    }
+
     return [
       `👤 ${m.name}`,
       `📱 ${m.phone}`,
@@ -53,7 +61,7 @@ export function createLookupHandlers(store, config, log) {
       `📅 Billing: ${m.billingDate} (${daysLabel})`,
       `🗓️ Joined: ${m.joinDate}`,
       `🔄 Renewals: ${m.renewals} | Last paid: ₹${m.paidLast}`,
-      m.reference ? `🤝 Referred by: ${m.reference}` : '',
+      referredByLine,
       refLine,
       m.skipReason ? `⏭️ Skip reason: ${m.skipReason}` : '',
     ].filter(Boolean).join('\n');

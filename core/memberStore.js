@@ -32,6 +32,8 @@ export function createMemberStore(sheetClient, botName) {
       renewals: 0,
       paidLast: memberData.paidLast || 90,
       reference: memberData.reference || '',
+      refCreditDate: memberData.refCreditDate || '',
+      refLog: memberData.refLog || '',
       skipReason: '',
       addedBy: botName,
       lastUpdated: new Date().toISOString(),

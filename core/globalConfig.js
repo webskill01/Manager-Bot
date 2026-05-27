@@ -103,7 +103,16 @@ export function todayStr() {
   return formatDate(new Date());
 }
 
-// Returns members referred by referrerPhone whose JOIN_DATE falls within
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+// Human-readable date for messages: "27 May" format
+export function friendlyDate(dateStr) {
+  const d = dateStr ? parseDate(dateStr) : new Date();
+  if (!d) return dateStr || '';
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
+}
+
+// Returns members referred by referrerPhone whose JOIN_DATE (or refCreditDate override) falls within
 // [billingDate - 1 month, billingDate) — the referrer's current billing window.
 export function getReferralsInBillingPeriod(referrerPhone, billingDate, members) {
   const billing = parseDate(billingDate);
@@ -115,9 +124,9 @@ export function getReferralsInBillingPeriod(referrerPhone, billingDate, members)
   return members.filter(m => {
     if (!m.reference) return false;
     if (normalizePhone(m.reference) !== normalized) return false;
-    const joinDate = parseDate(m.joinDate);
-    if (!joinDate) return false;
-    joinDate.setHours(0, 0, 0, 0);
-    return joinDate >= windowStart && joinDate < billing;
+    const effectiveDate = parseDate(m.refCreditDate || m.joinDate);
+    if (!effectiveDate) return false;
+    effectiveDate.setHours(0, 0, 0, 0);
+    return effectiveDate >= windowStart && effectiveDate < billing;
   });
 }

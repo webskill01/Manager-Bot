@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate } from './globalConfig.js';
 
 export function createReminderSender(config, log) {
   let consecutiveFailures = 0;
@@ -52,7 +52,7 @@ export function createReminderSender(config, log) {
     const template = type === 'referral' && config.messages.referralReminder
       ? config.messages.referralReminder
       : config.messages.reminder;
-    const caption = template.replace('{name}', name).replace('{date}', todayStr());
+    const caption = template.replace('{name}', name).replace('{date}', friendlyDate());
 
     try {
       const qrPath = path.resolve(botDir, config.upiQrPath);

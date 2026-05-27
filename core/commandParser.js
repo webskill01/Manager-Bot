@@ -87,8 +87,8 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     const isPhonePart = p => /^\+\d+$/.test(p) || /^\d{3,}$/.test(p);
     if (refPos > 0 && refPos < parts.length - 1 && parts.slice(0, refPos).every(isPhonePart)) {
       const memberPhone = parts.slice(0, refPos).map(p => p.replace(/\D/g, '')).join('');
-      const referrerPhone = parts.slice(refPos + 1).map(p => p.replace(/\D/g, '')).join('');
-      try { return await memberH.handleRef([memberPhone, 'ref', referrerPhone]); }
+      const afterRef = parts.slice(refPos + 1); // preserve 'prev'/'backdate' flags
+      try { return await memberH.handleRef([memberPhone, 'ref', ...afterRef]); }
       catch (err) {
         log.error(`❌ Handler error for ref command: ${err.message}`);
         return `❌ Error processing command: ${err.message}`;
