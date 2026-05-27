@@ -69,15 +69,15 @@ export function createMemberHandlers(store, groupManager, config, log) {
       const day = billingDay ?? now.getDate();
       const billingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, day));
 
-      // Compute refCreditDate before add if backdating — pins referral to referrer's closing window
+      // Compute refCreditDate before add if backdating — pins referral to referrer's PREVIOUS billing window
       let refCreditDate = '';
       if (referrerPhone && isBackdate) {
         const ref = store.findByPhone(referrerPhone);
         if (ref) {
           const billing = parseDate(ref.billingDate);
           if (billing) {
-            billing.setDate(billing.getDate() - 1);
-            refCreditDate = formatDate(billing);
+            // billingDate - 1 month - 1 day → falls in [billingDate-2m, billingDate-1m), i.e. previous period
+            refCreditDate = formatDate(new Date(billing.getFullYear(), billing.getMonth() - 1, billing.getDate() - 1));
           }
         }
       }
@@ -101,9 +101,12 @@ export function createMemberHandlers(store, groupManager, config, log) {
           if (isBackdate && refCreditDate) {
             const billingObj = parseDate(referrer.billingDate);
             const periodStart = billingObj
+              ? formatDate(new Date(billingObj.getFullYear(), billingObj.getMonth() - 2, billingObj.getDate()))
+              : '?';
+            const periodEnd = billingObj
               ? formatDate(new Date(billingObj.getFullYear(), billingObj.getMonth() - 1, billingObj.getDate()))
               : '?';
-            const logEntry = `${name} (joined ${todayStr()}) backdated to ${periodStart}–${referrer.billingDate} on ${todayStr()}`;
+            const logEntry = `${name} (joined ${todayStr()}) backdated to ${periodStart}–${periodEnd} on ${todayStr()}`;
             const newLog = referrer.refLog ? `${referrer.refLog} | ${logEntry}` : logEntry;
             await store.update(referrerPhone, { refLog: newLog });
           }
@@ -425,17 +428,17 @@ export function createMemberHandlers(store, groupManager, config, log) {
     const referrer = store.findByPhone(refNorm);
     let warning = referrer ? '' : `\n⚠️ Referrer ${refNorm} not found in sheet — reference recorded anyway.`;
 
-    // Compute refCreditDate: pin to one day before referrer's billing date
+    // Compute refCreditDate: pin to previous billing period (billingDate - 1 month - 1 day)
+    // This ensures the ref falls in [billingDate-2m, billingDate-1m), NOT the current window
     let refCreditDate = '';
     let backdateNote = '';
     if (isBackdate && referrer) {
       const billing = parseDate(referrer.billingDate);
       if (billing) {
-        const prev = new Date(billing);
-        prev.setDate(prev.getDate() - 1);
-        refCreditDate = formatDate(prev);
-        const periodStart = formatDate(new Date(billing.getFullYear(), billing.getMonth() - 1, billing.getDate()));
-        backdateNote = `\n⏪ Backdated to ${periodStart}–${referrer.billingDate} window`;
+        refCreditDate = formatDate(new Date(billing.getFullYear(), billing.getMonth() - 1, billing.getDate() - 1));
+        const periodStart = formatDate(new Date(billing.getFullYear(), billing.getMonth() - 2, billing.getDate()));
+        const periodEnd   = formatDate(new Date(billing.getFullYear(), billing.getMonth() - 1, billing.getDate()));
+        backdateNote = `\n⏪ Backdated to ${periodStart}–${periodEnd} window`;
       }
     }
 
@@ -445,9 +448,12 @@ export function createMemberHandlers(store, groupManager, config, log) {
     if (isBackdate && referrer && refCreditDate) {
       const billing = parseDate(referrer.billingDate);
       const periodStart = billing
+        ? formatDate(new Date(billing.getFullYear(), billing.getMonth() - 2, billing.getDate()))
+        : '?';
+      const periodEnd = billing
         ? formatDate(new Date(billing.getFullYear(), billing.getMonth() - 1, billing.getDate()))
         : '?';
-      const logEntry = `${member.name} (joined ${member.joinDate}) backdated to ${periodStart}–${referrer.billingDate} on ${todayStr()}`;
+      const logEntry = `${member.name} (joined ${member.joinDate}) backdated to ${periodStart}–${periodEnd} on ${todayStr()}`;
       const newLog = referrer.refLog ? `${referrer.refLog} | ${logEntry}` : logEntry;
       await store.update(refNorm, { refLog: newLog });
     }

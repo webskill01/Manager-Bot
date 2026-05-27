@@ -325,6 +325,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
 
 👤 MEMBERS
 • add [Name] [phone] / [day] / ref [refPhone]
+• add [Name] [phone] ref [refPhone] prev  →  credit ref to referrer's PREVIOUS billing period
 • addsilent [Name] [phone]  →  sheet only, no links
 • rejoin [phone] / [phone] [day]
 • kick [phone]
@@ -345,6 +346,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
 
 👥 REFERRALS
 • [phone] ref [refPhone]
+• [phone] ref [refPhone] prev  →  credit ref to referrer's PREVIOUS billing period
 • refs [phone]
 
 🔍 LOOKUP
