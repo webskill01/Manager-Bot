@@ -392,60 +392,119 @@ export async function startBot(config, log, authDir) {
       members: store.getAll().length,
       uptime: Date.now() - BOT_START_TIME,
     }));
+    // Status contract consumed by the scan page (mirrors whatsapp-multibot /status).
+    app.get('/status', (_, res) => res.json({
+      botName: config.botName,
+      connected: !!sock?.user,
+      qrAvailable: !!latestQR && (Date.now() - (qrTimestamp || 0) < 60000),
+      uptime: Date.now() - BOT_START_TIME,
+    }));
     app.get('/qr', async (req, res) => {
       if (!latestQR) return res.status(404).send('No QR — bot may already be connected.');
-      if (Date.now() - (qrTimestamp || 0) > 20000) return res.status(410).send('QR expired — wait for new one.');
+      if (Date.now() - (qrTimestamp || 0) > 60000) return res.status(410).send('QR expired — wait for new one.');
       const img = await QRCode.toBuffer(latestQR, { type: 'png', width: 400, margin: 2 });
       res.type('png').send(img);
     });
 
-    // Shareable, auto-refreshing scan page — hand the URL to whoever owns the phone.
-    // Polls /health for connection; refreshes the QR image every 3s while waiting.
+    // Shareable scan page (whatsapp-multibot style) — hand the URL to whoever owns the phone.
+    // Polls /status; only loads the QR image when one is available, and degrades gracefully
+    // to "Waiting for QR code…" instead of a broken image during the QR-rotation gaps.
     app.get(['/', '/scan'], (_, res) => {
       res.type('html').send(`<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${config.botName} — Link WhatsApp</title>
+<title>📱 ${config.botName} — Scan QR</title>
 <style>
-  *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-    background:#0b141a;color:#e9edef;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:20px}
-  .card{background:#111b21;border:1px solid #222d34;border-radius:16px;padding:28px;max-width:380px;width:100%;
-    text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.4)}
-  h1{font-size:18px;margin:0 0 4px} .sub{color:#8696a0;font-size:13px;margin:0 0 20px}
-  .qrbox{background:#fff;border-radius:12px;padding:14px;min-height:288px;display:flex;align-items:center;justify-content:center}
-  img{width:260px;height:260px;display:block}
-  .status{margin-top:18px;font-size:14px;padding:10px;border-radius:8px}
-  .waiting{background:#182229;color:#8696a0} .ok{background:#0a3d2e;color:#25d366} .err{background:#3d1a1a;color:#f15c6d}
-  .steps{text-align:left;color:#8696a0;font-size:12px;margin-top:16px;line-height:1.7}
-  .spin{display:inline-block;width:13px;height:13px;border:2px solid #25d366;border-top-color:transparent;
-    border-radius:50%;animation:s 1s linear infinite;vertical-align:-2px;margin-right:6px}
-  @keyframes s{to{transform:rotate(360deg)}}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+  .container{background:#fff;border-radius:20px;padding:40px;box-shadow:0 20px 60px rgba(0,0,0,.3);max-width:480px;width:100%;text-align:center}
+  .bot-header{display:flex;align-items:center;justify-content:center;margin-bottom:24px}
+  .bot-icon{font-size:3.4em;margin-right:16px}
+  .bot-info h1{font-size:1.8em;color:#333;margin-bottom:4px}
+  .bot-info .port{color:#888;font-size:.85em}
+  .status{padding:14px 24px;border-radius:10px;font-size:1.05em;font-weight:600;margin:18px 0;display:inline-block}
+  .status.connected{background:#d4edda;color:#155724}
+  .status.waiting{background:#fff3cd;color:#856404}
+  .status.error{background:#f8d7da;color:#721c24}
+  .qr-container{margin:26px 0;min-height:300px;display:flex;align-items:center;justify-content:center;background:#f8f9fa;border-radius:12px;padding:20px}
+  #qr-image{max-width:100%;height:auto;border-radius:10px;box-shadow:0 5px 15px rgba(0,0,0,.1)}
+  .loading-text{color:#888;animation:pulse 1.5s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  .instructions{background:#f8f9fa;padding:18px;border-radius:10px;margin:18px 0;text-align:left}
+  .instructions h3{color:#333;margin-bottom:12px;font-size:1.1em}
+  .instructions ol{margin-left:20px;color:#666;line-height:1.8}
+  .btn{padding:14px 24px;border:none;border-radius:10px;font-size:1em;font-weight:600;cursor:pointer;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;margin-top:10px}
+  .btn:hover{opacity:.9}
+  .hidden{display:none}
 </style></head><body>
-<div class="card">
-  <h1>📱 ${config.botName}</h1>
-  <p class="sub">Scan to link this WhatsApp account</p>
-  <div class="qrbox"><img id="qr" alt="Loading QR…" src="/qr"></div>
-  <div id="status" class="status waiting"><span class="spin"></span>Waiting for QR…</div>
-  <div class="steps">
-    1. Open WhatsApp → <b>Settings → Linked devices</b><br>
-    2. Tap <b>Link a device</b><br>
-    3. Point your phone at the QR above
+<div class="container">
+  <div class="bot-header">
+    <div class="bot-icon">📱</div>
+    <div class="bot-info">
+      <h1>${config.botName}</h1>
+      <div class="port">Link WhatsApp account</div>
+    </div>
   </div>
+  <div id="status" class="status waiting">⏳ Loading…</div>
+  <div class="qr-container">
+    <img id="qr-image" class="hidden" alt="QR Code">
+    <div id="loading-text" class="loading-text">Waiting for QR code…</div>
+  </div>
+  <div class="instructions" id="instructions">
+    <h3>📱 How to connect</h3>
+    <ol>
+      <li>Open WhatsApp on your phone</li>
+      <li>Tap <strong>Settings → Linked devices</strong></li>
+      <li>Tap <strong>Link a device</strong></li>
+      <li>Point your phone at the QR above</li>
+    </ol>
+  </div>
+  <button class="btn" onclick="refreshNow()">🔄 Refresh Now</button>
 </div>
 <script>
-  var qr=document.getElementById('qr'), st=document.getElementById('status');
-  function set(cls,html){ st.className='status '+cls; st.innerHTML=html; }
+  var connected=false;
+  var statusEl=document.getElementById('status');
+  var img=document.getElementById('qr-image');
+  var loadingText=document.getElementById('loading-text');
+  var instructions=document.getElementById('instructions');
+  function setStatus(cls,text){ statusEl.className='status '+cls; statusEl.textContent=text; }
+  function loadQR(){
+    img.onload=function(){ img.classList.remove('hidden'); loadingText.classList.add('hidden'); };
+    img.onerror=function(){ img.classList.add('hidden'); loadingText.classList.remove('hidden'); loadingText.textContent='Waiting for QR code…'; };
+    img.src='/qr?t='+Date.now();
+  }
+  function refreshNow(){ if(!connected) tick(); }
   async function tick(){
     try{
-      var h=await (await fetch('/health',{cache:'no-store'})).json();
-      if(h.connected){ set('ok','✅ Connected — you can close this page.'); qr.style.display='none'; return; }
-    }catch(e){ set('err','⚠️ Bot offline — retrying…'); }
-    qr.style.display='block';
-    qr.src='/qr?t='+Date.now();
-    if(st.className.indexOf('ok')===-1) set('waiting','<span class="spin"></span>Waiting for scan…');
-    setTimeout(tick,3000);
+      var d=await (await fetch('/status',{cache:'no-store'})).json();
+      if(d.connected){
+        connected=true;
+        setStatus('connected','✅ Connected to WhatsApp!');
+        img.classList.add('hidden');
+        loadingText.classList.remove('hidden');
+        loadingText.classList.remove('loading-text');
+        loadingText.textContent='Connected — you can close this page.';
+        instructions.classList.add('hidden');
+        return;
+      }
+      if(d.qrAvailable){
+        setStatus('waiting','📱 Scan this QR with WhatsApp');
+        loadQR();
+      } else {
+        setStatus('waiting','⏳ Waiting for QR code…');
+        img.classList.add('hidden');
+        loadingText.classList.remove('hidden');
+        loadingText.textContent='Bot is starting, please wait…';
+      }
+    }catch(e){
+      setStatus('error','❌ Bot offline or unreachable');
+      img.classList.add('hidden');
+      loadingText.classList.remove('hidden');
+      loadingText.textContent='Cannot reach bot — check pm2 status.';
+    }
   }
   tick();
+  setInterval(function(){ if(!connected) tick(); },4000);
 </script>
 </body></html>`);
     });
