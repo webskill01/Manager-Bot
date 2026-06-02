@@ -57,7 +57,7 @@ module.exports = {
         TZ: 'Asia/Kolkata',
         NODE_OPTIONS: '--max-old-space-size=256',
         BOT_NAME: 'bot-2',
-        STATS_PORT: '3011',
+        STATS_PORT: '3003',
       },
     },
   ],
