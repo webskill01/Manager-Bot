@@ -35,7 +35,7 @@
   "welcomeMessage": "SSA {name} paaji\nGroup ch duty 120+ group cho forward krde aa veer is krke advance Paytm kise nu ni Krna 🚨 \n\n Group ch free and exchange da msg allowed ni haiga ji",
   "trial": {
     "groupId": "120363406787538779@g.us",
-    "whitelist": ["9914623976","6284992669","9465995696","9465805369","7589414198","7589988141"],
+    "whitelist": ["9914623976","6284992669","9465995696","9465805369","917589414198","7589988141"],
     "batchSize": 10,
     "batchesPerDay": { "min": 3, "max": 5 },
     "messages": {
