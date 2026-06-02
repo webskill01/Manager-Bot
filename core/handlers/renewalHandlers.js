@@ -1,4 +1,4 @@
-import { normalizePhone, formatDate, todayStr, daysFromToday, formatDateTime, getReferralsInBillingPeriod } from '../globalConfig.js';
+import { normalizePhone, formatDate, todayStr, daysFromToday, formatDateTime, getReferralsInBillingPeriod, nextBillingForDay } from '../globalConfig.js';
 
 export function createRenewalHandlers(store, config, log) {
 
@@ -36,11 +36,11 @@ export function createRenewalHandlers(store, config, log) {
       }
     }
 
-    // Anchor on today: same day number, next calendar month.
-    // JS Date handles month-end overflow (e.g. May 31 → June 30, Jan 31 → Feb 28).
-    const now = new Date();
-    const day = billingDay !== null ? billingDay : now.getDate();
-    const newBillingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, day));
+    // Next billing = soonest occurrence of `day` strictly after today (clamped for short months).
+    // A specified day is treated as the member's anniversary day in the recent PAST, so on
+    // 1 Jun "renewed X 28" → 28 Jun (this month), not 28 Jul. No day given → one month from today.
+    const day = billingDay !== null ? billingDay : new Date().getDate();
+    const newBillingDate = formatDate(nextBillingForDay(day));
 
     await store.update(phone, {
       status: 'ACTIVE',

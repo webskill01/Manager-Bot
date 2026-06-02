@@ -103,6 +103,34 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
       }
 
       const member = state.members[index];
+
+      // Re-validate against the LIVE sheet before removing — between locking the list
+      // and reaching this person they may have renewed (billing pushed to future) or had
+      // their status changed. Refresh the cache and skip anyone no longer overdue.
+      await store.refresh();
+      const fresh = store.findByPhone(member.phone);
+      const isStillOverdue = (() => {
+        if (!fresh || fresh.status !== 'ACTIVE') return false;
+        const d = daysFromToday(fresh.billingDate);
+        return d !== null && d <= -config.overdue.consolidatedListDays;
+      })();
+
+      if (!isStillOverdue) {
+        const reason = !fresh ? 'no longer in sheet'
+          : fresh.status !== 'ACTIVE' ? `now ${fresh.status}`
+          : 'renewed / no longer overdue';
+        log.info(`⏭️  Kickall [${index + 1}/${state.members.length}]: ${member.name} skipped — ${reason}`);
+        state.members[index].done = true;
+        state.members[index].skipped = true;
+        state.currentIndex = index + 1;
+        saveState(state);
+        await notify(`⏭️ Kickall [${index + 1}/${state.members.length}]: ${member.name} (${member.phone}) skipped — ${reason}`);
+        // No WhatsApp op was performed, so proceed to the next person immediately.
+        if (index + 1 < state.members.length) scheduleNext(index + 1, 0);
+        else await finishKickall(state);
+        return;
+      }
+
       log.info(`🚫 Kickall [${index + 1}/${state.members.length}]: ${member.name} (${member.phone})`);
 
       const removedCount = await removeMemberFromAllGroups(member.phone);

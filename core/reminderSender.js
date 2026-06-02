@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate } from './globalConfig.js';
 
 export function createReminderSender(config, log) {
   let consecutiveFailures = 0;
@@ -90,7 +90,7 @@ export function createReminderSender(config, log) {
         try {
           const billing = parseDate(m.billingDate);
           const newBillingDate = formatDate(
-            new Date(billing.getFullYear(), billing.getMonth() + 1, billing.getDate())
+            clampedBillingDate(billing.getFullYear(), billing.getMonth() + 1, billing.getDate())
           );
           await store.update(m.phone, {
             status: 'ACTIVE',

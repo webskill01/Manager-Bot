@@ -1,0 +1,43 @@
+# bot-2 — Setup Checklist
+
+This folder is scaffolded but **not yet runnable**. Fill in the placeholders below, then start it.
+
+## 1. Google Sheet
+- Create a new Google Sheet with a tab named **`MEMBERS`**.
+- Header row (row 1), columns A→N:
+  `NAME | PHONE | JOIN_DATE | BILLING_DATE | STATUS | RENEWALS | PAID_LAST | REFERENCE | SKIP_REASON | ADDED_BY | LAST_UPDATED | LAST_RENEWED | REF_CREDIT_DATE | REF_LOG`
+- **Share** the sheet (Editor) with the service-account email found inside `service-account.json`.
+- Copy the sheet ID from its URL → put it in `.env` as `SHEET_ID`.
+
+## 2. Files to drop in this folder (all gitignored)
+- `service-account.json` — copy from `../bot-nitin/` (same Google Cloud project works, as long as the new sheet is shared with it).
+- `qr-payment.jpg` — the UPI QR image members receive with reminders.
+
+## 3. Fill in `config.json`
+- `paidGroups` — the `…@g.us` IDs of this bot's groups.
+- `groupLinks` — invite links sent to new members.
+- `welcomeMessage`, `messages.*` — customise text.
+- `allowedNumbers` — owner's 10-digit number(s) (these can issue commands).
+- `allowedLids` — leave `[]`; filled after first scan (see step 6).
+- (Optional) add a `trial` block only if this bot runs trial-group purges.
+
+## 4. Fill in `.env`
+- `OWNER_NUMBER`, `SHEET_ID`, and a **unique** `STATS_PORT` (already set to `3011`).
+
+## 5. Start + scan
+```bash
+pm2 start ecosystem.config.cjs --only bot-2     # or: pm2 reload ecosystem.config.cjs
+```
+Open the shareable scan page and hand the link to whoever owns the phone:
+```
+http://<server-ip>:3011/
+```
+They scan the QR (WhatsApp → Linked devices → Link a device). The page shows ✅ Connected when done.
+
+## 6. Capture the LID
+After the first scan, send the bot a DM. It will message the owner an "unknown LID".
+Copy that value into `config.json` → `allowedLids`, then:
+```bash
+pm2 reload ecosystem.config.cjs --only bot-2
+```
+Now the owner's commands are authorised.

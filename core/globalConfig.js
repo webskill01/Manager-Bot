@@ -103,6 +103,28 @@ export function todayStr() {
   return formatDate(new Date());
 }
 
+// Builds a Date for `day` of the given month/year, clamped to that month's last day.
+// Prevents JS month overflow: day 31 in a 30-day month → the 30th (never spills to next month).
+// e.g. clampedBillingDate(2026, 5, 31) → 30 Jun 2026 (not 1 Jul). Month index may be ±, JS normalizes years.
+export function clampedBillingDate(year, month, day) {
+  const lastDay = new Date(year, month + 1, 0).getDate();
+  return new Date(year, month, Math.min(day, lastDay));
+}
+
+// Next billing date for a given billing day-of-month: the soonest date with that day
+// that falls STRICTLY after today (clamped for short months). Equivalent to
+// "most recent past occurrence of that day + 1 month". Used by `renewed`.
+// e.g. today 1 Jun, day 28 → 28 Jun (not 28 Jul). day 1 → 1 Jul (next cycle).
+export function nextBillingForDay(day) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  let candidate = clampedBillingDate(today.getFullYear(), today.getMonth(), day);
+  if (candidate <= today) {
+    candidate = clampedBillingDate(today.getFullYear(), today.getMonth() + 1, day);
+  }
+  return candidate;
+}
+
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 // Human-readable date for messages: "27 May" format

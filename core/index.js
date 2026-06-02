@@ -399,9 +399,60 @@ export async function startBot(config, log, authDir) {
       res.type('png').send(img);
     });
 
+    // Shareable, auto-refreshing scan page — hand the URL to whoever owns the phone.
+    // Polls /health for connection; refreshes the QR image every 3s while waiting.
+    app.get(['/', '/scan'], (_, res) => {
+      res.type('html').send(`<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${config.botName} — Link WhatsApp</title>
+<style>
+  *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    background:#0b141a;color:#e9edef;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:20px}
+  .card{background:#111b21;border:1px solid #222d34;border-radius:16px;padding:28px;max-width:380px;width:100%;
+    text-align:center;box-shadow:0 10px 40px rgba(0,0,0,.4)}
+  h1{font-size:18px;margin:0 0 4px} .sub{color:#8696a0;font-size:13px;margin:0 0 20px}
+  .qrbox{background:#fff;border-radius:12px;padding:14px;min-height:288px;display:flex;align-items:center;justify-content:center}
+  img{width:260px;height:260px;display:block}
+  .status{margin-top:18px;font-size:14px;padding:10px;border-radius:8px}
+  .waiting{background:#182229;color:#8696a0} .ok{background:#0a3d2e;color:#25d366} .err{background:#3d1a1a;color:#f15c6d}
+  .steps{text-align:left;color:#8696a0;font-size:12px;margin-top:16px;line-height:1.7}
+  .spin{display:inline-block;width:13px;height:13px;border:2px solid #25d366;border-top-color:transparent;
+    border-radius:50%;animation:s 1s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes s{to{transform:rotate(360deg)}}
+</style></head><body>
+<div class="card">
+  <h1>📱 ${config.botName}</h1>
+  <p class="sub">Scan to link this WhatsApp account</p>
+  <div class="qrbox"><img id="qr" alt="Loading QR…" src="/qr"></div>
+  <div id="status" class="status waiting"><span class="spin"></span>Waiting for QR…</div>
+  <div class="steps">
+    1. Open WhatsApp → <b>Settings → Linked devices</b><br>
+    2. Tap <b>Link a device</b><br>
+    3. Point your phone at the QR above
+  </div>
+</div>
+<script>
+  var qr=document.getElementById('qr'), st=document.getElementById('status');
+  function set(cls,html){ st.className='status '+cls; st.innerHTML=html; }
+  async function tick(){
+    try{
+      var h=await (await fetch('/health',{cache:'no-store'})).json();
+      if(h.connected){ set('ok','✅ Connected — you can close this page.'); qr.style.display='none'; return; }
+    }catch(e){ set('err','⚠️ Bot offline — retrying…'); }
+    qr.style.display='block';
+    qr.src='/qr?t='+Date.now();
+    if(st.className.indexOf('ok')===-1) set('waiting','<span class="spin"></span>Waiting for scan…');
+    setTimeout(tick,3000);
+  }
+  tick();
+</script>
+</body></html>`);
+    });
+
     app.listen(port, '0.0.0.0', () => {
       log.info(`🌐 HTTP server: http://localhost:${port}`);
-      log.info(`📱 QR page:     http://localhost:${port}/qr`);
+      log.info(`📱 Scan page:   http://localhost:${port}/   (shareable)`);
       log.info(`💚 Health:      http://localhost:${port}/health`);
     });
   }

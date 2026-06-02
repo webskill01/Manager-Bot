@@ -1,4 +1,4 @@
-import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod } from '../globalConfig.js';
+import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod, clampedBillingDate } from '../globalConfig.js';
 
 export function createMemberHandlers(store, groupManager, config, log) {
   const inFlightAdds = new Set();
@@ -67,7 +67,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
     try {
       const now = new Date();
       const day = billingDay ?? now.getDate();
-      const billingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, day));
+      const billingDate = formatDate(clampedBillingDate(now.getFullYear(), now.getMonth() + 1, day));
 
       // Compute refCreditDate before add if backdating — pins referral to referrer's PREVIOUS billing window
       let refCreditDate = '';
@@ -186,7 +186,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
     try {
       const now = new Date();
       const day = billingDay ?? now.getDate();
-      const billingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, day));
+      const billingDate = formatDate(clampedBillingDate(now.getFullYear(), now.getMonth() + 1, day));
 
       await store.add({
         name,
@@ -242,7 +242,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
     const currentBilling = parseDate(member.billingDate);
     let newBillingDate = member.billingDate;
     if (currentBilling) {
-      const next = new Date(currentBilling.getFullYear(), currentBilling.getMonth() + 1, currentBilling.getDate());
+      const next = clampedBillingDate(currentBilling.getFullYear(), currentBilling.getMonth() + 1, currentBilling.getDate());
       newBillingDate = formatDate(next);
     }
 
@@ -361,7 +361,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
       if (isReactivation) {
         const now = new Date();
         const day = billingDay ?? now.getDate();
-        billingDate = formatDate(new Date(now.getFullYear(), now.getMonth() + 1, day));
+        billingDate = formatDate(clampedBillingDate(now.getFullYear(), now.getMonth() + 1, day));
         await store.update(phone, {
           status: 'ACTIVE',
           billingDate,
@@ -389,19 +389,21 @@ export function createMemberHandlers(store, groupManager, config, log) {
     const phone = normalizePhone(args[0]);
     if (phone.length !== 10) return '❌ Invalid number.';
 
+    // Works for ANY number — sheet membership is not required (e.g. fresh prospects).
     const member = store.findByPhone(phone);
-    if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
 
     const groupLinks = config.groupLinks || [];
     const welcome = config.welcomeMessage
-      ? config.welcomeMessage.replace(/\{name\}/g, member.name)
+      ? config.welcomeMessage.replace(/\{name\}/g, member?.name || 'ji')
       : null;
     const messages = welcome ? [...groupLinks, welcome] : [...groupLinks];
 
     if (messages.length === 0) return '⚠️ No groupLinks configured in config.json';
 
     const { sent, failed } = await groupManager.sendToMember(phone, messages);
-    let reply = `📨 Sent ${sent}/${messages.length} messages to ${member.name} (${phone})`;
+    const who = member ? `${member.name} (${phone})` : phone;
+    let reply = `📨 Sent ${sent}/${messages.length} messages to ${who}`;
+    if (!member) reply += `\nℹ️ ${phone} is not in the sheet — links sent anyway.`;
     if (failed > 0) reply += `\n⚠️ ${failed} failed — check if number is on WhatsApp`;
     reply += `\n\nWhen they join, use:\napprove  (approves all pending across all groups)`;
     return reply;

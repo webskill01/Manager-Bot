@@ -1,0 +1,63 @@
+{
+  "botName": "bot-2",
+  "paidGroups": [
+    "120363406478388313@g.us",
+    "120363408771786592@g.us"
+  ],
+  "upiQrPath": "./qr-payment.jpg",
+  "renewal": {
+    "fullAmount": 100,
+    "referralAmount": 50,
+    "billingCycleDays": 30
+  },
+  "joining": {
+    "fee": 100
+  },
+  "overdue": {
+    "autoReminderDays": 5,
+    "consolidatedListDays": 7
+  },
+  "rateLimits": {
+    "memberToMemberGapMinMs": 7000,
+    "memberToMemberGapMaxMs": 10000,
+    "groupOpGapMinMs": 8000,
+    "groupOpGapMaxMs": 12000,
+    "batchCooldownMs": 300000,
+    "batchSize": 20,
+    "secondBatchDelayMs": 3600000,
+    "circuitBreakerThreshold": 10,
+    "circuitBreakerCooldownMs": 60000
+  },
+  "groupLinks": [
+    "1.BAJWA TAXI (PAID) (AMRITSAR, JALANDHAR, LUDHIANA):\n https://chat.whatsapp.com/BsgzQdIxatK8WCtt54xwso",
+    "2.BAJWA TAXI (PAID) MIX DUTY:\n https://chat.whatsapp.com/KfD9KAZG8lMCQDRcN14AUW"
+  ],
+  "welcomeMessage": "SSA {name} paaji\nGroup ch duty 120+ group cho forward krde aa veer is krke advance Paytm kise nu ni Krna 🚨 \n\n Group ch free and exchange da msg allowed ni haiga ji",
+  "trial": {
+    "groupId": "120363406787538779@g.us",
+    "whitelist": ["9914623976","6284992669","9465995696","9465805369","7589414198","7589988141"],
+    "batchSize": 10,
+    "batchesPerDay": { "min": 3, "max": 5 },
+    "messages": {
+      "warningText": "Group vich continue rehan lyi apna name and gaddi no share kro ji 🚨⚠️",
+      "image": { "path": "./trial-image.jpeg", "caption": "Ehna group ch add hon lyi 7589414198 te msg kro ji\n\n24x7 Duty \nNo free exchange\nOnly duty" }
+    },
+    "completionMessage": "✅ Trial removal cycle complete."
+  },
+  "allowedNumbers": ["6283380110", "9914623976"],
+  "allowedLids": ["242902009692413","150714831646943"],
+  "schedule": {
+    "morningDigest": "0 6 * * *",
+    "reminderSend": "30 6 * * *",
+    "reminderSend2": "30 7 * * *",
+    "overdueCheck": "0 10 * * *",
+    "eveningSummary": "0 22 * * *",
+    "timezone": "Asia/Kolkata"
+  },
+  "messages": {
+    "reminder": "Hanji Sat sri Akal {name} veer ji\nAaj {date} nu thoda month pura hogya Bajwa Taxi Group da is te ₹100/- renew krdo ji 🙏",
+    "referralReminder": "Hanji Sat sri Akal {name} veer ji\nAaj {date} nu thoda month pura hogya Bajwa Taxi Group\nTusi ik banda add kraya si, iss lyi iste sirf ₹50/- pay krdo ji 🙏🏻",
+    "overdue": "Sat Sri Akal {name} paaji 🙏🏻\n🚨🚨 Aaj last date aaji renew krke dss deyo. 🙏🏻",
+    "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
+  }
+}
