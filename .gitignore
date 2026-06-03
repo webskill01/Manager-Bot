@@ -2,6 +2,9 @@
 node_modules/
 scripts/
 
+# Raw member data exports (contain real phone numbers — keep local only)
+*.xlsx
+
 # Bot secrets & auth (per-instance — never commit these)
 bots/*/baileys_auth/
 bots/*/.env
