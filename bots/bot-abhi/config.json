@@ -54,7 +54,7 @@
     "completionMessage": "✅ Trial removal cycle complete."
   },
    "allowedNumbers": ["6283380110", "9914623976","8725871944"],
-  "allowedLids": ["242902009692413","150714831646943"],
+  "allowedLids": ["242902009692413","150714831646943","275049772781610"],
   "schedule": {
     "morningDigest": "0 6 * * *",
     "reminderSend": "30 6 * * *",
