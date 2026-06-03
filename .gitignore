@@ -1,5 +1,7 @@
 # Dependencies
 node_modules/
+
+# Local-only dev & migration tooling (never needed on the VPS)
 scripts/
 
 # Raw member data exports (contain real phone numbers — keep local only)
@@ -30,10 +32,6 @@ PROGRESS_ARCHIVE.md
 
 # Setup guides (local reference only — contains server paths)
 NEW_BOT_SETUP.md
-
-# Scripts (one-time migration — not needed on VPS)
-scripts/raw_members.txt
-scripts/staging.csv
 
 # OS & editor noise
 .DS_Store
