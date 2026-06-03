@@ -134,6 +134,64 @@ export function friendlyDate(dateStr) {
   return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
 }
 
+// ─── Revenue split ────────────────────────────────────────────────────────────
+// Each bot may define an optional `split` block in config.json describing how the
+// month's revenue is divided between the people running it. Example (50-25-25):
+//   "split": { "shares": [
+//       { "label": "Worker",  "percent": 50 },
+//       { "label": "Nitin",   "percent": 25 },
+//       { "label": "Partner", "percent": 25 }
+//   ] }
+// Bots WITHOUT a split block keep the legacy 50-50 two-way behavior ("Per person: ₹X"),
+// so bot-nitin and bot-2 are unaffected.
+
+// Returns the configured shares array, or null when none is defined (→ legacy 50-50 path).
+export function getSplitShares(config) {
+  const shares = config && config.split && config.split.shares;
+  if (Array.isArray(shares) && shares.length > 0) return shares;
+  return null;
+}
+
+// Splits `total` across the configured shares → [{ label, percent, amount }].
+// Percentages need not sum to exactly 100 (we normalize). Any rounding drift is
+// absorbed by the largest share so the parts always sum back to `total`.
+export function computeSplit(total, config) {
+  const shares = getSplitShares(config);
+  if (!shares) {
+    const half = Math.round(total / 2);
+    return [
+      { label: 'Person 1', percent: 50, amount: half },
+      { label: 'Person 2', percent: 50, amount: total - half },
+    ];
+  }
+  const totalPercent = shares.reduce((s, x) => s + (Number(x.percent) || 0), 0) || 100;
+  let allocated = 0;
+  const parts = shares.map(s => {
+    const amount = Math.round((total * (Number(s.percent) || 0)) / totalPercent);
+    allocated += amount;
+    return { label: s.label || 'Share', percent: Number(s.percent) || 0, amount };
+  });
+  const drift = total - allocated;
+  if (drift !== 0) {
+    let maxIdx = 0;
+    for (let i = 1; i < parts.length; i++) if (parts[i].amount > parts[maxIdx].amount) maxIdx = i;
+    parts[maxIdx].amount += drift;
+  }
+  return parts;
+}
+
+// Renders the split for summaries/reports.
+// - No split block  → legacy single line "Per person: ₹X"          (bot-nitin, bot-2)
+// - Split block set → one line per share "Label (NN%): ₹X"         (e.g. bot-3, 50-25-25)
+export function formatSplit(total, config, indent = '   ') {
+  if (!getSplitShares(config)) {
+    return `${indent}Per person: ₹${Math.round(total / 2)}`;
+  }
+  return computeSplit(total, config)
+    .map(p => `${indent}${p.label} (${p.percent}%): ₹${p.amount}`)
+    .join('\n');
+}
+
 // Returns members referred by referrerPhone whose JOIN_DATE (or refCreditDate override) falls within
 // [billingDate - 1 month, billingDate) — the referrer's current billing window.
 export function getReferralsInBillingPeriod(referrerPhone, billingDate, members) {

@@ -1,0 +1,72 @@
+{
+  "botName": "bot-abhi",
+  "paidGroups": [
+    "120363405984520359@g.us",
+    "120363406438722163@g.us",
+    "120363424287416053@g.us"
+  ],
+  "upiQrPath": "./qr-payment.jpg",
+  "split": {
+    "shares": [
+      { "label": "Abhinav", "percent": 50 },
+      { "label": "Nitin", "percent": 25 },
+      { "label": "Tanishq", "percent": 25 }
+    ]
+  },
+  "renewal": {
+    "fullAmount": 100,
+    "referralAmount": 50,
+    "billingCycleDays": 30
+  },
+  "joining": {
+    "fee": 100
+  },
+  "overdue": {
+    "autoReminderDays": 5,
+    "consolidatedListDays": 7
+  },
+  "rateLimits": {
+    "memberToMemberGapMinMs": 7000,
+    "memberToMemberGapMaxMs": 10000,
+    "groupOpGapMinMs": 8000,
+    "groupOpGapMaxMs": 12000,
+    "batchCooldownMs": 300000,
+    "batchSize": 20,
+    "secondBatchDelayMs": 3600000,
+    "circuitBreakerThreshold": 10,
+    "circuitBreakerCooldownMs": 60000
+  },
+  "groupLinks": [
+    "1. SINGH TRAVELS (PAID) ( ONLY DELHI // GURGAON // NOIDA - PICK-DROP):\n https://chat.whatsapp.com/HqfQH5ylNaY3JKZxa0O89u",
+    "2. SINGH TRAVELS (PAID) (Chandigarh//mohali//zirakpur):\n https://chat.whatsapp.com/DXSzH4khbj4KUEl3eLRz72",
+    "3. SINGH TRAVELS (PAID) (MIX DUTY):\n https://chat.whatsapp.com/J2q9ydNBMjO8fF8x8UPmZ8"
+  ],
+  "welcomeMessage": "🚨 Group ch share hon waliyan duties kai groups cho forward hundiyan ne, is karke kise nu vi advance payment na kro.\n\n⚠️ Free te Exchange de messages allowed nahi han.\n\n🙏 Je kise fraud number di duty vekho ta number private msg kar deo.",
+  "trial": {
+    "groupId": "120363423723888340@g.us",
+    "whitelist": ["9914623976","6284992669","9465995696","9465805369","917589414198","7589988141"],
+    "batchSize": 10,
+    "batchesPerDay": { "min": 3, "max": 5 },
+    "messages": {
+      "warningText": "🚍 SINGH TRAVELS 🚍\n\n🚨 FREE MEMBERS REMOVED 🚨\n\n@all\naaj ton SINGH TRAVELS (ONLY DUTY) group monthly paid hogeya hai.\n\nJo vi veer group vich rehna chaunde ne, kirpa karke apna:\n\n✅ Name\n✅ ID Proof\n\nmennu share karo ji.\n\n💰 Monthly Fee: ₹100/- Only\n\n📌 Groups Available:\n\n1️⃣ Chandigarh Duty\n2️⃣ Delhi Duty\n3️⃣ All Area Mixed Duty\n\n📢 Duties 24/7 share kitiyan jaan gian.\n\n➕ Group vich add hon layi message karo:\n\n📞 9465995696\n📞 9465805369",
+      "image": { "path": "./trial-image.jpeg", "caption": "Ehna group ch add hon lyi 7589414198 te msg kro ji\n\n24x7 Duty \nNo free exchange\nOnly duty" }
+    },
+    "completionMessage": "✅ Trial removal cycle complete."
+  },
+   "allowedNumbers": ["6283380110", "9914623976","8725871944"],
+  "allowedLids": ["242902009692413","150714831646943"],
+  "schedule": {
+    "morningDigest": "0 6 * * *",
+    "reminderSend": "30 6 * * *",
+    "reminderSend2": "30 7 * * *",
+    "overdueCheck": "0 10 * * *",
+    "eveningSummary": "0 22 * * *",
+    "timezone": "Asia/Kolkata"
+  },
+  "messages": {
+    "reminder": "Hlo veer\nAjj tuhadi singh travels monthly paid groups di last date hai 🚨🚨\n\nRepay krdeo",
+    "referralReminder": "Hlo veer\nAjj tuhadi singh travels monthly paid groups di last date hai 🚨🚨\n\nRepay krdeo",
+    "overdue": "Hlo veer\ntuhadi monthly paid group di date nikal gyi hai 🚨 🚨 \nrepay krdo",
+    "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
+  }
+}

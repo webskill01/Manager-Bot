@@ -1,5 +1,6 @@
 # Dependencies
 node_modules/
+scripts/
 
 # Bot secrets & auth (per-instance — never commit these)
 bots/*/baileys_auth/

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, todayStr, getReferralsInBillingPeriod, parseDate, formatDate, normalizePhone } from '../globalConfig.js';
+import { daysFromToday, todayStr, getReferralsInBillingPeriod, parseDate, formatDate, normalizePhone, formatSplit } from '../globalConfig.js';
 
 // Unified date extractor → always returns "DD-MM-YYYY" or null.
 // Handles: DD-MM-YYYY, DD-MM-YYYY HH:MM, ISO YYYY-MM-DDTHH:...
@@ -201,7 +201,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
     msg += `💰 Today's Revenue: ₹${totalRevenue}\n`;
     if (joinRevenue > 0 || renewalRevenue > 0) {
       msg += `   (Joins ₹${joinRevenue} + Renewals ₹${renewalRevenue})\n`;
-      msg += `   Per person: ₹${Math.round(totalRevenue / 2)}\n\n`;
+      msg += `${formatSplit(totalRevenue, config)}\n\n`;
     } else {
       msg += '\n';
     }
@@ -263,12 +263,11 @@ export function createReportHandlers(store, config, botStartTime, log) {
     const joinRevenue = joinsThisMonth.length * config.joining.fee;
 
     const totalRevenue = renewalRevenue + joinRevenue;
-    const perPerson = Math.round(totalRevenue / 2);
     const monthName = now.toLocaleString('en-IN', { month: 'long' });
 
     let msg = `💰 Revenue — ${monthName} ${yyyy}\n\n`;
     msg += `Total: ₹${totalRevenue}\n`;
-    msg += `Per person: ₹${perPerson}\n\n`;
+    msg += `${formatSplit(totalRevenue, config, '')}\n\n`;
     msg += `♻️ Renewals: ${renewedThisMonth.length} (₹${renewalRevenue})\n`;
     if (fullRenewals.length > 0)
       msg += `   • ${fullRenewals.length} full @ ₹${config.renewal.fullAmount}\n`;
@@ -506,7 +505,7 @@ Example: R1 R2 S3
       msg += `   Estimated: ₹${estimated}\n`;
     }
     msg += `\n💰 Total expected: ₹${total}`;
-    msg += `\n   Per person: ₹${Math.round(total / 2)}`;
+    msg += `\n${formatSplit(total, config)}`;
     return msg;
   }
 
@@ -760,7 +759,7 @@ Example: R1 R2 S3
       msg += `⏭️ Skipped: ${skippedMembers.length}\n`;
 
     msg += `\n💰 Revenue: ₹${totalRevenue}`;
-    if (totalRevenue > 0) msg += `\n   Joins ₹${joinRevenue} + Renewals ₹${renewRevenue}\n   Per person: ₹${Math.round(totalRevenue / 2)}`;
+    if (totalRevenue > 0) msg += `\n   Joins ₹${joinRevenue} + Renewals ₹${renewRevenue}\n${formatSplit(totalRevenue, config)}`;
     msg += `\n📊 Net change: ${net >= 0 ? '+' : ''}${net} members`;
 
     return msg;

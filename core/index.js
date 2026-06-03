@@ -48,6 +48,7 @@ export async function startBot(config, log, authDir) {
   let reconnectTimer = null;
   let isShuttingDown = false;
   let isConnecting = false;
+  let loggedOut = false;   // set on a 401 — halts all reconnects until manual re-link
   let authState = null;
   let saveCreds = null;
   let latestQR = null;
@@ -101,7 +102,7 @@ export async function startBot(config, log, authDir) {
   }
 
   function scheduleReconnect(reason) {
-    if (isShuttingDown) return;
+    if (isShuttingDown || loggedOut) return;
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
 
     const delay = Math.min(3000 * Math.pow(2, reconnectAttempts), 60000);
@@ -210,7 +211,7 @@ export async function startBot(config, log, authDir) {
   }
 
   async function connectToWhatsApp() {
-    if (isConnecting) return;
+    if (isConnecting || loggedOut) return;
     isConnecting = true;
 
     if (sock) destroySocket('reconnect');
@@ -342,22 +343,21 @@ export async function startBot(config, log, authDir) {
           groupManager.markAborted();
 
           if (statusCode === DisconnectReason.loggedOut) {
-            log.error('❌ LOGGED OUT by WhatsApp — clearing auth for fresh QR scan');
-            // Abort was already called above
-            // Reset in-memory auth state so next connect starts clean
-            authState = null;
-            saveCreds = null;
-            // Delete baileys_auth/ so next connect generates a new QR instead of looping 401
-            try {
-              const { rm } = await import('fs/promises');
-              await rm(authDir, { recursive: true, force: true });
-              log.info('🗑️  Auth cleared — scan the new QR code to reconnect');
-            } catch (e) {
-              log.warn(`⚠️  Auth clear failed: ${e.message} — delete baileys_auth/ manually`);
-            }
-            // Reset counter and reconnect — will show fresh QR (no exit = no PM2 loop)
-            reconnectAttempts = 0;
-            scheduleReconnect('reauth-qr');
+            // 401 = WhatsApp forcibly unlinked this device. On a fresh/low-trust
+            // number this usually means the account is restricted or temp-banned.
+            // DO NOT auto-wipe auth and loop a fresh QR: repeatedly re-linking a
+            // flagged number escalates a temporary restriction toward a permanent
+            // ban. Halt all reconnects, preserve auth for inspection, and require
+            // a deliberate manual re-link once the operator has confirmed the
+            // number is healthy again.
+            loggedOut = true;
+            if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+            log.error('❌ LOGGED OUT by WhatsApp (401) — device unlinked. Reconnects HALTED.');
+            log.error('   This number is likely restricted/temp-banned. Do NOT keep rescanning it.');
+            log.error('   To re-link AFTER the number is confirmed healthy:');
+            log.error(`     1) pm2 stop ${config.botName}`);
+            log.error(`     2) delete the auth folder:  ${authDir}`);
+            log.error(`     3) pm2 start ${config.botName}  and scan the QR once`);
             return;
           }
 
@@ -387,8 +387,9 @@ export async function startBot(config, log, authDir) {
 
     app.get('/ping', (_, res) => res.send('ALIVE'));
     app.get('/health', (_, res) => res.json({
-      status: sock?.user ? 'healthy' : 'degraded',
+      status: sock?.user ? 'healthy' : (loggedOut ? 'logged-out' : 'degraded'),
       connected: !!sock?.user,
+      loggedOut,
       members: store.getAll().length,
       uptime: Date.now() - BOT_START_TIME,
     }));
@@ -396,7 +397,8 @@ export async function startBot(config, log, authDir) {
     app.get('/status', (_, res) => res.json({
       botName: config.botName,
       connected: !!sock?.user,
-      qrAvailable: !!latestQR && (Date.now() - (qrTimestamp || 0) < 60000),
+      loggedOut,
+      qrAvailable: !loggedOut && !!latestQR && (Date.now() - (qrTimestamp || 0) < 60000),
       uptime: Date.now() - BOT_START_TIME,
     }));
     app.get('/qr', async (req, res) => {
