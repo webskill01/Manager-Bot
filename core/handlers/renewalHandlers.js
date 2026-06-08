@@ -69,7 +69,7 @@ export function createRenewalHandlers(store, config, log) {
     const lines = due.map(m => {
       const refs = getReferralsInBillingPeriod(m.phone, m.billingDate, all).length;
       const refTag = refs >= 2 ? '  🎁 2 refs this month — auto-renew'
-        : refs === 1 ? '  ★ 1 ref — ₹45' : '';
+        : refs === 1 ? `  ★ 1 ref — ₹${config.renewal.referralAmount}` : '';
       return `• ${m.name} • ${m.phone}${refTag}`;
     }).join('\n');
     return `📅 Due ${label} — ${dateStr} (${due.length} members):\n\n${lines}`;

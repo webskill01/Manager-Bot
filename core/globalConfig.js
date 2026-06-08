@@ -182,13 +182,13 @@ export function computeSplit(total, config) {
 
 // Renders the split for summaries/reports.
 // - No split block  → legacy single line "Per person: ₹X"          (bot-nitin, bot-2)
-// - Split block set → one line per share "Label (NN%): ₹X"         (e.g. bot-3, 50-25-25)
+// - Split block set → one line per share "Label: ₹X"               (e.g. bot-abhi, 50-25-25)
 export function formatSplit(total, config, indent = '   ') {
   if (!getSplitShares(config)) {
     return `${indent}Per person: ₹${Math.round(total / 2)}`;
   }
   return computeSplit(total, config)
-    .map(p => `${indent}${p.label} (${p.percent}%): ₹${p.amount}`)
+    .map(p => `${indent}${p.label}: ₹${p.amount}`)
     .join('\n');
 }
 

@@ -43,7 +43,7 @@ export function createLookupHandlers(store, config, log) {
     const currentRefs = getReferralsInBillingPeriod(m.phone, m.billingDate, all);
     const allTimeRefs = all.filter(r => r.reference && normalizePhone(r.reference) === m.phone);
     const refLine = allTimeRefs.length > 0
-      ? `👥 Refs: ${currentRefs.length} this period (${currentRefs.length >= 2 ? '🎉 free renewal' : currentRefs.length === 1 ? '💰 ₹45' : '₹90'}) | ${allTimeRefs.length} all-time`
+      ? `👥 Refs: ${currentRefs.length} this period (${currentRefs.length >= 2 ? '🎉 free renewal' : currentRefs.length === 1 ? `💰 ₹${config.renewal.referralAmount}` : `₹${config.renewal.fullAmount}`}) | ${allTimeRefs.length} all-time`
       : '';
 
     let referredByLine = '';

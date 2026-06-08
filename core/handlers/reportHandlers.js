@@ -71,7 +71,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
     if (dueToday.length > 0) {
       msg += dueToday.map(m => {
         const refs = getReferralsInBillingPeriod(m.phone, m.billingDate, all).length;
-        const refTag = refs >= 2 ? '  🎉 2 refs → auto-renew' : refs === 1 ? '  💰 1 ref → ₹45' : '';
+        const refTag = refs >= 2 ? '  🎉 2 refs → auto-renew' : refs === 1 ? `  💰 1 ref → ₹${config.renewal.referralAmount}` : '';
         return `   • ${m.name}  ${m.phone}${refTag}`;
       }).join('\n') + '\n';
     }
@@ -133,14 +133,17 @@ export function createReportHandlers(store, config, botStartTime, log) {
     ].join('-'); // "DD-MM-YYYY"
 
     const newToday = all.filter(m => m.joinDate === targetDateStr);
+    // Detect renewals via lastRenewed (set ONLY by the "renewed" command), NOT lastUpdated —
+    // lastUpdated is bumped by every write (incl. kickall's status→REMOVED), which would otherwise
+    // make a previously-renewed member who was removed today wrongly appear as "renewed today".
     const renewedToday = all.filter(m =>
-      isUpdatedOn(m.lastUpdated, targetDateStr) && m.renewals > 0
+      m.lastRenewed && isUpdatedOn(m.lastRenewed, targetDateStr) && m.renewals > 0
       && m.joinDate !== targetDateStr && Number(m.paidLast) !== 0
-    ).sort((a, b) => (a.lastUpdated || '').localeCompare(b.lastUpdated || ''));
+    ).sort((a, b) => (a.lastRenewed || '').localeCompare(b.lastRenewed || ''));
     const autoRenewedToday = all.filter(m =>
-      isUpdatedOn(m.lastUpdated, targetDateStr) && m.renewals > 0
+      m.lastRenewed && isUpdatedOn(m.lastRenewed, targetDateStr) && m.renewals > 0
       && m.joinDate !== targetDateStr && Number(m.paidLast) === 0
-    ).sort((a, b) => (a.lastUpdated || '').localeCompare(b.lastUpdated || ''));
+    ).sort((a, b) => (a.lastRenewed || '').localeCompare(b.lastRenewed || ''));
     const removedToday = all.filter(m =>
       m.status === 'REMOVED' && isUpdatedOn(m.lastUpdated, targetDateStr)
     );
@@ -179,8 +182,15 @@ export function createReportHandlers(store, config, botStartTime, log) {
     }
 
     const totalRenewals = renewedToday.length + autoRenewedToday.length;
+    // Headline count weights half-payment (referral) renewals as 0.5; full & auto-renews
+    // count as 1. e.g. 4 full + 2 referral → 5, 4 full + 1 referral → 4.5.
+    const weightedRenewals =
+      renewedToday.reduce((s, m) => s + (Number(m.paidLast) === config.renewal.referralAmount ? 0.5 : 1), 0)
+      + autoRenewedToday.length;
+    const renewalCountLabel = Number.isInteger(weightedRenewals)
+      ? String(weightedRenewals) : weightedRenewals.toFixed(1);
     if (totalRenewals > 0) {
-      msg += `♻️ Renewals: ${totalRenewals}\n`;
+      msg += `♻️ Renewals: ${renewalCountLabel}\n`;
       if (fullRenewals.length > 0) {
         msg += `   • ${fullRenewals.length} full @ ₹${config.renewal.fullAmount} = ₹${fullRenewals.length * config.renewal.fullAmount}\n`;
         msg += fullRenewals.map(m => `      ${m.name} • ${m.phone}`).join('\n') + '\n';

@@ -112,7 +112,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
           }
           const refs = getReferralsInBillingPeriod(referrerPhone, referrer.billingDate, store.getAll()).length;
           const refTag = refs >= 2 ? `🎁 ${refs} refs this month — free renewal`
-            : refs === 1 ? `★ 1 ref this month — ₹45` : '0 refs';
+            : refs === 1 ? `★ 1 ref this month — ₹${config.renewal.referralAmount}` : '0 refs';
           const backdateNote = refCreditDate ? ' ⏪ backdated' : '';
           refNote = `\n👥 Referrer: ${referrer.name} — ${refTag}${backdateNote}`;
         } else {
@@ -463,7 +463,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
     if (referrer) {
       const refs = getReferralsInBillingPeriod(refNorm, referrer.billingDate, store.getAll()).length;
       const refTag = refs >= 2 ? `🎁 ${refs} refs this month — free renewal`
-        : refs === 1 ? `★ 1 ref this month — ₹45` : '0 refs this month';
+        : refs === 1 ? `★ 1 ref this month — ₹${config.renewal.referralAmount}` : '0 refs this month';
       return `✅ ${member.name}'s referrer set to ${referrer.name} (${refNorm})\n${referrer.name}: ${refTag}${backdateNote}`;
     }
 
@@ -502,7 +502,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
       ? `  Count: 0`
       : currentRefs.length >= 2
         ? `  Count: ${currentRefs.length} → 🎉 Free renewal on ${member.billingDate}`
-        : `  Count: 1 → 💰 ₹45 on ${member.billingDate}`;
+        : `  Count: 1 → 💰 ₹${config.renewal.referralAmount} on ${member.billingDate}`;
     msg += `${countLine}\n`;
 
     msg += `\nAll-time (${allTimeRefs.length} total):`;
