@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, isDelayActive } from './globalConfig.js';
 
 const MIN_GAP_MS = 15 * 60 * 1000;
 const MAX_GAP_MS = 30 * 60 * 1000;
@@ -38,7 +38,8 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
     return all
       .filter(m => {
         const days = daysFromToday(m.billingDate);
-        return m.status === 'ACTIVE' && days !== null && days <= -config.overdue.consolidatedListDays;
+        // Delayed members (paid-promise snooze) stay overdue but are hidden from the removal list.
+        return m.status === 'ACTIVE' && days !== null && days <= -config.overdue.consolidatedListDays && !isDelayActive(m);
       })
       .map(m => ({ ...m, daysOverdue: Math.abs(daysFromToday(m.billingDate)) }))
       .sort((a, b) => b.daysOverdue - a.daysOverdue);
@@ -111,6 +112,7 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
       const fresh = store.findByPhone(member.phone);
       const isStillOverdue = (() => {
         if (!fresh || fresh.status !== 'ACTIVE') return false;
+        if (isDelayActive(fresh)) return false; // delayed mid-run — skip until the delay expires
         const d = daysFromToday(fresh.billingDate);
         return d !== null && d <= -config.overdue.consolidatedListDays;
       })();
@@ -118,6 +120,7 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
       if (!isStillOverdue) {
         const reason = !fresh ? 'no longer in sheet'
           : fresh.status !== 'ACTIVE' ? `now ${fresh.status}`
+          : isDelayActive(fresh) ? `delayed until ${fresh.delayUntil}`
           : 'renewed / no longer overdue';
         log.info(`⏭️  Kickall [${index + 1}/${state.members.length}]: ${member.name} skipped — ${reason}`);
         state.members[index].done = true;

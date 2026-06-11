@@ -1,4 +1,4 @@
-import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod, clampedBillingDate } from '../globalConfig.js';
+import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod, clampedBillingDate, daysFromToday } from '../globalConfig.js';
 
 export function createMemberHandlers(store, groupManager, config, log) {
   const inFlightAdds = new Set();
@@ -248,6 +248,39 @@ export function createMemberHandlers(store, groupManager, config, log) {
 
     await store.update(phone, { status: 'SKIPPED', skipReason: reason, billingDate: newBillingDate });
     return `✅ ${member.name} marked SKIPPED — won't appear in auto-remove list.\nReason: ${reason}\n📅 Billing pushed to: ${newBillingDate}`;
+  }
+
+  async function handleDelay(args) {
+    if (args.length < 1) return '❌ Format: delay [phone] [days]  (e.g. delay 98551XXXXX 1 — default 1 day)';
+    const phone = normalizePhone(args[0]);
+    if (phone.length !== 10) return '❌ Invalid number. Use 10 digits: delay 98551XXXXX 1';
+
+    const member = store.findByPhone(phone);
+    if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
+    if (member.status !== 'ACTIVE') return `⚠️ ${member.name} is ${member.status} — delay only works for ACTIVE members.`;
+
+    // Optional day count (default 1). "delay 98xxx" → tomorrow, "delay 98xxx 0" → today only.
+    let days = 1;
+    if (args[1] !== undefined) {
+      if (!/^\d{1,2}$/.test(args[1])) return '❌ Days must be a number 0–31. Format: delay [phone] [days]';
+      days = parseInt(args[1], 10);
+    }
+    days = Math.min(Math.max(days, 0), 31);
+
+    const until = new Date();
+    until.setHours(0, 0, 0, 0);
+    until.setDate(until.getDate() + days);
+    const delayUntil = formatDate(until);
+
+    await store.update(phone, { delayUntil });
+
+    const overdueDays = daysFromToday(member.billingDate);
+    const overdueLabel = overdueDays !== null && overdueDays < 0
+      ? ` (currently ${Math.abs(overdueDays)}d overdue)` : '';
+    log.info(`⏸️  Delayed ${member.name} (${phone}) until ${delayUntil} [${days}d]`);
+    return `⏸️ ${member.name} (${phone}) delayed until ${delayUntil}${overdueLabel}.\n` +
+      `Hidden from the removal list until then — still tracked as overdue.\n` +
+      `Reappears for removal after ${delayUntil} if still unpaid.`;
   }
 
   async function handleUnskip(args) {
@@ -536,5 +569,5 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return `✅ Rejected ${phone} in ${rejected}/${found} group(s)${failed > 0 ? ` (${failed} failed)` : ''}`;
   }
 
-  return { handleAdd, handleSilentAdd, handleKick, handleSkip, handleUnskip, handleLinks, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
+  return { handleAdd, handleSilentAdd, handleKick, handleSkip, handleUnskip, handleDelay, handleLinks, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
 }

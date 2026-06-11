@@ -182,11 +182,11 @@ export function createReportHandlers(store, config, botStartTime, log) {
     }
 
     const totalRenewals = renewedToday.length + autoRenewedToday.length;
-    // Headline count weights half-payment (referral) renewals as 0.5; full & auto-renews
-    // count as 1. e.g. 4 full + 2 referral → 5, 4 full + 1 referral → 4.5.
+    // Headline count weights half-payment (referral) renewals as 0.5 and full renewals as 1.
+    // Ref-free auto-renewals (₹0, earned via 2 referrals) are still LISTED below but are NOT
+    // counted in this total — they bring in no revenue. e.g. 4 full + 1 referral + 3 ref-free → 4.5.
     const weightedRenewals =
-      renewedToday.reduce((s, m) => s + (Number(m.paidLast) === config.renewal.referralAmount ? 0.5 : 1), 0)
-      + autoRenewedToday.length;
+      renewedToday.reduce((s, m) => s + (Number(m.paidLast) === config.renewal.referralAmount ? 0.5 : 1), 0);
     const renewalCountLabel = Number.isInteger(weightedRenewals)
       ? String(weightedRenewals) : weightedRenewals.toFixed(1);
     if (totalRenewals > 0) {
@@ -339,6 +339,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
 • rejoin [phone] / [phone] [day]
 • kick [phone]
 • skip [phone] [reason]  /  unskip [phone]
+• delay [phone] [days]  →  hide from removal list N days (still overdue; default 1)
 • approve / approveall  /  rejectall
 • sendlinks [phone]  /  links [phone]
 • groupcheck [phone]

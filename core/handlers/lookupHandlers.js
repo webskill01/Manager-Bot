@@ -1,4 +1,4 @@
-import { normalizePhone, daysFromToday, getReferralsInBillingPeriod } from '../globalConfig.js';
+import { normalizePhone, daysFromToday, getReferralsInBillingPeriod, isDelayActive } from '../globalConfig.js';
 
 export function createLookupHandlers(store, config, log) {
 
@@ -32,7 +32,8 @@ export function createLookupHandlers(store, config, log) {
     else if (days > 0) daysLabel = `due in ${days} days (${member.billingDate})`;
     else daysLabel = `${Math.abs(days)} days OVERDUE`;
 
-    return `📋 ${member.name} (${phone})\nStatus: ${member.status}\nBilling: ${daysLabel}\nRenewals: ${member.renewals} | Last paid: ₹${member.paidLast}`;
+    const delayLine = isDelayActive(member) ? `\n⏸️ Delayed until: ${member.delayUntil} (hidden from removal list)` : '';
+    return `📋 ${member.name} (${phone})\nStatus: ${member.status}\nBilling: ${daysLabel}\nRenewals: ${member.renewals} | Last paid: ₹${member.paidLast}${delayLine}`;
   }
 
   function formatMemberDetail(m) {
@@ -64,6 +65,7 @@ export function createLookupHandlers(store, config, log) {
       referredByLine,
       refLine,
       m.skipReason ? `⏭️ Skip reason: ${m.skipReason}` : '',
+      isDelayActive(m) ? `⏸️ Delayed until: ${m.delayUntil} (hidden from removal list)` : '',
     ].filter(Boolean).join('\n');
   }
 

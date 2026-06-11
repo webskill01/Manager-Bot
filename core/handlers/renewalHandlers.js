@@ -1,4 +1,4 @@
-import { normalizePhone, formatDate, todayStr, daysFromToday, formatDateTime, getReferralsInBillingPeriod, nextBillingForDay } from '../globalConfig.js';
+import { normalizePhone, formatDate, todayStr, daysFromToday, formatDateTime, getReferralsInBillingPeriod, nextBillingForDay, isDelayActive } from '../globalConfig.js';
 
 export function createRenewalHandlers(store, config, log) {
 
@@ -48,6 +48,7 @@ export function createRenewalHandlers(store, config, log) {
       renewals: member.renewals + 1,
       paidLast: amount,
       lastRenewed: formatDateTime(new Date()),
+      delayUntil: '', // clear any pending payment-delay snooze on renewal
     });
 
     const type = amount === config.renewal.fullAmount ? 'full' : 'referral';
@@ -87,9 +88,10 @@ export function createRenewalHandlers(store, config, log) {
 
     if (overdue.length === 0) return '✅ No overdue members.';
 
-    const lines = overdue.map((m, i) =>
-      `[${i + 1}] ${m.name} • ${m.phone} • ${m.daysOverdue} days overdue`
-    ).join('\n');
+    const lines = overdue.map((m, i) => {
+      const delayTag = isDelayActive(m) ? `  ⏸️ delayed→${m.delayUntil}` : '';
+      return `[${i + 1}] ${m.name} • ${m.phone} • ${m.daysOverdue} days overdue${delayTag}`;
+    }).join('\n');
 
     return `⚠️ OVERDUE MEMBERS — ${todayStr()} (${overdue.length} members):\n\n${lines}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3`;
   }
@@ -109,7 +111,8 @@ export function createRenewalHandlers(store, config, log) {
       const label = days === 0 ? 'due today' : `${days}d overdue`;
       const refs = getReferralsInBillingPeriod(m.phone, m.billingDate, all).length;
       const refTag = refs >= 2 ? '  🎁 2 refs' : refs === 1 ? '  ★ 1 ref' : '';
-      return `• ${m.name} • ${m.phone} • ${label}${refTag}`;
+      const delayTag = isDelayActive(m) ? `  ⏸️ delayed→${m.delayUntil}` : '';
+      return `• ${m.name} • ${m.phone} • ${label}${refTag}${delayTag}`;
     }).join('\n');
 
     return `⏳ PENDING RENEWALS (${pending.length}):\n\n${lines}`;

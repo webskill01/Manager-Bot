@@ -1,4 +1,4 @@
-import { daysFromToday, sleep, randomBetween, normalizePhone } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, isDelayActive } from './globalConfig.js';
 
 export function createOverdueEngine(config, log) {
 
@@ -21,7 +21,8 @@ export function createOverdueEngine(config, log) {
     const day7plus = active
       .filter(m => {
         const d = daysFromToday(m.billingDate);
-        return d !== null && d <= -(config.overdue.consolidatedListDays);
+        // Skip members with an active delay — they're hidden from the removal list until it expires.
+        return d !== null && d <= -(config.overdue.consolidatedListDays) && !isDelayActive(m);
       })
       .map(m => ({ ...m, daysOverdue: Math.abs(daysFromToday(m.billingDate)) }))
       .sort((a, b) => b.daysOverdue - a.daysOverdue);

@@ -102,6 +102,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'kick':       return memberH.handleKick(mergePhoneFromStart(args));
         case 'skip':       return memberH.handleSkip(mergePhoneFromStart(args));
         case 'unskip':     return memberH.handleUnskip(mergePhoneFromStart(args));
+        case 'delay':      return memberH.handleDelay(mergePhoneFromStart(args));
         case 'approve':
           if (args.length > 0) return memberH.handleApprovePhone(mergePhoneFromStart(args));
           return memberH.handleApproveAll();

@@ -103,6 +103,15 @@ export function todayStr() {
   return formatDate(new Date());
 }
 
+// True when a member currently has an active payment "delay" — i.e. delayUntil is set and
+// falls on today or in the future. Delayed members stay ACTIVE/overdue but are hidden from
+// the bulk removal list until the date passes. Used by `delay [phone] [days]`.
+export function isDelayActive(member) {
+  if (!member || !member.delayUntil) return false;
+  const d = daysFromToday(member.delayUntil);
+  return d !== null && d >= 0;
+}
+
 // Builds a Date for `day` of the given month/year, clamped to that month's last day.
 // Prevents JS month overflow: day 31 in a 30-day month → the 30th (never spills to next month).
 // e.g. clampedBillingDate(2026, 5, 31) → 30 Jun 2026 (not 1 Jul). Month index may be ±, JS normalizes years.
