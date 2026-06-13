@@ -67,6 +67,11 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
       spreadsheetId,
       range: `${SHEET_NAME}!A:O`,
       valueInputOption: 'RAW',
+      // INSERT_ROWS (not the API default OVERWRITE): always insert a brand-new row.
+      // With OVERWRITE the API re-detects the "table" on every call and, when that
+      // detection picks the wrong last row — or when two appends race — the new row
+      // lands on top of the previous one, silently deleting the member just added.
+      insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [memberToRow(member)] },
     });
   }
@@ -94,6 +99,7 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
       spreadsheetId,
       range: `${SHEET_NAME}!A:O`,
       valueInputOption: 'RAW',
+      insertDataOption: 'INSERT_ROWS',
       requestBody: { values: members.map(memberToRow) },
     });
   }
