@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, normalizePhone as normPhone, getReferralsInBillingPeriod, todayStr } from './globalConfig.js';
+import { daysFromToday, normalizePhone as normPhone, getReferralsInBillingPeriod, todayStr, sleep } from './globalConfig.js';
 import { createMemberHandlers } from './handlers/memberHandlers.js';
 import { createRenewalHandlers } from './handlers/renewalHandlers.js';
 import { createLookupHandlers } from './handlers/lookupHandlers.js';
@@ -67,6 +67,88 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
       }
     }
     return results.join('\n');
+  }
+
+  // ── TEMP diagnostic: group ↔ sheet JID feasibility probe ─────────────────
+  // Sweeps all paid groups, classifies every participant's JID, and reports
+  // how many could actually be matched against the sheet. Throwaway command —
+  // used to decide how reliable a "members not in sheet" audit can be.
+  async function handleDiag() {
+    const members = store.getAll();
+    const sheetPhones = new Set(members.map(m => normPhone(m.phone)));
+    const allowedLids = (config.allowedLids || []).map(l => String(l).split(':')[0]);
+
+    let total = 0, phoneJid = 0, lidJid = 0, otherJid = 0;
+    let phoneInSheet = 0, phoneNotInSheet = 0;
+    let lidOwnAdmin = 0, lidWithPhoneField = 0, lidPhoneMatched = 0, lidUnresolvable = 0;
+    let sampleKeys = null;
+    const perGroup = [];
+
+    for (let i = 0; i < config.paidGroups.length; i++) {
+      const groupId = config.paidGroups[i];
+      let meta;
+      try {
+        meta = await sock.groupMetadata(groupId);
+      } catch (err) {
+        perGroup.push(`• ${groupId.slice(0, 10)}… → ERR ${err.message}`);
+        continue;
+      }
+      const parts = meta.participants || [];
+      if (!sampleKeys && parts.length) sampleKeys = Object.keys(parts[0]);
+
+      let gPhone = 0, gLid = 0, gMiss = 0;
+      for (const p of parts) {
+        total++;
+        const jid = p.jid || p.id || '';
+        // Some Baileys builds attach the real phone to LID participants here
+        const phoneField = p.phoneNumber || p.jid || '';
+        if (jid.endsWith('@s.whatsapp.net')) {
+          phoneJid++; gPhone++;
+          const ph = normPhone(jid.replace('@s.whatsapp.net', '').replace(/\D/g, ''));
+          if (sheetPhones.has(ph)) phoneInSheet++;
+          else { phoneNotInSheet++; gMiss++; }
+        } else if (jid.endsWith('@lid')) {
+          lidJid++; gLid++;
+          const raw = jid.replace('@lid', '').split(':')[0];
+          if (allowedLids.includes(raw)) { lidOwnAdmin++; continue; }
+          // Can we recover a phone for this LID from any field?
+          const recovered = String(phoneField).includes('@s.whatsapp.net')
+            ? normPhone(String(phoneField).replace('@s.whatsapp.net', '').replace(/\D/g, ''))
+            : null;
+          if (recovered) {
+            lidWithPhoneField++;
+            if (sheetPhones.has(recovered)) lidPhoneMatched++;
+            else { phoneNotInSheet++; gMiss++; }
+          } else {
+            lidUnresolvable++;
+          }
+        } else {
+          otherJid++;
+        }
+      }
+      perGroup.push(`• ${(meta.subject || groupId).slice(0, 22)}: ${parts.length}p | 📱${gPhone} 🆔${gLid} | ${gMiss} not-in-sheet`);
+      if (i < config.paidGroups.length - 1) await sleep(1200);
+    }
+
+    const lines = [
+      '🔬 *DIAG — group vs sheet*',
+      '',
+      `Groups swept: ${config.paidGroups.length}`,
+      `Total participants: ${total}`,
+      '',
+      `📱 Phone JIDs: ${phoneJid}  (in sheet ${phoneInSheet}, not ${phoneNotInSheet})`,
+      `🆔 LID JIDs: ${lidJid}`,
+      `   ├ own/admin (whitelisted): ${lidOwnAdmin}`,
+      `   ├ had recoverable phone: ${lidWithPhoneField} (matched sheet ${lidPhoneMatched})`,
+      `   └ UNRESOLVABLE: ${lidUnresolvable}`,
+      otherJid ? `❔ Other JID format: ${otherJid}` : null,
+      '',
+      `Sample participant fields: ${sampleKeys ? sampleKeys.join(', ') : 'n/a'}`,
+      '',
+      '*Per group:*',
+      ...perGroup,
+    ].filter(Boolean);
+    return lines.join('\n');
   }
 
   async function parse(text) {
@@ -155,6 +237,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'weekly':     return reportH.handleWeekly();
         case 'monthly':    return reportH.handleMonthly(args);
         case 'audit':      return reportH.handleAudit();
+        case 'diag':       return handleDiag();
 
         case 'remind': {
           const phone = normPhone(mergePhoneFromStart(args)[0] || '');
