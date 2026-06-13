@@ -203,7 +203,7 @@ export function createGroupManager(sock, config, log) {
           result.push({
             groupId,
             groupName,
-            pending: pendingList.map(p => ({ jid: p.jid })),
+            pending: pendingList.map(p => ({ jid: p.jid, id: p.id, phoneNumber: p.phoneNumber })),
           });
         }
       } catch (err) {
@@ -275,11 +275,20 @@ export function createGroupManager(sock, config, log) {
   }
   function rejectAllPendingRequests() { return enqueue(() => _rejectAllPendingRequests()); }
 
-  // Match a pending request JID to a phone number (handles 91XXXXXXXXXX@s.whatsapp.net format)
-  function jidMatchesPhone(jid, phone) {
-    if (!jid.endsWith('@s.whatsapp.net')) return false;
-    const digits = jid.replace('@s.whatsapp.net', '').replace(/\D/g, '');
-    return normalizePhone(digits) === normalizePhone(phone);
+  // Match a pending request to a phone number. Checks every phone-bearing field
+  // (jid, id, phoneNumber) so it works whether the request arrives as a phone
+  // JID or a LID that carries a phoneNumber. Returns the request's own
+  // identifier (jid/id) to pass back to the approve/reject API, or null.
+  function pendingRequestId(p, phone) {
+    const target = normalizePhone(phone);
+    for (const cand of [p.jid, p.id, p.phoneNumber]) {
+      const s = String(cand || '');
+      if (s.includes('@s.whatsapp.net')) {
+        const digits = s.replace('@s.whatsapp.net', '').replace(/\D/g, '');
+        if (normalizePhone(digits) === target) return p.jid || p.id;
+      }
+    }
+    return null;
   }
 
   async function _approveByPhone(phone) {
@@ -287,11 +296,12 @@ export function createGroupManager(sock, config, log) {
     let found = 0, approved = 0, failed = 0;
     for (let i = 0; i < pendingByGroup.length; i++) {
       const { groupId, groupName, pending } = pendingByGroup[i];
-      const match = pending.find(p => jidMatchesPhone(p.jid, phone));
-      if (!match) continue;
+      let reqId = null;
+      for (const p of pending) { reqId = pendingRequestId(p, phone); if (reqId) break; }
+      if (!reqId) continue;
       found++;
       try {
-        await sock.groupRequestParticipantsUpdate(groupId, [match.jid], 'approve');
+        await sock.groupRequestParticipantsUpdate(groupId, [reqId], 'approve');
         approved++;
         log.info(`✅ Approved ${phone} in ${groupName}`);
       } catch (err) {
@@ -308,11 +318,12 @@ export function createGroupManager(sock, config, log) {
     let found = 0, rejected = 0, failed = 0;
     for (let i = 0; i < pendingByGroup.length; i++) {
       const { groupId, groupName, pending } = pendingByGroup[i];
-      const match = pending.find(p => jidMatchesPhone(p.jid, phone));
-      if (!match) continue;
+      let reqId = null;
+      for (const p of pending) { reqId = pendingRequestId(p, phone); if (reqId) break; }
+      if (!reqId) continue;
       found++;
       try {
-        await sock.groupRequestParticipantsUpdate(groupId, [match.jid], 'reject');
+        await sock.groupRequestParticipantsUpdate(groupId, [reqId], 'reject');
         rejected++;
         log.info(`🚫 Rejected ${phone} in ${groupName}`);
       } catch (err) {

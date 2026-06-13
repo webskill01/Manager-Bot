@@ -39,6 +39,7 @@ import { createReminderSender } from './reminderSender.js';
 import { createOverdueEngine } from './overdueEngine.js';
 import { createTrialRemovalEngine } from './trialRemovalEngine.js';
 import { createRemovalEngine } from './removalEngine.js';
+import { createGhostRemovalEngine } from './ghostRemovalEngine.js';
 
 const BOT_START_TIME = Date.now();
 
@@ -88,6 +89,7 @@ export async function startBot(config, log, authDir) {
   log.info(`✅ Sheet loaded: ${store.getAll().length} members in cache`);
 
   const removalEngine = createRemovalEngine(config, log, getSock, store, getBroadcastJids);
+  const ghostEngine = createGhostRemovalEngine(config, log, getSock, store, getBroadcastJids);
 
   function destroySocket(reason) {
     if (!sock) return;
@@ -247,7 +249,7 @@ export async function startBot(config, log, authDir) {
       });
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine);
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {
@@ -282,6 +284,7 @@ export async function startBot(config, log, authDir) {
           log.info(`📊 Cache refreshed: ${store.getAll().length} members`);
           trialEngine.resume();
           removalEngine.resume();
+          ghostEngine.resume();
 
           // Resolve allowedNumbers to actual JIDs (WhatsApp may route as @lid)
           for (const phone of config.allowedNumbers || []) {

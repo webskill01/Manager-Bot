@@ -209,17 +209,20 @@ export function createMemberHandlers(store, groupManager, config, log) {
     const phone = normalizePhone(args[0]);
     if (phone.length !== 10) return '❌ Invalid number. Use 10 digits: kick 98551XXXXX';
 
+    // Works for ANY number — attempts group removal even if already REMOVED in
+    // the sheet (a "ghost" can be marked REMOVED yet still physically in a group).
     const member = store.findByPhone(phone);
-    if (member?.status === 'REMOVED') return '⚠️ Already marked REMOVED. Not in any groups.';
 
     const result = await groupManager.removeFromAllGroups(phone);
     if (result.blocked) return result.blocked;
     const { removed, failed } = result;
 
     if (member) {
-      await store.update(phone, { status: 'REMOVED' });
-      let reply = `✅ Removed ${member.name} from ${removed.length}/${config.paidGroups.length} groups`;
-      if (failed.length > 0) reply += `\n⚠️ Failed ${failed.length} groups — removed from sheet anyway.`;
+      const wasRemoved = member.status === 'REMOVED';
+      if (!wasRemoved) await store.update(phone, { status: 'REMOVED' });
+      const note = wasRemoved ? ' (already REMOVED in sheet)' : '';
+      let reply = `✅ Removed ${member.name} from ${removed.length}/${config.paidGroups.length} groups${note}`;
+      if (failed.length > 0) reply += `\n⚠️ Failed ${failed.length} groups — sheet still marked REMOVED.`;
       return reply;
     }
 
@@ -316,11 +319,12 @@ export function createMemberHandlers(store, groupManager, config, log) {
     const phone = normalizePhone(args[0]);
     if (phone.length !== 10) return '❌ Invalid number.';
 
+    // Works for ANY number — sheet membership is not required.
     const member = store.findByPhone(phone);
-    if (!member) return `❌ No member found for ${args[0]}.`;
+    const who = member ? `${member.name} (${phone})` : `${phone} (not in sheet)`;
 
     const { inGroups, notInGroups } = await groupManager.checkMembership(phone);
-    let reply = `📋 ${member.name} (${phone}) group membership:\n`;
+    let reply = `📋 ${who} group membership:\n`;
     reply += `✅ In ${inGroups.length} groups:\n${inGroups.map(g => `   • ${g}`).join('\n')}`;
     if (notInGroups.length > 0) {
       reply += `\n❌ Missing from ${notInGroups.length} groups:\n${notInGroups.map(g => `   • ${g}`).join('\n')}`;

@@ -369,6 +369,15 @@ export function createReportHandlers(store, config, botStartTime, log) {
 • monthly / monthly [month] / monthly [month] [year]
 • stats / revenue / groups / ping
 • removed  /  skipped
+• notinsheet  →  in group but missing from sheet (all groups)
+• notinsheet [n]  →  only group #n
+• leftmembers  →  ACTIVE in sheet but not in any group
+• stillin  →  REMOVED in sheet but still in a group
+
+🧹 GROUP CLEANUP
+• kickghosts  →  preview bulk removal of not-in-sheet numbers
+• kickghosts confirm  →  start it (15–30 min/person)
+• stop kickghosts  →  cancel
 
 📈 BUSINESS ANALYTICS
 • growth    →  6-month member growth trend
