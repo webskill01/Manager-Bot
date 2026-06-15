@@ -8,6 +8,29 @@ import { createReportHandlers } from './handlers/reportHandlers.js';
 
 let activeOverdueList = [];
 
+// Commands that do real work (network calls / sheet writes / multi-group loops) BEFORE
+// replying. handleMessage sends an instant "received" ack for these so the operator knows
+// the command actually reached the bot during reconnect churn. Instant lookups
+// (find/status/summary/stats/due/pending/refs/help/…) reply immediately and need no ack.
+const SLOW_COMMANDS = new Set([
+  'add', 'addsilent', 'approve', 'approveall', 'reject', 'rejectall',
+  'kick', 'rejoin', 'sendlinks', 'links', 'groupcheck', 'remind', 'renewed',
+  'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
+]);
+
+export function isSlowCommand(text) {
+  const trimmed = (text || '').trim();
+  if (!trimmed) return false;
+  // Overdue batch actions (R1 S2 W3) remove/skip/warn members across all groups.
+  if (/^([RSW]\d+\s*)+$/i.test(trimmed)) return true;
+  const parts = trimmed.split(/\s+/);
+  const cmd = parts[0].toLowerCase();
+  if (SLOW_COMMANDS.has(cmd)) return true;
+  if (cmd === 'start' && /^removal$/i.test(parts[1] || '')) return true;
+  if (cmd === 'stop' && /^(removal|kickall|kickghosts)$/i.test(parts[1] || '')) return true;
+  return false;
+}
+
 // Merge consecutive phone-part tokens at the start of args into one token.
 // Phone parts: starts with + followed by digits, OR 3+ digit string.
 // All other args (billing day 1-31, amount 45) are max 2 digits — no collision.

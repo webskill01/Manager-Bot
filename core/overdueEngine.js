@@ -1,4 +1,4 @@
-import { daysFromToday, sleep, randomBetween, normalizePhone, isDelayActive } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, isDelayActive, friendlyDate } from './globalConfig.js';
 
 export function createOverdueEngine(config, log) {
 
@@ -17,6 +17,14 @@ export function createOverdueEngine(config, log) {
       return d !== null && d === -config.overdue.autoReminderDays;
     });
 
+    // Day 7 exactly → final reminder to the member. This is their removal day (bulk removal
+    // runs in the evening), so it's the last nudge before they're taken out. Skip delayed.
+    const removalDay = config.overdue.consolidatedListDays;
+    const finalDay = active.filter(m => {
+      const d = daysFromToday(m.billingDate);
+      return d !== null && d === -removalDay && !isDelayActive(m);
+    });
+
     // Day 7+ → send consolidated list to owner
     const day7plus = active
       .filter(m => {
@@ -27,7 +35,32 @@ export function createOverdueEngine(config, log) {
       .map(m => ({ ...m, daysOverdue: Math.abs(daysFromToday(m.billingDate)) }))
       .sort((a, b) => b.daysOverdue - a.daysOverdue);
 
-    log.info(`⚠️  Overdue check: ${day6.length} at day-6, ${day7plus.length} at day-7+`);
+    log.info(`⚠️  Overdue check: ${day6.length} at day-${config.overdue.autoReminderDays}, ${finalDay.length} at day-${removalDay} (final), ${day7plus.length} at day-7+`);
+
+    // Send day-7 FINAL reminders directly to members (last day before removal)
+    const finalTemplate = config.messages.finalReminder || config.messages.overdue;
+    for (let i = 0; i < finalDay.length; i++) {
+      const m = finalDay[i];
+      const jid = `91${normalizePhone(m.phone)}@s.whatsapp.net`;
+      const text = finalTemplate
+        .replace('{name}', m.name)
+        .replace('{days}', String(removalDay))
+        .replace('{date}', friendlyDate());
+
+      try {
+        await sock.sendMessage(jid, { text });
+        log.info(`📨 Day-${removalDay} FINAL reminder → ${m.name} (${m.phone})`);
+      } catch (err) {
+        log.warn(`❌ Final reminder failed [${m.name}]: ${err.message}`);
+      }
+
+      if (i < finalDay.length - 1) {
+        await sleep(randomBetween(
+          config.rateLimits.memberToMemberGapMinMs,
+          config.rateLimits.memberToMemberGapMaxMs
+        ));
+      }
+    }
 
     // Send day-6 reminders directly to members
     for (let i = 0; i < day6.length; i++) {

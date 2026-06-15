@@ -1,4 +1,5 @@
-import { normalizePhone, formatDate, todayStr, daysFromToday, formatDateTime, getReferralsInBillingPeriod, nextBillingForDay, isDelayActive } from '../globalConfig.js';
+import { normalizePhone, formatDate, todayStr, daysFromToday, formatDateTime, getReferralsInBillingPeriod, nextBillingForDay, isDelayActive, clampedBillingDate, parseDate } from '../globalConfig.js';
+import { markPhoneReminded } from '../reminderSender.js';
 
 export function createRenewalHandlers(store, config, log) {
 
@@ -36,11 +37,25 @@ export function createRenewalHandlers(store, config, log) {
       }
     }
 
-    // Next billing = soonest occurrence of `day` strictly after today (clamped for short months).
-    // A specified day is treated as the member's anniversary day in the recent PAST, so on
-    // 1 Jun "renewed X 28" → 28 Jun (this month), not 28 Jul. No day given → one month from today.
-    const day = billingDay !== null ? billingDay : new Date().getDate();
-    const newBillingDate = formatDate(nextBillingForDay(day));
+    // Advance payment (force, no explicit day, billing already today-or-future): the member
+    // has already paid the current cycle and is paying ahead. Stack ONE more month onto their
+    // existing billing date, preserving the billing day-of-month — don't reset to today.
+    const currentBilling = parseDate(member.billingDate);
+    const billingInFuture = currentBilling !== null && (daysFromToday(member.billingDate) ?? -1) >= 0;
+    const isAdvance = isForce && billingDay === null && billingInFuture;
+
+    let newBillingDate;
+    if (isAdvance) {
+      newBillingDate = formatDate(
+        clampedBillingDate(currentBilling.getFullYear(), currentBilling.getMonth() + 1, currentBilling.getDate())
+      );
+    } else {
+      // Next billing = soonest occurrence of `day` strictly after today (clamped for short months).
+      // A specified day is treated as the member's anniversary day in the recent PAST, so on
+      // 1 Jun "renewed X 28" → 28 Jun (this month), not 28 Jul. No day given → one month from today.
+      const day = billingDay !== null ? billingDay : new Date().getDate();
+      newBillingDate = formatDate(nextBillingForDay(day));
+    }
 
     await store.update(phone, {
       status: 'ACTIVE',
@@ -51,7 +66,14 @@ export function createRenewalHandlers(store, config, log) {
       delayUntil: '', // clear any pending payment-delay snooze on renewal
     });
 
+    // Belt-and-suspenders against the double-reminder bug: mark this phone handled in
+    // today's reminder state so a same-day batch can never target a just-renewed member.
+    if (config.botDir) markPhoneReminded(config.botDir, phone);
+
     const type = amount === config.renewal.fullAmount ? 'full' : 'referral';
+    if (isAdvance) {
+      return `✅ ${member.name} — advance payment @ ₹${amount} (${type})\n📦 Billing extended a month → ${newBillingDate}\n🔄 Total renewals: ${member.renewals + 1}`;
+    }
     return `✅ ${member.name} renewed @ ₹${amount} (${type})\n📅 Next billing: ${newBillingDate}\n🔄 Total renewals: ${member.renewals + 1}`;
   }
 

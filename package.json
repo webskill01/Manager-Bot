@@ -5,6 +5,7 @@
   "type": "module",
   "engines": { "node": ">=18" },
   "scripts": {
+    "test": "node --test tests/*.test.js",
     "start:nitin": "node bots/bot-nitin/start.js",
     "migrate": "node scripts/migrate.js",
     "pm2:start": "pm2 start ecosystem.config.cjs",

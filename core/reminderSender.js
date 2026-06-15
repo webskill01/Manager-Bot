@@ -1,6 +1,40 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate, renewedOn, pickSurplusReferrals, surplusCreditDate } from './globalConfig.js';
+
+// ── Reminder day-state (reminder-state.json) ──────────────────────────────────
+// Module-level so the `renewed` command can mark a phone as already-handled today
+// (markPhoneReminded) without holding a reminderSender instance.
+function loadState(botDir) {
+  const stateFile = path.join(botDir, 'reminder-state.json');
+  try {
+    if (fs.existsSync(stateFile)) {
+      const data = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+      if (data.date === todayStr()) return data;
+    }
+  } catch {}
+  return { date: todayStr(), sentPhones: [] };
+}
+
+function saveState(botDir, state) {
+  const stateFile = path.join(botDir, 'reminder-state.json');
+  const tmp = stateFile + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(state), 'utf8');
+  fs.renameSync(tmp, stateFile);
+}
+
+// Record `phone` in today's reminder state so neither batch will target it today.
+// Called by the `renewed` command so a same-day renewal can never trigger a reminder,
+// even if billing math or the store refresh ever regresses.
+export function markPhoneReminded(botDir, phone) {
+  try {
+    const state = loadState(botDir);
+    if (!state.sentPhones.includes(phone)) {
+      state.sentPhones.push(phone);
+      saveState(botDir, state);
+    }
+  } catch {}
+}
 
 export function createReminderSender(config, log) {
   let consecutiveFailures = 0;
@@ -16,24 +50,6 @@ export function createReminderSender(config, log) {
       return false;
     }
     return true;
-  }
-
-  function loadState(botDir) {
-    const stateFile = path.join(botDir, 'reminder-state.json');
-    try {
-      if (fs.existsSync(stateFile)) {
-        const data = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-        if (data.date === todayStr()) return data;
-      }
-    } catch {}
-    return { date: todayStr(), sentPhones: [] };
-  }
-
-  function saveState(botDir, state) {
-    const stateFile = path.join(botDir, 'reminder-state.json');
-    const tmp = stateFile + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(state), 'utf8');
-    fs.renameSync(tmp, stateFile);
   }
 
   async function sendToMember(getSock, phone, name, botDir, type = 'normal') {
@@ -84,7 +100,8 @@ export function createReminderSender(config, log) {
 
     for (let i = 0; i < members.length; i++) {
       const m = members[i];
-      const refs = getReferralsInBillingPeriod(m.phone, m.billingDate, all).length;
+      const refList = getReferralsInBillingPeriod(m.phone, m.billingDate, all);
+      const refs = refList.length;
 
       if (refs >= 2) {
         try {
@@ -99,10 +116,30 @@ export function createReminderSender(config, log) {
             paidLast: 0,
             lastRenewed: formatDateTime(new Date()),
           });
-          autoRenewed.push({ name: m.name, phone: m.phone });
+
+          // Referral rollover: 2 refs pay for this free renewal; any surplus refs roll into
+          // the NEXT billing period. We re-pin each surplus referred member's refCreditDate
+          // into [newBilling-1mo, newBilling) so getReferralsInBillingPeriod counts them
+          // again next cycle — i.e. 4 refs → free this month AND next. Chains automatically.
+          let rolled = 0;
+          const { surplus } = pickSurplusReferrals(refList, 2);
+          if (surplus.length > 0) {
+            const creditDate = surplusCreditDate(newBillingDate);
+            for (const ref of surplus) {
+              try {
+                await store.update(ref.phone, { refCreditDate: creditDate });
+                rolled++;
+              } catch (e) {
+                log.warn(`⚠️  Rollover re-pin failed for ${ref.phone}: ${e.message}`);
+              }
+            }
+            log.info(`🔁 Rolled ${rolled} surplus ref(s) for ${m.name} into next period (${creditDate})`);
+          }
+
+          autoRenewed.push({ name: m.name, phone: m.phone, refs, rolled });
           state.sentPhones.push(m.phone);
           saveState(botDir, state);
-          log.info(`🎁 Auto-renewed ${m.name} (${m.phone}) — ${refs} refs`);
+          log.info(`🎁 Auto-renewed ${m.name} (${m.phone}) — ${refs} refs${rolled ? `, ${rolled} rolled over` : ''}`);
         } catch (err) {
           failed++;
           log.warn(`❌ Auto-renew failed [${m.name}]: ${err.message}`);
@@ -128,10 +165,21 @@ export function createReminderSender(config, log) {
     return { sent, referralSent, autoRenewed, failed };
   }
 
+  // Members who are due today AND have not been renewed/paid today. Refreshes the store
+  // first so a member just renewed via the `renewed` command (or edited directly on the
+  // sheet) is never targeted — this is the core guard against the double-reminder bug.
+  async function getDueToday(store) {
+    await store.refresh();
+    const today = todayStr();
+    return store.getActive().filter(m =>
+      daysFromToday(m.billingDate) === 0 && !renewedOn(m, today)
+    );
+  }
+
   // Batch 1 (6:30 AM cron) — sends up to batchSize members, skips already-sent
   async function sendReminders(store, getSock, botDir) {
     const state = loadState(botDir);
-    const dueToday = store.getActive().filter(m => daysFromToday(m.billingDate) === 0);
+    const dueToday = await getDueToday(store);
 
     if (dueToday.length === 0) {
       log.info('⏰ Reminder batch 1: no members due today');
@@ -159,7 +207,7 @@ export function createReminderSender(config, log) {
   // Batch 2 (7:30 AM cron) — sends remaining members not yet sent today
   async function sendRemindersSecondBatch(store, getSock, botDir) {
     const state = loadState(botDir);
-    const dueToday = store.getActive().filter(m => daysFromToday(m.billingDate) === 0);
+    const dueToday = await getDueToday(store);
     const remaining = dueToday.filter(m => !state.sentPhones.includes(m.phone));
 
     if (remaining.length === 0) {
@@ -171,5 +219,5 @@ export function createReminderSender(config, log) {
     return runBatch(remaining, getSock, botDir, state, 'Reminder batch 2', store);
   }
 
-  return { sendReminders, sendRemindersSecondBatch, sendToMember };
+  return { sendReminders, sendRemindersSecondBatch, sendToMember, markReminded: markPhoneReminded };
 }

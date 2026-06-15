@@ -33,7 +33,7 @@ import pino from 'pino';
 import { createSheetClient } from './sheetClient.js';
 import { createMemberStore } from './memberStore.js';
 import { createGroupManager } from './groupManager.js';
-import { createCommandParser } from './commandParser.js';
+import { createCommandParser, isSlowCommand } from './commandParser.js';
 import { createScheduler } from './scheduler.js';
 import { createReminderSender } from './reminderSender.js';
 import { createOverdueEngine } from './overdueEngine.js';
@@ -197,6 +197,20 @@ export async function startBot(config, log, authDir) {
     // we detect it at send time and drop the reply rather than crashing on the new socket.
     const activeSock = sock;
 
+    // Instant receipt ack for slow/mutating commands (add, approve, renewed, kick, …) so the
+    // operator can tell the command actually reached the bot — the real result still follows
+    // once the work finishes. Quick lookups reply directly and are skipped here.
+    if (isSlowCommand(text)) {
+      const label = text.trim().split(/\s+/).slice(0, 2).join(' ');
+      try {
+        if (activeSock === sock && sock?.user) {
+          await sock.sendMessage(jid, { text: `⏳ Got it — working on "${label}"…` });
+        }
+      } catch (err) {
+        log.warn(`⚠️  Ack send failed: ${err.message}`);
+      }
+    }
+
     const reply = await commandParser.parse(text);
     if (reply) {
       try {
@@ -313,14 +327,14 @@ export async function startBot(config, log, authDir) {
               reminderSend: async () => {
                 const result = await reminderSender.sendReminders(store, getSock, config.botDir);
                 if (result.autoRenewed?.length > 0) {
-                  const lines = result.autoRenewed.map(m => `  • ${m.name}  ${m.phone}`).join('\n');
+                  const lines = result.autoRenewed.map(m => `  • ${m.name}  ${m.phone}${m.rolled ? ` (+${m.rolled} ref rolled to next month)` : ''}`).join('\n');
                   await broadcast(`🎁 Auto-renewed (2 refs) — no reminder sent:\n${lines}`);
                 }
               },
               reminderSend2: async () => {
                 const result = await reminderSender.sendRemindersSecondBatch(store, getSock, config.botDir);
                 if (result.autoRenewed?.length > 0) {
-                  const lines = result.autoRenewed.map(m => `  • ${m.name}  ${m.phone}`).join('\n');
+                  const lines = result.autoRenewed.map(m => `  • ${m.name}  ${m.phone}${m.rolled ? ` (+${m.rolled} ref rolled to next month)` : ''}`).join('\n');
                   await broadcast(`🎁 Auto-renewed (2 refs) — batch 2:\n${lines}`);
                 }
               },

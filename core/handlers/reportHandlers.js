@@ -1,6 +1,10 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, todayStr, getReferralsInBillingPeriod, parseDate, formatDate, normalizePhone, formatSplit } from '../globalConfig.js';
+import { daysFromToday, todayStr, getReferralsInBillingPeriod, parseDate, formatDate, normalizePhone, formatSplit, isPaidJoin } from '../globalConfig.js';
+
+// Silent/existing-member adds (addsilent) store paidLast = 0 and must never be counted as
+// a new member or as join revenue. Real joins (add/rejoin) store the joining fee.
+const isPaidJoinRow = m => Number(m.paidLast) !== 0;
 
 // Unified date extractor → always returns "DD-MM-YYYY" or null.
 // Handles: DD-MM-YYYY, DD-MM-YYYY HH:MM, ISO YYYY-MM-DDTHH:...
@@ -132,7 +136,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
       String(targetDateObj.getFullYear()),
     ].join('-'); // "DD-MM-YYYY"
 
-    const newToday = all.filter(m => m.joinDate === targetDateStr);
+    const newToday = all.filter(m => isPaidJoin(m, targetDateStr));
     // Detect renewals via lastRenewed (set ONLY by the "renewed" command), NOT lastUpdated —
     // lastUpdated is bumped by every write (incl. kickall's status→REMOVED), which would otherwise
     // make a previously-renewed member who was removed today wrongly appear as "renewed today".
@@ -265,9 +269,10 @@ export function createReportHandlers(store, config, botStartTime, log) {
       fullRenewals.length * config.renewal.fullAmount +
       referralRenewals.length * config.renewal.referralAmount;
 
-    // New joins this month (by joinDate)
+    // New joins this month (by joinDate) — excludes silent adds (paidLast 0)
     const joinsThisMonth = all.filter(m => {
       if (!m.joinDate || m.joinDate.length < 10) return false;
+      if (!isPaidJoinRow(m)) return false;
       return m.joinDate.slice(3, 5) === mm && m.joinDate.slice(6, 10) === yyyy;
     });
     const joinRevenue = joinsThisMonth.length * config.joining.fee;
@@ -335,7 +340,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
 👤 MEMBERS
 • add [Name] [phone] / [day] / ref [refPhone]
 • add [Name] [phone] ref [refPhone] prev  →  credit ref to referrer's PREVIOUS billing period
-• addsilent [Name] [phone]  →  sheet only, no links
+• addsilent [Name] [phone]  →  sheet only, no links, NOT counted as new member
 • rejoin [phone] / [phone] [day]
 • kick [phone]
 • skip [phone] [reason]  /  unskip [phone]
@@ -479,7 +484,7 @@ Example: R1 R2 S3
       const yyyy = String(d.getFullYear());
       const label = d.toLocaleString('en-IN', { month: 'short', year: 'numeric' });
 
-      const joins    = all.filter(m => inMonth(m.joinDate, mm, yyyy)).length;
+      const joins    = all.filter(m => isPaidJoinRow(m) && inMonth(m.joinDate, mm, yyyy)).length;
       const removals = all.filter(m => m.status === 'REMOVED' && inMonth(m.lastUpdated, mm, yyyy)).length;
       const net = joins - removals;
       const arrow = net > 0 ? '↑' : net < 0 ? '↓' : '→';
@@ -542,7 +547,7 @@ Example: R1 R2 S3
       const label = d.toLocaleString('en-IN', { month: 'short', year: 'numeric' });
 
       const renewed  = all.filter(m => m.lastRenewed && inMonth(m.lastRenewed, mm, yyyy));
-      const joins    = all.filter(m => inMonth(m.joinDate, mm, yyyy));
+      const joins    = all.filter(m => isPaidJoinRow(m) && inMonth(m.joinDate, mm, yyyy));
       const revenue  = renewed.reduce((s, m) => s + (Number(m.paidLast) || 0), 0)
                      + joins.length * config.joining.fee;
 
@@ -560,7 +565,7 @@ Example: R1 R2 S3
     const yyyy = String(now.getFullYear());
     const monthName = now.toLocaleString('en-IN', { month: 'long' });
 
-    const joins    = all.filter(m => inMonth(m.joinDate, mm, yyyy));
+    const joins    = all.filter(m => isPaidJoinRow(m) && inMonth(m.joinDate, mm, yyyy));
     const removals = all.filter(m => m.status === 'REMOVED' && inMonth(m.lastUpdated, mm, yyyy));
     const net = joins.length - removals.length;
     const indicator = net > 0 ? '📈 growing' : net < 0 ? '📉 shrinking' : '→ stable';
@@ -685,7 +690,7 @@ Example: R1 R2 S3
 
     const inLast7 = (dateStr) => last7Set.has(toDDMMYYYY(dateStr));
 
-    const newThisWeek     = all.filter(m => last7Set.has(m.joinDate));
+    const newThisWeek     = all.filter(m => isPaidJoinRow(m) && last7Set.has(m.joinDate));
     const renewedThisWeek = all.filter(m => m.lastRenewed && last7Set.has(toDDMMYYYY(m.lastRenewed)) && Number(m.renewals) > 0 && !last7Set.has(m.joinDate));
     const autoRenewed     = renewedThisWeek.filter(m => Number(m.paidLast) === 0);
     const paidRenewed     = renewedThisWeek.filter(m => Number(m.paidLast) > 0);
@@ -744,7 +749,7 @@ Example: R1 R2 S3
 
     const isIn = (dateStr) => inMonth(dateStr, mm, yyyy);
 
-    const newMembers     = all.filter(m => isIn(m.joinDate));
+    const newMembers     = all.filter(m => isPaidJoinRow(m) && isIn(m.joinDate));
     const allRenewed     = all.filter(m => m.lastRenewed && isIn(m.lastRenewed) && Number(m.renewals) > 0 && !isIn(m.joinDate));
     const autoRenewed    = allRenewed.filter(m => Number(m.paidLast) === 0);
     const paidRenewed    = allRenewed.filter(m => Number(m.paidLast) > 0);

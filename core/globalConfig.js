@@ -143,6 +143,52 @@ export function friendlyDate(dateStr) {
   return `${d.getDate()} ${MONTHS[d.getMonth()]}`;
 }
 
+// True when `dateStr` ("DD-MM-YYYY") matches the date portion of a stored timestamp,
+// handling both storage formats: "DD-MM-YYYY HH:MM" (current) and ISO "YYYY-MM-DD...".
+// Shared by the renewal guard and the reminder "already renewed today" filter.
+export function dateMatches(stored, dateStr) {
+  if (!stored || !dateStr) return false;
+  if (stored.length >= 10 && stored[2] === '-') return stored.slice(0, 10) === dateStr;
+  const [d, m, y] = dateStr.split('-');
+  return stored.startsWith(`${y}-${m}-${d}`);
+}
+
+// True when the member was renewed (via the `renewed` command, which sets lastRenewed)
+// on the given day. Used to keep reminders away from anyone already renewed that day.
+export function renewedOn(member, dateStr) {
+  return !!member && dateMatches(member.lastRenewed, dateStr);
+}
+
+// True when a member's JOIN_DATE is `dateStr` AND it represents an actual paid join
+// (paidLast !== 0). Silent/migrated adds (addsilent) set paidLast = 0 so they are NOT
+// counted as new members or join revenue in any report.
+export function isPaidJoin(member, dateStr) {
+  return !!member && member.joinDate === dateStr && Number(member.paidLast) !== 0;
+}
+
+// Referral rollover: from a set of referrals, keep the earliest `keep` (they pay for the
+// current free renewal) and return the rest as surplus to roll into the next period.
+// Ordered by effective date (refCreditDate || joinDate), earliest first.
+export function pickSurplusReferrals(referrals, keep = 2) {
+  const sorted = [...referrals].sort((a, b) => {
+    const da = parseDate(a.refCreditDate || a.joinDate);
+    const db = parseDate(b.refCreditDate || b.joinDate);
+    return (da ? da.getTime() : 0) - (db ? db.getTime() : 0);
+  });
+  return { kept: sorted.slice(0, keep), surplus: sorted.slice(keep) };
+}
+
+// A date that falls safely inside the window [newBilling - 1 month, newBilling): the
+// midpoint-ish (newBilling - 15 days). Re-pinning a surplus referral's refCreditDate here
+// makes getReferralsInBillingPeriod count it in the member's NEXT billing period.
+export function surplusCreditDate(newBillingDate) {
+  const billing = parseDate(newBillingDate);
+  if (!billing) return newBillingDate;
+  const d = new Date(billing);
+  d.setDate(d.getDate() - 15);
+  return formatDate(d);
+}
+
 // ─── Revenue split ────────────────────────────────────────────────────────────
 // Each bot may define an optional `split` block in config.json describing how the
 // month's revenue is divided between the people running it. Example (50-25-25):

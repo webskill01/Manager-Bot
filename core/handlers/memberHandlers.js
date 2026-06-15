@@ -193,12 +193,14 @@ export function createMemberHandlers(store, groupManager, config, log) {
         phone,
         joinDate: todayStr(),
         billingDate,
-        paidLast: config.joining.fee,
+        // paidLast 0 → flags this as a silent/existing-member add: NOT counted as a new
+        // member or join revenue in any report (summary/weekly/monthly/revenue/growth/churn).
+        paidLast: 0,
         reference: '',
       });
 
-      log.info(`📋 Silent add: ${name} (${phone})`);
-      return `✅ ${name} (${phone}) added to sheet (no links sent).\n📅 Billing: ${billingDate}\n\nNow use:\nrejoin ${phone}  →  adds directly to all groups`;
+      log.info(`📋 Silent add: ${name} (${phone}) — not counted as new member`);
+      return `✅ ${name} (${phone}) added to sheet (no links sent, not counted as new member).\n📅 Billing: ${billingDate}\n\nNow use:\nrejoin ${phone}  →  adds directly to all groups`;
     } finally {
       inFlightAdds.delete(phone);
     }
