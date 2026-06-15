@@ -30,7 +30,10 @@ export function createMemberStore(sheetClient, botName) {
       ...memberData,
       status: 'ACTIVE',
       renewals: 0,
-      paidLast: memberData.paidLast || 90,
+      // ?? not || — addsilent passes paidLast: 0 as the "silent / not counted" flag.
+      // With `|| 90` that intentional 0 was falsy and got overwritten to 90, so every
+      // silent add was wrongly counted as a ₹90 new join in reports.
+      paidLast: memberData.paidLast ?? 90,
       reference: memberData.reference || '',
       refCreditDate: memberData.refCreditDate || '',
       refLog: memberData.refLog || '',
