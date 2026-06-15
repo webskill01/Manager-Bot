@@ -3,8 +3,28 @@ import assert from 'node:assert/strict';
 import {
   clampedBillingDate, nextBillingForDay, formatDate, parseDate, daysFromToday,
   renewedOn, isPaidJoin, pickSurplusReferrals, surplusCreditDate,
-  getReferralsInBillingPeriod,
+  getReferralsInBillingPeriod, normalizePhone, normalizeDateCell,
 } from '../core/globalConfig.js';
+
+test('normalizePhone strips country code regardless of formatting', () => {
+  // The "No member found for 917009686540" bug: a phone stored as a number and read
+  // back in scientific notation must NOT silently slice the wrong 10 digits.
+  assert.equal(normalizePhone('917009686540'), '7009686540'); // 91 + 10 digits
+  assert.equal(normalizePhone(917009686540), '7009686540');   // number-typed cell
+  assert.equal(normalizePhone('7009686540'), '7009686540');   // already clean
+  assert.equal(normalizePhone('+91 70096 86540'), '7009686540');
+  assert.equal(normalizePhone('07009686540'), '7009686540');  // leading 0
+  assert.equal(normalizePhone(''), '');
+});
+
+test('normalizeDateCell converts Sheets serial numbers back to DD-MM-YYYY', () => {
+  const serial = Math.round((new Date(2026, 5, 15) - new Date(1899, 11, 30)) / 86400000);
+  assert.equal(normalizeDateCell(serial), '15-06-2026');        // date-only serial
+  assert.equal(normalizeDateCell(serial + 0.5), '15-06-2026 12:00'); // datetime serial
+  assert.equal(normalizeDateCell('15-06-2026'), '15-06-2026');  // text passthrough
+  assert.equal(normalizeDateCell(''), '');
+  assert.equal(normalizeDateCell(undefined), '');
+});
 
 test('clampedBillingDate clamps day to month length', () => {
   assert.equal(formatDate(clampedBillingDate(2026, 1, 31)), '28-02-2026'); // Feb (non-leap)

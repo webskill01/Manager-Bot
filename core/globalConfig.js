@@ -82,6 +82,26 @@ export function formatDateTime(date) {
   return `${day}-${month}-${year} ${hours}:${mins}`;
 }
 
+// Google Sheets, read with UNFORMATTED_VALUE, returns date/time cells as a serial
+// number: whole days since 1899-12-30, with a fractional part for the time-of-day.
+// The bot writes dates as DD-MM-YYYY text, but a hand-edited cell can be silently
+// auto-converted by Sheets into a real date value. Convert any such numeric serial
+// back to the bot's canonical string so parsing/display keep working; pass strings
+// (and blanks) straight through.
+export function normalizeDateCell(v) {
+  if (v === null || v === undefined || v === '') return '';
+  if (typeof v !== 'number') return v;
+  const days = Math.floor(v);
+  const frac = v - days;
+  const d = new Date(1899, 11, 30);
+  d.setDate(d.getDate() + days);
+  if (frac > 1e-6) {
+    d.setMinutes(d.getMinutes() + Math.round(frac * 24 * 60));
+    return formatDateTime(d);
+  }
+  return formatDate(d);
+}
+
 export function parseDate(str) {
   if (!str || !str.includes('-')) return null;
   const parts = str.split('-');
