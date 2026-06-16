@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone, isDelayActive, friendlyDate, todayStr, cronTimePassedToday } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, isDelayActive, friendlyDate, todayStr, cronTimePassedToday, beforeCatchUpCutoff } from './globalConfig.js';
 
 export function createOverdueEngine(config, log) {
   // ── Per-day state (overdue-state.json) ──────────────────────────────────────
@@ -193,6 +193,13 @@ export function createOverdueEngine(config, log) {
       }
       if (!cronTimePassedToday(config.schedule?.overdueCheck)) {
         log.info('⚠️  Overdue catch-up: before today\'s overdue window — letting cron handle it');
+        return;
+      }
+      // Past the morning cutoff (default noon), do NOT replay the overdue check — sending overdue
+      // reminders late in the evening is exactly the behaviour we want to avoid. Skip until tomorrow.
+      const cutoff = config.catchUpCutoffHour ?? 12;
+      if (!beforeCatchUpCutoff(cutoff)) {
+        log.info(`⚠️  Overdue catch-up: past the ${cutoff}:00 cutoff — skipping until tomorrow's check`);
         return;
       }
       log.info('⚠️  Overdue catch-up: running missed/incomplete overdue check after restart');

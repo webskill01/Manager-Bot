@@ -4,7 +4,24 @@ import {
   clampedBillingDate, nextBillingForDay, formatDate, parseDate, daysFromToday,
   renewedOn, isPaidJoin, pickSurplusReferrals, surplusCreditDate,
   getReferralsInBillingPeriod, normalizePhone, normalizeDateCell,
+  cronTimePassedToday, beforeCatchUpCutoff,
 } from '../core/globalConfig.js';
+
+test('cronTimePassedToday is true only after a daily window has elapsed today', () => {
+  const day = (h, m) => new Date(2026, 5, 16, h, m);
+  assert.equal(cronTimePassedToday('30 6 * * *', day(9, 0)), true);   // 09:00 is after 06:30
+  assert.equal(cronTimePassedToday('30 6 * * *', day(5, 0)), false);  // 05:00 is before 06:30
+  assert.equal(cronTimePassedToday('0 10 * * *', day(10, 0)), true);  // exactly 10:00 counts
+  assert.equal(cronTimePassedToday('', day(9, 0)), true);             // fail-open on blank
+});
+
+test('beforeCatchUpCutoff gates replay to the morning window', () => {
+  const at = (h) => new Date(2026, 5, 16, h, 0);
+  assert.equal(beforeCatchUpCutoff(12, at(8)), true);    // 08:00 is before noon → replay allowed
+  assert.equal(beforeCatchUpCutoff(12, at(11)), true);   // 11:00 still before noon
+  assert.equal(beforeCatchUpCutoff(12, at(12)), false);  // noon exactly → no replay
+  assert.equal(beforeCatchUpCutoff(12, at(23)), false);  // 23:00 (the bug) → no replay
+});
 
 test('normalizePhone strips country code regardless of formatting', () => {
   // The "No member found for 917009686540" bug: a phone stored as a number and read

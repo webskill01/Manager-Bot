@@ -12,6 +12,8 @@ function makeConfig() {
   return {
     upiQrPath: './does-not-exist.jpg', // → sends plain text instead of image
     messages: { reminder: 'hi {name} {date}', referralReminder: 'ref {name}' },
+    // cutoff 24 → catch-up always inside its window, so these tests are wall-clock independent.
+    catchUpCutoffHour: 24,
     rateLimits: {
       memberToMemberGapMinMs: 0, memberToMemberGapMaxMs: 0, batchSize: 20,
       circuitBreakerThreshold: 10, circuitBreakerCooldownMs: 1000,
@@ -130,6 +132,24 @@ test('catch-up only sends members not already reminded earlier today', async () 
   const r2 = await sender.catchUp(store, () => sock, botDir);
   assert.equal(r2.sent, 1, 'catch-up sends the held member B');
   assert.equal(sent.length, 2, 'A messaged once, B messaged once');
+
+  fs.rmSync(botDir, { recursive: true, force: true });
+});
+
+test('catch-up does NOT replay reminders past the cutoff hour (late-night restart)', async () => {
+  const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rem-'));
+  const today = formatDate(new Date());
+  const store = makeStore([
+    { name: 'A', phone: '9000000001', status: 'ACTIVE', billingDate: today, renewals: 0, paidLast: 90, reference: '' },
+  ]);
+  const { sock, sent } = makeSock();
+  const config = makeConfig();
+  config.catchUpCutoffHour = 0; // now.getHours() < 0 is always false → simulates "after cutoff"
+  const sender = createReminderSender(config, log);
+
+  const r = await sender.catchUp(store, () => sock, botDir);
+  assert.equal(r.sent, 0, 'no reminders replayed after the cutoff');
+  assert.equal(sent.length, 0, 'nobody messaged on a late-night restart');
 
   fs.rmSync(botDir, { recursive: true, force: true });
 });

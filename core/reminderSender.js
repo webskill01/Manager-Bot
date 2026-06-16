@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate, renewedOn, pickSurplusReferrals, surplusCreditDate, cronTimePassedToday } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate, renewedOn, pickSurplusReferrals, surplusCreditDate, cronTimePassedToday, beforeCatchUpCutoff } from './globalConfig.js';
 
 // ── Reminder day-state (reminder-state.json) ──────────────────────────────────
 // Module-level so the `renewed` command can mark a phone as already-handled today
@@ -259,6 +259,13 @@ export function createReminderSender(config, log) {
     // on schedule. (Stops an early-morning reconnect from sending reminders before 6:30.)
     if (!cronTimePassedToday(config.schedule?.reminderSend)) {
       log.info('⏰ Reminder catch-up: before today\'s reminder window — nothing to do');
+      return { ...NOOP_RESULT };
+    }
+    // Past the morning cutoff (default noon), do NOT replay missed reminders — too late in the
+    // day to message members. Whatever was missed stays unsent until tomorrow's scheduled run.
+    const cutoff = config.catchUpCutoffHour ?? 12;
+    if (!beforeCatchUpCutoff(cutoff)) {
+      log.info(`⏰ Reminder catch-up: past the ${cutoff}:00 cutoff — not replaying missed reminders this late`);
       return { ...NOOP_RESULT };
     }
     _busy = true;

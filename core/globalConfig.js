@@ -141,6 +141,15 @@ export function cronTimePassedToday(cronExpr, now = new Date()) {
   return now.getTime() >= threshold.getTime();
 }
 
+// Upper bound for restart catch-up. All reminder windows are in the morning (6:30 / 7:30 / 10:00),
+// so a reconnect later in the day must NOT replay them — sending "your subscription is due" at
+// 11 PM is worse than skipping it until tomorrow. Returns true only while it's still before
+// `cutoffHour` (24h local/IST time; defaults to 12 = noon). Catch-up combines this with
+// cronTimePassedToday(): replay only if the window already passed AND we're still before noon.
+export function beforeCatchUpCutoff(cutoffHour = 12, now = new Date()) {
+  return now.getHours() < cutoffHour;
+}
+
 // True when a member currently has an active payment "delay" — i.e. delayUntil is set and
 // falls on today or in the future. Delayed members stay ACTIVE/overdue but are hidden from
 // the bulk removal list until the date passes. Used by `delay [phone] [days]`.
