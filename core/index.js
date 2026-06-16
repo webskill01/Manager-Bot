@@ -299,6 +299,11 @@ export async function startBot(config, log, authDir) {
           trialEngine.resume();
           removalEngine.resume();
           ghostEngine.resume();
+          // Catch up any reminder window the bot was offline/restarting across. Same restart-safe
+          // pattern as removalEngine: persistent per-day state + per-phone dedupe, so missed
+          // reminders go out on reconnect and nobody is ever messaged twice.
+          reminderSender.resume(store, getSock, config.botDir, broadcast);
+          overdueEngine.resume(store, getSock, getBroadcastJids);
 
           // Resolve allowedNumbers to actual JIDs (WhatsApp may route as @lid)
           for (const phone of config.allowedNumbers || []) {

@@ -86,6 +86,54 @@ test('non-renewed member held for batch 2 still gets their reminder', async () =
   fs.rmSync(botDir, { recursive: true, force: true });
 });
 
+test('catch-up after restart sends due-today reminders missed across both cron windows', async () => {
+  const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rem-'));
+  const today = formatDate(new Date());
+  const store = makeStore([
+    { name: 'A', phone: '9000000001', status: 'ACTIVE', billingDate: today, renewals: 0, paidLast: 90, reference: '' },
+    { name: 'B', phone: '9000000002', status: 'ACTIVE', billingDate: today, renewals: 0, paidLast: 90, reference: '' },
+  ]);
+  const { sock, sent } = makeSock();
+  const sender = createReminderSender(makeConfig(), log);
+
+  // Bot was offline at 6:30 and 7:30 — neither cron ran, nothing in reminder-state.json yet.
+  // On reconnect, catch-up must deliver every due-today member.
+  const r1 = await sender.catchUp(store, () => sock, botDir);
+  assert.equal(r1.sent, 2, 'catch-up should send both missed reminders');
+  assert.equal(sent.length, 2);
+
+  // Running catch-up again (e.g. a second reconnect) must NOT re-message anyone.
+  const r2 = await sender.catchUp(store, () => sock, botDir);
+  assert.equal(r2.sent, 0, 'catch-up must be idempotent — no double-send');
+  assert.equal(sent.length, 2, 'no extra messages on second catch-up');
+
+  fs.rmSync(botDir, { recursive: true, force: true });
+});
+
+test('catch-up only sends members not already reminded earlier today', async () => {
+  const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rem-'));
+  const today = formatDate(new Date());
+  const store = makeStore([
+    { name: 'A', phone: '9000000001', status: 'ACTIVE', billingDate: today, renewals: 0, paidLast: 90, reference: '' },
+    { name: 'B', phone: '9000000002', status: 'ACTIVE', billingDate: today, renewals: 0, paidLast: 90, reference: '' },
+  ]);
+  const { sock, sent } = makeSock();
+  const config = makeConfig();
+  config.rateLimits.batchSize = 1; // batch 1 sends only A, B is held
+  const sender = createReminderSender(config, log);
+
+  const r1 = await sender.sendReminders(store, () => sock, botDir);
+  assert.equal(r1.sent, 1, 'batch 1 sends A');
+  assert.equal(r1.queued, 1, 'B held for batch 2');
+
+  // Bot restarts before the 7:30 batch-2 cron fires. Catch-up must send B only — never re-send A.
+  const r2 = await sender.catchUp(store, () => sock, botDir);
+  assert.equal(r2.sent, 1, 'catch-up sends the held member B');
+  assert.equal(sent.length, 2, 'A messaged once, B messaged once');
+
+  fs.rmSync(botDir, { recursive: true, force: true });
+});
+
 test('referral rollover: >2 refs auto-renews and re-pins surplus into next window', async () => {
   const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rem-'));
   const today = new Date(); today.setHours(0, 0, 0, 0);

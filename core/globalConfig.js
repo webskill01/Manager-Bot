@@ -123,6 +123,24 @@ export function todayStr() {
   return formatDate(new Date());
 }
 
+// True when a once-a-day cron ("m h * * *") would already have fired earlier today, in the
+// process-local timezone (the bots run with TZ=Asia/Kolkata, so local time IS IST). Used by
+// the reminder/overdue resume() to decide whether a window the bot was offline for should be
+// caught up on reconnect. Only the minute+hour fields are read; day/month/weekday are ignored.
+// Fail-open: an empty or unparseable expression returns true so a missed reminder is caught up
+// rather than silently skipped (the per-phone dedupe still prevents double-sends).
+export function cronTimePassedToday(cronExpr, now = new Date()) {
+  if (!cronExpr || typeof cronExpr !== 'string') return true;
+  const parts = cronExpr.trim().split(/\s+/);
+  if (parts.length < 2) return true;
+  const min = parseInt(parts[0], 10);
+  const hour = parseInt(parts[1], 10);
+  if (Number.isNaN(min) || Number.isNaN(hour)) return true;
+  const threshold = new Date(now);
+  threshold.setHours(hour, min, 0, 0);
+  return now.getTime() >= threshold.getTime();
+}
+
 // True when a member currently has an active payment "delay" — i.e. delayUntil is set and
 // falls on today or in the future. Delayed members stay ACTIVE/overdue but are hidden from
 // the bulk removal list until the date passes. Used by `delay [phone] [days]`.

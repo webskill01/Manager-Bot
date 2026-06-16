@@ -15,6 +15,11 @@ bots/*/qr-payment.jpg
 bots/*/trial-image.jpeg
 bots/*/trial-video.mp4
 
+# Per-bot runtime state (transient, contains member phone numbers — keep local only)
+bots/*/reminder-state.json
+bots/*/overdue-state.json
+bots/*/removal-state.json
+
 # Logs
 logs/
 *.log

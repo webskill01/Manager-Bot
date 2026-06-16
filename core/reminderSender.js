@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate, renewedOn, pickSurplusReferrals, surplusCreditDate } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate, renewedOn, pickSurplusReferrals, surplusCreditDate, cronTimePassedToday } from './globalConfig.js';
 
 // ── Reminder day-state (reminder-state.json) ──────────────────────────────────
 // Module-level so the `renewed` command can mark a phone as already-handled today
@@ -40,6 +40,14 @@ export function createReminderSender(config, log) {
   let consecutiveFailures = 0;
   let circuitOpen = false;
   let circuitOpenAt = null;
+
+  // Single-flight lock shared by both cron batches and the restart catch-up, so a reconnect
+  // landing on a scheduled-send time can never run two batches at once (which could double-send
+  // before sentPhones is persisted). Mirrors removalEngine's _running guard.
+  let _busy = false;
+  let _resumeTimer = null;
+  const RESUME_GRACE_MS = 2 * 60 * 1000; // 2-min reconnect grace, matches removalEngine.resume()
+  const NOOP_RESULT = { sent: 0, referralSent: 0, autoRenewed: [], failed: 0, queued: 0 };
 
   function checkCircuit() {
     if (!circuitOpen) return false;
@@ -178,46 +186,117 @@ export function createReminderSender(config, log) {
 
   // Batch 1 (6:30 AM cron) — sends up to batchSize members, skips already-sent
   async function sendReminders(store, getSock, botDir) {
-    const state = loadState(botDir);
-    const dueToday = await getDueToday(store);
-
-    if (dueToday.length === 0) {
-      log.info('⏰ Reminder batch 1: no members due today');
-      return { sent: 0, referralSent: 0, autoRenewed: [], failed: 0, queued: 0 };
+    if (_busy) {
+      log.warn('⏰ Reminder batch 1 skipped — another reminder run is in progress');
+      return { ...NOOP_RESULT };
     }
+    _busy = true;
+    try {
+      const state = loadState(botDir);
+      const dueToday = await getDueToday(store);
 
-    const pending = dueToday.filter(m => !state.sentPhones.includes(m.phone));
-    if (pending.length === 0) {
-      log.info('⏰ Reminder batch 1: all members already sent today');
-      return { sent: 0, referralSent: 0, autoRenewed: [], failed: 0, queued: 0 };
+      if (dueToday.length === 0) {
+        log.info('⏰ Reminder batch 1: no members due today');
+        return { ...NOOP_RESULT };
+      }
+
+      const pending = dueToday.filter(m => !state.sentPhones.includes(m.phone));
+      if (pending.length === 0) {
+        log.info('⏰ Reminder batch 1: all members already sent today');
+        return { ...NOOP_RESULT };
+      }
+
+      const batch = pending.slice(0, config.rateLimits.batchSize);
+      const remainder = pending.slice(config.rateLimits.batchSize);
+
+      log.info(`⏰ Reminder batch 1: ${batch.length} members (${state.sentPhones.length} already sent, ${remainder.length} held for batch 2)`);
+
+      const result = await runBatch(batch, getSock, botDir, state, 'Reminder batch 1', store);
+      if (remainder.length > 0) {
+        log.info(`📋 ${remainder.length} members held for batch 2 at 7:30 AM`);
+      }
+      return { ...result, queued: remainder.length };
+    } finally {
+      _busy = false;
     }
-
-    const batch = pending.slice(0, config.rateLimits.batchSize);
-    const remainder = pending.slice(config.rateLimits.batchSize);
-
-    log.info(`⏰ Reminder batch 1: ${batch.length} members (${state.sentPhones.length} already sent, ${remainder.length} held for batch 2)`);
-
-    const result = await runBatch(batch, getSock, botDir, state, 'Reminder batch 1', store);
-    if (remainder.length > 0) {
-      log.info(`📋 ${remainder.length} members held for batch 2 at 7:30 AM`);
-    }
-    return { ...result, queued: remainder.length };
   }
 
   // Batch 2 (7:30 AM cron) — sends remaining members not yet sent today
   async function sendRemindersSecondBatch(store, getSock, botDir) {
-    const state = loadState(botDir);
-    const dueToday = await getDueToday(store);
-    const remaining = dueToday.filter(m => !state.sentPhones.includes(m.phone));
-
-    if (remaining.length === 0) {
-      log.info('⏰ Reminder batch 2: nothing remaining');
-      return { sent: 0, referralSent: 0, autoRenewed: [], failed: 0 };
+    if (_busy) {
+      log.warn('⏰ Reminder batch 2 skipped — another reminder run is in progress');
+      return { ...NOOP_RESULT };
     }
+    _busy = true;
+    try {
+      const state = loadState(botDir);
+      const dueToday = await getDueToday(store);
+      const remaining = dueToday.filter(m => !state.sentPhones.includes(m.phone));
 
-    log.info(`⏰ Reminder batch 2: ${remaining.length} members`);
-    return runBatch(remaining, getSock, botDir, state, 'Reminder batch 2', store);
+      if (remaining.length === 0) {
+        log.info('⏰ Reminder batch 2: nothing remaining');
+        return { ...NOOP_RESULT };
+      }
+
+      log.info(`⏰ Reminder batch 2: ${remaining.length} members`);
+      return await runBatch(remaining, getSock, botDir, state, 'Reminder batch 2', store);
+    } finally {
+      _busy = false;
+    }
   }
 
-  return { sendReminders, sendRemindersSecondBatch, sendToMember, markReminded: markPhoneReminded };
+  // Restart catch-up — sends today's due-today reminders that were never delivered because the
+  // bot was offline/restarting across one or both cron windows (6:30 / 7:30). node-cron does not
+  // re-fire a window the process missed, so without this a restart at 6:31 silently skips the
+  // whole day's reminders. Mirrors removalEngine: persistent state + dedupe means a member is
+  // never messaged twice — sentPhones (today's reminder-state.json) is the single source of truth.
+  async function catchUp(store, getSock, botDir, broadcast) {
+    if (_busy) {
+      log.warn('⏰ Reminder catch-up skipped — another reminder run is in progress');
+      return { ...NOOP_RESULT };
+    }
+    // Before today's first reminder window has elapsed, do nothing — let the normal cron fire it
+    // on schedule. (Stops an early-morning reconnect from sending reminders before 6:30.)
+    if (!cronTimePassedToday(config.schedule?.reminderSend)) {
+      log.info('⏰ Reminder catch-up: before today\'s reminder window — nothing to do');
+      return { ...NOOP_RESULT };
+    }
+    _busy = true;
+    try {
+      const state = loadState(botDir);
+      const dueToday = await getDueToday(store);
+      const pending = dueToday.filter(m => !state.sentPhones.includes(m.phone));
+
+      if (pending.length === 0) {
+        log.info('⏰ Reminder catch-up: nothing missed — all due-today reminders already sent');
+        return { ...NOOP_RESULT };
+      }
+
+      log.info(`⏰ Reminder catch-up: ${pending.length} missed reminder(s) after restart (${state.sentPhones.length} already sent today)`);
+      const result = await runBatch(pending, getSock, botDir, state, 'Reminder catch-up', store);
+
+      if (broadcast && result.autoRenewed?.length > 0) {
+        const lines = result.autoRenewed.map(m => `  • ${m.name}  ${m.phone}${m.rolled ? ` (+${m.rolled} ref rolled to next month)` : ''}`).join('\n');
+        try { await broadcast(`🎁 Auto-renewed (2 refs) — catch-up after restart:\n${lines}`); } catch (_) {}
+      }
+      return result;
+    } finally {
+      _busy = false;
+    }
+  }
+
+  // Called on every connection.open (see index.js). Schedules the catch-up after a short grace
+  // so we don't fire on a socket that's about to drop again; re-arming clears any prior timer so
+  // repeated reconnects don't stack catch-up runs.
+  function resume(store, getSock, botDir, broadcast) {
+    if (_resumeTimer) { clearTimeout(_resumeTimer); _resumeTimer = null; }
+    _resumeTimer = setTimeout(() => {
+      _resumeTimer = null;
+      catchUp(store, getSock, botDir, broadcast)
+        .catch(err => log.warn(`⏰ Reminder catch-up failed: ${err.message}`));
+    }, RESUME_GRACE_MS);
+    log.info('⏰ Reminder catch-up scheduled (2-min grace after reconnect)');
+  }
+
+  return { sendReminders, sendRemindersSecondBatch, sendToMember, markReminded: markPhoneReminded, catchUp, resume };
 }

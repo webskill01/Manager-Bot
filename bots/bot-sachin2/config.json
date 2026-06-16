@@ -1,0 +1,51 @@
+{
+  "botName": "bot-sachin2",
+  "paidGroups": [
+    "TODO_REPLACE_WITH_PAID_GROUP_ID_1@g.us"
+  ],
+  "upiQrPath": "./qr-payment.jpg",
+  "renewal": {
+    "fullAmount": 100,
+    "referralAmount": 50,
+    "billingCycleDays": 30
+  },
+  "joining": {
+    "fee": 100
+  },
+  "overdue": {
+    "autoReminderDays": 5,
+    "consolidatedListDays": 7
+  },
+  "rateLimits": {
+    "memberToMemberGapMinMs": 7000,
+    "memberToMemberGapMaxMs": 10000,
+    "groupOpGapMinMs": 8000,
+    "groupOpGapMaxMs": 12000,
+    "batchCooldownMs": 300000,
+    "batchSize": 20,
+    "secondBatchDelayMs": 3600000,
+    "circuitBreakerThreshold": 10,
+    "circuitBreakerCooldownMs": 60000
+  },
+  "groupLinks": [
+    "1. TODO GROUP NAME (PAID):\n https://chat.whatsapp.com/TODO_INVITE_LINK"
+  ],
+  "welcomeMessage": "SSA {name} paaji 🙏\nGroup ch duties forward hundiyan ne, advance payment kise nu na kro.\n\nFree te exchange de messages allowed nahi han ji.",
+  "allowedNumbers": ["TODO_OWNER_10_DIGIT_NUMBER"],
+  "allowedLids": [],
+  "schedule": {
+    "morningDigest": "0 6 * * *",
+    "reminderSend": "30 6 * * *",
+    "reminderSend2": "30 7 * * *",
+    "overdueCheck": "0 10 * * *",
+    "eveningSummary": "0 22 * * *",
+    "timezone": "Asia/Kolkata"
+  },
+  "messages": {
+    "reminder": "Hanji Sat Sri Akal {name} veer ji 🙏\nAaj {date} nu tuhada monthly paid group renew karan di date hai. ₹100/- renew krdo ji 🙏",
+    "referralReminder": "Hanji Sat Sri Akal {name} veer ji 🙏\nAaj {date} nu renew karan di date hai.\nTusi ik banda add kraya si, is lyi sirf ₹50/- pay krdo ji 🙏",
+    "overdue": "Sat Sri Akal {name} paaji 🙏\n🚨 Tuhadi monthly paid group di date nikal gyi hai. Renew krke dss deyo ji 🙏",
+    "finalReminder": "Hnji veer ji, kinna ji renew?",
+    "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
+  }
+}
