@@ -13,7 +13,7 @@ let activeOverdueList = [];
 // the command actually reached the bot during reconnect churn. Instant lookups
 // (find/status/summary/stats/due/pending/refs/help/…) reply immediately and need no ack.
 const SLOW_COMMANDS = new Set([
-  'add', 'addsilent', 'approve', 'approveall', 'reject', 'rejectall',
+  'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
   'kick', 'rejoin', 'sendlinks', 'links', 'groupcheck', 'remind', 'renewed',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
 ]);
@@ -383,6 +383,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
       switch (cmd) {
         case 'add':        return memberH.handleAdd(args);
         case 'addsilent':  return memberH.handleSilentAdd(args);
+        case 'addnew':     return memberH.handleNewAdd(args);
         case 'kick':       return memberH.handleKick(mergePhoneFromStart(args));
         case 'skip':       return memberH.handleSkip(mergePhoneFromStart(args));
         case 'unskip':     return memberH.handleUnskip(mergePhoneFromStart(args));

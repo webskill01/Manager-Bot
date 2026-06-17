@@ -206,6 +206,124 @@ export function createMemberHandlers(store, groupManager, config, log) {
     }
   }
 
+  // Like handleAdd (counts as a NEW paying member, stores joining fee) but sends NO links.
+  // For the "share links manually → person pays → add to sheet" flow (sendlinks then addnew).
+  async function handleNewAdd(args) {
+    if (args.length < 2) return '❌ Format: addnew [Name] [phone]  or  addnew [Name] [phone] [day 1-31]';
+
+    const mutableArgs = [...args];
+
+    // Optional "ref <refPhone> [prev|backdate]" suffix — same parsing as handleAdd
+    let referrerPhone = null;
+    let isBackdate = false;
+    const refIdx = mutableArgs.findIndex(a => a.toLowerCase() === 'ref');
+    if (refIdx !== -1) {
+      const refParts = mutableArgs.splice(refIdx);
+      refParts.shift();
+      isBackdate = refParts.some(p => ['prev', 'backdate'].includes(p.toLowerCase()));
+      const phoneParts = refParts.filter(p => !['prev', 'backdate'].includes(p.toLowerCase()));
+      if (phoneParts.length > 0) {
+        const refNorm = normalizePhone(phoneParts.map(p => p.replace(/\D/g, '')).join(''));
+        if (refNorm.length === 10) referrerPhone = refNorm;
+      }
+    }
+
+    // Pop optional billing day (1–31) from end
+    let billingDay = null;
+    const maybeDate = mutableArgs[mutableArgs.length - 1];
+    if (/^\d{1,2}$/.test(maybeDate) && parseInt(maybeDate) >= 1 && parseInt(maybeDate) <= 31) {
+      billingDay = parseInt(mutableArgs.pop());
+    }
+
+    // Extract phone from the right
+    const phoneParts = [];
+    while (mutableArgs.length > 1) {
+      const last = mutableArgs[mutableArgs.length - 1];
+      if (/^\+\d+$/.test(last) || /^\d{3,}$/.test(last)) {
+        phoneParts.unshift(last.replace(/\D/g, ''));
+        mutableArgs.pop();
+      } else {
+        break;
+      }
+    }
+
+    if (phoneParts.length === 0) return '❌ Format: addnew [Name] [phone]';
+    const phone = normalizePhone(phoneParts.join(''));
+    if (phone.length !== 10) return '❌ Invalid number. Use 10 digits.';
+    const name = mutableArgs.join(' ').trim();
+    if (name.length < 2) return '❌ Name too short.';
+
+    if (inFlightAdds.has(phone)) return `⏳ Operation for ${phone} already in progress.`;
+
+    const existing = store.findByPhone(phone);
+    if (existing) {
+      if (existing.status === 'ACTIVE') return `⚠️ ${existing.name} (${phone}) already ACTIVE. Use 'renewed' to update billing.`;
+      if (existing.status === 'REMOVED') return `⚠️ ${existing.name} already in sheet as REMOVED. Use: rejoin ${phone}`;
+      if (existing.status === 'SKIPPED') return `⚠️ ${existing.name} already SKIPPED. Use: unskip ${phone}`;
+    }
+
+    inFlightAdds.add(phone);
+    try {
+      const now = new Date();
+      const day = billingDay ?? now.getDate();
+      const billingDate = formatDate(clampedBillingDate(now.getFullYear(), now.getMonth() + 1, day));
+
+      // Compute refCreditDate before add if backdating — pins referral to referrer's PREVIOUS window
+      let refCreditDate = '';
+      if (referrerPhone && isBackdate) {
+        const ref = store.findByPhone(referrerPhone);
+        if (ref) {
+          const billing = parseDate(ref.billingDate);
+          if (billing) {
+            refCreditDate = formatDate(new Date(billing.getFullYear(), billing.getMonth() - 1, billing.getDate() - 1));
+          }
+        }
+      }
+
+      await store.add({
+        name,
+        phone,
+        joinDate: todayStr(),
+        billingDate,
+        // joining fee → counts as a NEW member + join revenue in reports (unlike addsilent's 0).
+        paidLast: config.joining.fee,
+        reference: referrerPhone || '',
+        refCreditDate,
+      });
+
+      let refNote = '';
+      if (referrerPhone) {
+        const referrer = store.findByPhone(referrerPhone);
+        if (referrer) {
+          if (isBackdate && refCreditDate) {
+            const billingObj = parseDate(referrer.billingDate);
+            const periodStart = billingObj
+              ? formatDate(new Date(billingObj.getFullYear(), billingObj.getMonth() - 2, billingObj.getDate()))
+              : '?';
+            const periodEnd = billingObj
+              ? formatDate(new Date(billingObj.getFullYear(), billingObj.getMonth() - 1, billingObj.getDate()))
+              : '?';
+            const logEntry = `${name} (joined ${todayStr()}) backdated to ${periodStart}–${periodEnd} on ${todayStr()}`;
+            const newLog = referrer.refLog ? `${referrer.refLog} | ${logEntry}` : logEntry;
+            await store.update(referrerPhone, { refLog: newLog });
+          }
+          const refs = getReferralsInBillingPeriod(referrerPhone, referrer.billingDate, store.getAll()).length;
+          const refTag = refs >= 2 ? `🎁 ${refs} refs this month — free renewal`
+            : refs === 1 ? `★ 1 ref this month — ₹${config.renewal.referralAmount}` : '0 refs';
+          const backdateNote = refCreditDate ? ' ⏪ backdated' : '';
+          refNote = `\n👥 Referrer: ${referrer.name} — ${refTag}${backdateNote}`;
+        } else {
+          refNote = `\n⚠️ Referrer ${referrerPhone} not found in sheet.`;
+        }
+      }
+
+      log.info(`📋 New add (no links): ${name} (${phone}) — counted as new member`);
+      return `✅ ${name} (${phone}) added to sheet as a NEW member (no links sent).\n📅 Billing: ${billingDate}${refNote}\n\nNow use:\nrejoin ${phone}  →  adds directly to all groups`;
+    } finally {
+      inFlightAdds.delete(phone);
+    }
+  }
+
   async function handleKick(args) {
     if (args.length < 1) return '❌ Missing arguments. Format: kick [phone]';
     const phone = normalizePhone(args[0]);
@@ -575,5 +693,5 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return `✅ Rejected ${phone} in ${rejected}/${found} group(s)${failed > 0 ? ` (${failed} failed)` : ''}`;
   }
 
-  return { handleAdd, handleSilentAdd, handleKick, handleSkip, handleUnskip, handleDelay, handleLinks, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
+  return { handleAdd, handleSilentAdd, handleNewAdd, handleKick, handleSkip, handleUnskip, handleDelay, handleLinks, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
 }

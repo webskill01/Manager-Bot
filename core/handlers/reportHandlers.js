@@ -358,6 +358,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
 • add [Name] [phone] / [day] / ref [refPhone]
 • add [Name] [phone] ref [refPhone] prev  →  credit ref to referrer's PREVIOUS billing period
 • addsilent [Name] [phone]  →  sheet only, no links, NOT counted as new member
+• addnew [Name] [phone] / [day] / ref [refPhone]  →  sheet only, no links, counted as new member (use after sendlinks)
 • rejoin [phone] / [phone] [day]
 • kick [phone]
 • skip [phone] [reason]  /  unskip [phone]
