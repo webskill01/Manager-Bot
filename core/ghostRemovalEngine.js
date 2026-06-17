@@ -13,6 +13,8 @@ export function createGhostRemovalEngine(config, log, getSock, store, getBroadca
 
   let _timeouts = [];
   let _running = false;
+  let _starting = false; // synchronous guard: start() awaits a multi-second scan before saving
+                         // state, so two quick "kickghosts confirm" messages must not both launch.
 
   function loadState() {
     try {
@@ -91,9 +93,10 @@ export function createGhostRemovalEngine(config, log, getSock, store, getBroadca
   async function removeFromAllGroups(phone) {
     const jid = `91${normalizePhone(phone)}@s.whatsapp.net`;
     let removedCount = 0;
+    let interrupted = false;
     for (let i = 0; i < config.paidGroups.length; i++) {
       const sock = getSock();
-      if (!sock?.user) { log.warn('⚠️  Ghost kick: socket lost mid-removal'); break; }
+      if (!sock?.user) { log.warn('⚠️  Ghost kick: socket lost mid-removal'); interrupted = true; break; }
       try {
         await sock.groupParticipantsUpdate(config.paidGroups[i], [jid], 'remove');
         removedCount++;
@@ -105,7 +108,7 @@ export function createGhostRemovalEngine(config, log, getSock, store, getBroadca
         await sleep(randomBetween(config.rateLimits.groupOpGapMinMs, config.rateLimits.groupOpGapMaxMs));
       }
     }
-    return removedCount;
+    return { removedCount, interrupted };
   }
 
   async function processOne(index) {
@@ -152,7 +155,16 @@ export function createGhostRemovalEngine(config, log, getSock, store, getBroadca
       }
 
       log.info(`🚫 Ghost kick [${index + 1}/${state.phones.length}]: ${entry.phone}`);
-      const removedCount = await removeFromAllGroups(entry.phone);
+      const { removedCount, interrupted } = await removeFromAllGroups(entry.phone);
+
+      // Socket dropped partway through this number's group loop — only partially removed. Don't
+      // mark done: leave the index put so resume() retries the full removal on reconnect
+      // (re-removing an already-removed group just no-ops). Marking done would strand a ghost in
+      // the groups it wasn't removed from until the operator manually re-runs kickghosts.
+      if (interrupted) {
+        log.warn(`⚠️  Ghost kick [${index + 1}/${state.phones.length}]: ${entry.phone} interrupted by socket loss — will retry on reconnect`);
+        return;
+      }
 
       state.phones[index].done = true;
       state.phones[index].removedGroups = removedCount;
@@ -193,35 +205,40 @@ export function createGhostRemovalEngine(config, log, getSock, store, getBroadca
 
   // Confirm step — scans live, locks the list, and starts background removal.
   async function start() {
-    if (loadState()?.active) return '⚠️ Ghost removal already running. Send "stop kickghosts" to cancel.';
+    if (loadState()?.active || _starting) return '⚠️ Ghost removal already running. Send "stop kickghosts" to cancel.';
 
     const sock = getSock();
     if (!sock?.user) return '❌ Bot not connected.';
 
-    const { phones, errors } = await computeGhosts();
-    if (phones.length === 0) {
-      return errors.length
-        ? `✅ No ghosts found, but ${errors.length} group(s) failed to scan — re-run later to be sure.`
-        : '✅ No ghosts found — every member is in the sheet.';
+    _starting = true;
+    try {
+      const { phones, errors } = await computeGhosts();
+      if (phones.length === 0) {
+        return errors.length
+          ? `✅ No ghosts found, but ${errors.length} group(s) failed to scan — re-run later to be sure.`
+          : '✅ No ghosts found — every member is in the sheet.';
+      }
+
+      const state = {
+        active: true,
+        startedAt: new Date().toISOString(),
+        phones: phones.map(phone => ({ phone, done: false })),
+        currentIndex: 0,
+        totalRemoved: 0,
+      };
+      saveState(state);
+      scheduleNext(0, 0);
+
+      const avgGapMin = Math.round((MIN_GAP_MS + MAX_GAP_MS) / 2 / 60000);
+      const estHours = ((phones.length - 1) * avgGapMin / 60).toFixed(1);
+      let msg = `🚫 Ghost removal started — ${phones.length} number(s).\n`;
+      msg += `Gap: 15–30 min per person\nEst. time: ~${estHours} hrs\n`;
+      if (errors.length) msg += `⚠️ ${errors.length} group(s) failed to scan — those members not counted.\n`;
+      msg += `Send "stop kickghosts" to cancel.`;
+      return msg;
+    } finally {
+      _starting = false;
     }
-
-    const state = {
-      active: true,
-      startedAt: new Date().toISOString(),
-      phones: phones.map(phone => ({ phone, done: false })),
-      currentIndex: 0,
-      totalRemoved: 0,
-    };
-    saveState(state);
-    scheduleNext(0, 0);
-
-    const avgGapMin = Math.round((MIN_GAP_MS + MAX_GAP_MS) / 2 / 60000);
-    const estHours = ((phones.length - 1) * avgGapMin / 60).toFixed(1);
-    let msg = `🚫 Ghost removal started — ${phones.length} number(s).\n`;
-    msg += `Gap: 15–30 min per person\nEst. time: ~${estHours} hrs\n`;
-    if (errors.length) msg += `⚠️ ${errors.length} group(s) failed to scan — those members not counted.\n`;
-    msg += `Send "stop kickghosts" to cancel.`;
-    return msg;
   }
 
   function stop() {
@@ -245,6 +262,16 @@ export function createGhostRemovalEngine(config, log, getSock, store, getBroadca
     if (!state?.active) return;
     const remaining = state.phones.filter(p => !p.done).length;
     if (remaining === 0) { deleteState(); return; }
+    // resume() fires on EVERY reconnect (connection.open). A removal mid-flight schedules the next
+    // itself, so do nothing — stacking another chain would run two removals in parallel and
+    // collapse the 15–30 min anti-ban gap (ban risk).
+    if (_running) {
+      log.info('🔄 Ghost removal resume skipped — a removal is already in progress');
+      return;
+    }
+    // Not running → we may be sitting in a gap timer. Cancel any pending chain before re-arming so
+    // repeated reconnects can never leave two parallel chains advancing through the list.
+    clearTimeouts();
     const delayMs = 2 * 60 * 1000;
     log.info(`🔄 Resuming ghost removal — ${remaining} pending from index ${state.currentIndex} (starts in 2 min)`);
     scheduleNext(state.currentIndex, delayMs);
