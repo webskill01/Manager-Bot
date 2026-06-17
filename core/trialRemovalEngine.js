@@ -92,6 +92,21 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids)
         return;
       }
 
+      // Guard against re-firing a batch that already ran. scheduleFromState() re-arms every
+      // not-done batch on each reconnect; if an earlier batch was skipped (socket down), a still
+      // -pending later batch can be re-scheduled with a >0 stagger delay and fire again AFTER it
+      // already completed — removing a second batch of ~10 members and breaking the anti-ban
+      // pacing. The sibling removal/ghost engines have this same done-check.
+      const preState = loadState();
+      if (!preState?.active) {
+        log.info(`⏭️  Trial batch ${batchIndex + 1} skipped — no active cycle`);
+        return;
+      }
+      if (preState.batches[batchIndex]?.done) {
+        log.info(`⏭️  Trial batch ${batchIndex + 1} already done — skipping re-fire`);
+        return;
+      }
+
       log.info(`🚀 Trial removal batch ${batchIndex + 1} starting`);
 
       let metadata;
@@ -102,7 +117,13 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids)
         return;
       }
 
-      const removable = (metadata.participants || []).filter(p => !isWhitelisted(p.jid));
+      // Baileys exposes the participant JID as `jid` on some builds and `id` on others — read both
+      // (matches commandParser/ghostRemovalEngine/groupManager). Using bare `p.jid` meant that on a
+      // build that only populates `p.id`, every participant looked un-identifiable → isWhitelisted
+      // returned true for all → removable was empty → trial removal silently removed nobody.
+      const removable = (metadata.participants || [])
+        .map(p => p.jid || p.id || '')
+        .filter(jid => jid && !isWhitelisted(jid));
 
       if (removable.length === 0) {
         log.info('✅ Trial group clear — only whitelisted members remain');
@@ -128,11 +149,11 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids)
         const currentSock = getSock();
         if (!currentSock?.user) { log.warn('⚠️  Socket lost mid-batch — stopping'); break; }
         try {
-          await currentSock.groupParticipantsUpdate(tc.groupId, [toRemove[i].jid], 'remove');
+          await currentSock.groupParticipantsUpdate(tc.groupId, [toRemove[i]], 'remove');
           removed++;
-          log.info(`🚫 Trial removed: ${toRemove[i].jid}`);
+          log.info(`🚫 Trial removed: ${toRemove[i]}`);
         } catch (err) {
-          log.warn(`⚠️  Remove failed ${toRemove[i].jid}: ${err.message}`);
+          log.warn(`⚠️  Remove failed ${toRemove[i]}: ${err.message}`);
         }
         if (i < toRemove.length - 1) {
           await sleep(randomBetween(config.rateLimits.groupOpGapMinMs, config.rateLimits.groupOpGapMaxMs));
@@ -151,7 +172,9 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids)
       // Check if group is fully clear after this batch
       try {
         const fresh = await getSock()?.groupMetadata(tc.groupId);
-        const remaining = (fresh?.participants || []).filter(p => !isWhitelisted(p.jid));
+        const remaining = (fresh?.participants || [])
+          .map(p => p.jid || p.id || '')
+          .filter(jid => jid && !isWhitelisted(jid));
         if (remaining.length === 0) {
           log.info('✅ Trial group fully cleared');
           await notifyCompletion(state?.totalRemoved || removed);
