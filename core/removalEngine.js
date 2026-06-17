@@ -57,9 +57,10 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
   async function removeMemberFromAllGroups(phone) {
     const jid = `91${normalizePhone(phone)}@s.whatsapp.net`;
     let removedCount = 0;
+    let interrupted = false;
     for (let i = 0; i < config.paidGroups.length; i++) {
       const currentSock = getSock();
-      if (!currentSock?.user) { log.warn('⚠️  Kickall: socket lost mid-removal'); break; }
+      if (!currentSock?.user) { log.warn('⚠️  Kickall: socket lost mid-removal'); interrupted = true; break; }
       try {
         await currentSock.groupParticipantsUpdate(config.paidGroups[i], [jid], 'remove');
         removedCount++;
@@ -71,7 +72,7 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
         await sleep(randomBetween(config.rateLimits.groupOpGapMinMs, config.rateLimits.groupOpGapMaxMs));
       }
     }
-    return removedCount;
+    return { removedCount, interrupted };
   }
 
   async function processOneMember(index) {
@@ -136,7 +137,16 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
 
       log.info(`🚫 Kickall [${index + 1}/${state.members.length}]: ${member.name} (${member.phone})`);
 
-      const removedCount = await removeMemberFromAllGroups(member.phone);
+      const { removedCount, interrupted } = await removeMemberFromAllGroups(member.phone);
+
+      // Socket dropped partway through this member's group loop — they were only partially
+      // processed. Do NOT mark them done/REMOVED: leave index where it is so resume() retries the
+      // full removal on reconnect (re-removing an already-removed group just no-ops). Marking
+      // REMOVED here would flag someone still physically in the groups as gone from billing.
+      if (interrupted) {
+        log.warn(`⚠️  Kickall [${index + 1}/${state.members.length}]: ${member.name} interrupted by socket loss — will retry on reconnect`);
+        return;
+      }
 
       try {
         await store.update(member.phone, { status: 'REMOVED' });
@@ -272,6 +282,16 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
     if (!state?.active) return;
     const remaining = state.members.filter(m => !m.done).length;
     if (remaining === 0) { deleteState(); return; }
+    // resume() fires on EVERY reconnect (connection.open). A removal mid-flight will schedule the
+    // next member itself when it finishes, so do nothing here — stacking another chain would run
+    // two removals in parallel and collapse the 15–30 min anti-ban gap (ban risk).
+    if (_running) {
+      log.info('🔄 Kickall resume skipped — a removal is already in progress');
+      return;
+    }
+    // Not running → we may be sitting in a gap timer. Cancel any pending chain before re-arming so
+    // repeated reconnects can never leave two parallel chains advancing through the list.
+    clearTimeouts();
     // Use a 2-min reconnect grace period instead of 0 to avoid firing immediately
     const delayMs = 2 * 60 * 1000;
     log.info(`🔄 Resuming kickall — ${remaining} pending from index ${state.currentIndex} (starts in 2 min)`);
