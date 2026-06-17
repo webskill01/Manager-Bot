@@ -15,7 +15,7 @@
   },
   "renewal": {
     "fullAmount": 100,
-    "referralAmount": 50,
+    "referralAmount": 100,
     "billingCycleDays": 30
   },
   "joining": {

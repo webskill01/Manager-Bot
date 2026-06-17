@@ -78,15 +78,33 @@ export function createRenewalHandlers(store, config, log) {
   }
 
   function handleDue(args) {
-    const tomorrow = args[0] === 'tomorrow';
-    const targetDays = tomorrow ? 1 : 0;
-    const label = tomorrow ? 'tomorrow' : 'today';
+    // Resolve the time arg tolerantly. A strict `=== 'tomorrow'` silently fell back to
+    // "today" on any typo (tommorow / tmrw / Tomorrow / kal), making `due tomorrow` look
+    // identical to `due`. Accept common variants, Hindi "kal", and a numeric N-days offset.
+    const raw = (args[0] || '').toLowerCase().trim();
+    const TOMORROW = new Set(['tomorrow', 'tomorow', 'tommorow', 'tommorrow', 'tmrw', 'tmr', 'tom', 'tomm', 'kal']);
+    const TODAY = new Set(['today', 'aaj', '0']);
+
+    let targetDays = 0;
+    let unknownArg = '';
+    if (!raw || TODAY.has(raw)) {
+      targetDays = 0;
+    } else if (TOMORROW.has(raw)) {
+      targetDays = 1;
+    } else if (/^\d{1,2}$/.test(raw) && parseInt(raw) <= 31) {
+      targetDays = parseInt(raw); // "due 3" → 3 days from now
+    } else {
+      unknownArg = args[0]; // unrecognized — default to today but tell the operator
+    }
+
+    const label = targetDays === 0 ? 'today' : targetDays === 1 ? 'tomorrow' : `in ${targetDays} days`;
     const dateStr = formatDate(new Date(Date.now() + targetDays * 24 * 60 * 60 * 1000));
+    const hint = unknownArg ? `⚠️ Didn't recognize "${unknownArg}" — showing today. Try: due tomorrow  /  due 3\n\n` : '';
 
     const active = store.getActive();
     const due = active.filter(m => daysFromToday(m.billingDate) === targetDays);
 
-    if (due.length === 0) return `📅 No members due ${label} (${dateStr}).`;
+    if (due.length === 0) return `${hint}📅 No members due ${label} (${dateStr}).`;
 
     const all = store.getAll();
     const lines = due.map(m => {
@@ -95,7 +113,7 @@ export function createRenewalHandlers(store, config, log) {
         : refs === 1 ? `  ★ 1 ref — ₹${config.renewal.referralAmount}` : '';
       return `• ${m.name} • ${m.phone}${refTag}`;
     }).join('\n');
-    return `📅 Due ${label} — ${dateStr} (${due.length} members):\n\n${lines}`;
+    return `${hint}📅 Due ${label} — ${dateStr} (${due.length} members):\n\n${lines}`;
   }
 
   function handleOverdue() {

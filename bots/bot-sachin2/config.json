@@ -1,9 +1,17 @@
 {
   "botName": "bot-sachin2",
   "paidGroups": [
-    "TODO_REPLACE_WITH_PAID_GROUP_ID_1@g.us"
+    "120363406302662198@g.us",
+    "120363408598698876@g.us"
   ],
   "upiQrPath": "./qr-payment.jpg",
+  "split": {
+    "shares": [
+      { "label": "Sachin", "percent": 50 },
+      { "label": "Nitin", "percent": 25 },
+      { "label": "Tanishq", "percent": 25 }
+    ]
+  },
   "renewal": {
     "fullAmount": 100,
     "referralAmount": 50,
@@ -28,11 +36,23 @@
     "circuitBreakerCooldownMs": 60000
   },
   "groupLinks": [
-    "1. TODO GROUP NAME (PAID):\n https://chat.whatsapp.com/TODO_INVITE_LINK"
+    "1. SINGH TRAVELS (PAID) ( ONLY DELHI // GURGAON // NOIDA - PICK-DROP):\n https://chat.whatsapp.com/EmNNfzBnT6W2OQEv4N09RK?s=cl&p=a&mlu=2",
+    "2. Malwa Travels (PAID) Mix Duty Group :\n https://chat.whatsapp.com/FX6np7mxn8dCty5g4nA8Mr?s=cl&p=a&mlu=2"
   ],
-  "welcomeMessage": "SSA {name} paaji 🙏\nGroup ch duties forward hundiyan ne, advance payment kise nu na kro.\n\nFree te exchange de messages allowed nahi han ji.",
-  "allowedNumbers": ["TODO_OWNER_10_DIGIT_NUMBER"],
-  "allowedLids": [],
+  "welcomeMessage": "🚨 Group ch share hon waliyan duties kai groups cho forward hundiyan ne, is karke kise nu vi advance payment na kro.\n\n⚠️ Free te Exchange de messages allowed nahi han.\n\n🙏 Je kise fraud number di duty vekho ta number private msg kar deo.",
+  "trial": {
+    "groupId": "120363424849920943@g.us",
+    "whitelist": ["9914623976","6284992669","9465995696","9465805369","917589414198","7589988141","7589027841","9464932971"],
+    "batchSize": 10,
+    "batchesPerDay": { "min": 3, "max": 5 },
+    "messages": {
+      "warningText": "MALWA TRAVELS\n\n🚨FREE MEMBERS REMOVE🚨\n\nJO V VEER GROUP VICH REHNA CHAHNDA HAI JI TA APNA \n\nNAME\n\nADDRESS \n\nCITY\n\nSHARE KRDO JI \n\nMONTHLY 100/- GROUP HAI JIS VICH \n\nMIX DUTY\n\nDELHI NCR ONLY DUTY\n\nALL PUNJAB  DUTY \n\n24/7 SHARE KRI JANGIA \n\nADD HON LYI MESSAGE KRO\n\n9464932971",
+      "image": { "path": "./trial-image.jpeg", "caption": "Ehna group ch add hon lyi 9464932971 te msg kro ji\n\n24x7 Duty \nNo free exchange\nOnly duty" }
+    },
+    "completionMessage": "✅ Trial removal cycle complete."
+  },
+   "allowedNumbers": ["6283380110", "9914623976","9877524103"],
+  "allowedLids": ["242902009692413","150714831646943",""],
   "schedule": {
     "morningDigest": "0 6 * * *",
     "reminderSend": "30 6 * * *",
@@ -42,10 +62,10 @@
     "timezone": "Asia/Kolkata"
   },
   "messages": {
-    "reminder": "Hanji Sat Sri Akal {name} veer ji 🙏\nAaj {date} nu tuhada monthly paid group renew karan di date hai. ₹100/- renew krdo ji 🙏",
-    "referralReminder": "Hanji Sat Sri Akal {name} veer ji 🙏\nAaj {date} nu renew karan di date hai.\nTusi ik banda add kraya si, is lyi sirf ₹50/- pay krdo ji 🙏",
-    "overdue": "Sat Sri Akal {name} paaji 🙏\n🚨 Tuhadi monthly paid group di date nikal gyi hai. Renew krke dss deyo ji 🙏",
-    "finalReminder": "Hnji veer ji, kinna ji renew?",
+    "reminder": "SSA {name} Paaji ajj {date} nu tohada Malwa Travels group vich ik mahina pura hogya is mahine layi iste 100rs pay kardo ji 🙏",
+    "referralReminder": "SSA {name} Paaji ajj {date} nu tohada Malwa Travels group vich ik mahina pura hogya tusi ik bnda add krwaya islayi iste 50rs pay kardo ji 🙏",
+    "overdue": "Hanji paaji tuhada group vich ik mahina pura hogya ajj hi renew karke das deo 🚨🚨",
+    "finalReminder": "Hnji Veerji knra ji repay ?",
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
   }
 }
