@@ -272,10 +272,13 @@ export function createReportHandlers(store, config, botStartTime, log) {
       fullRenewals.length * config.renewal.fullAmount +
       referralRenewals.length * config.renewal.referralAmount;
 
-    // New joins this month (by joinDate) — excludes silent adds (paidLast 0)
+    // New joins this month (by joinDate) — excludes silent adds (paidLast 0) and anyone already
+    // counted as a renewal this month, so a same-month add+renew isn't billed twice (matches monthly).
+    const renewedPhonesThisMonth = new Set(renewedThisMonth.map(m => m.phone));
     const joinsThisMonth = all.filter(m => {
       if (!m.joinDate || m.joinDate.length < 10) return false;
       if (!isPaidJoinRow(m)) return false;
+      if (renewedPhonesThisMonth.has(m.phone)) return false;
       return m.joinDate.slice(3, 5) === mm && m.joinDate.slice(6, 10) === yyyy;
     });
     const joinRevenue = joinsThisMonth.length * config.joining.fee;
@@ -550,7 +553,10 @@ Example: R1 R2 S3
       const label = d.toLocaleString('en-IN', { month: 'short', year: 'numeric' });
 
       const renewed  = all.filter(m => m.lastRenewed && inMonth(m.lastRenewed, mm, yyyy));
-      const joins    = all.filter(m => isPaidJoinRow(m) && inMonth(m.joinDate, mm, yyyy));
+      // A member renewed this month is counted as a renewal, not also a join — otherwise a
+      // same-month add+renew is billed twice (matches summary/monthly).
+      const renewedPhones = new Set(renewed.map(m => m.phone));
+      const joins    = all.filter(m => isPaidJoinRow(m) && inMonth(m.joinDate, mm, yyyy) && !renewedPhones.has(m.phone));
       const revenue  = renewed.reduce((s, m) => s + (Number(m.paidLast) || 0), 0)
                      + joins.length * config.joining.fee;
 
@@ -612,21 +618,29 @@ Example: R1 R2 S3
     const yyyy = String(now.getFullYear());
     const monthName = now.toLocaleString('en-IN', { month: 'long' });
 
-    const dueThisMonth = all.filter(m => inMonth(m.billingDate, mm, yyyy));
-    const renewedSet   = dueThisMonth.filter(m => m.lastRenewed && inMonth(m.lastRenewed, mm, yyyy));
-    const notRenewed   = dueThisMonth.filter(m => !(m.lastRenewed && inMonth(m.lastRenewed, mm, yyyy)));
+    // A member who renews has billingDate pushed ~1 month forward, so once renewed they no longer
+    // carry a billingDate in this month. "Due this month" is therefore the UNION of: members
+    // renewed this month (their cycle came due and was paid) and members still holding a this-month
+    // billing date who haven't renewed (due, unpaid). The two sets are disjoint. The old code
+    // derived renewedSet from a billing-anchored "dueThisMonth", which silently dropped every
+    // renewed member, so the rate and collected total read ~0%.
+    const renewedSet = all.filter(m => m.lastRenewed && inMonth(m.lastRenewed, mm, yyyy));
+    const stillDue   = all.filter(m =>
+      inMonth(m.billingDate, mm, yyyy) && !(m.lastRenewed && inMonth(m.lastRenewed, mm, yyyy))
+    );
+    const dueCount = renewedSet.length + stillDue.length;
 
-    const activePending  = notRenewed.filter(m => m.status === 'ACTIVE');
-    const removedUnpaid  = notRenewed.filter(m => m.status === 'REMOVED');
-    const skippedUnpaid  = notRenewed.filter(m => m.status === 'SKIPPED');
+    const activePending  = stillDue.filter(m => m.status === 'ACTIVE');
+    const removedUnpaid  = stillDue.filter(m => m.status === 'REMOVED');
+    const skippedUnpaid  = stillDue.filter(m => m.status === 'SKIPPED');
 
-    const rate = dueThisMonth.length > 0
-      ? Math.round((renewedSet.length / dueThisMonth.length) * 100) : 0;
+    const rate = dueCount > 0
+      ? Math.round((renewedSet.length / dueCount) * 100) : 0;
     const collected    = renewedSet.reduce((s, m) => s + (Number(m.paidLast) || 0), 0);
     const outstanding  = activePending.length * config.renewal.fullAmount;
 
     let msg = `📊 COLLECTION RATE — ${monthName} ${yyyy}\n\n`;
-    msg += `Due this month:    ${dueThisMonth.length}\n`;
+    msg += `Due this month:    ${dueCount}\n`;
     msg += `✅ Renewed:        ${renewedSet.length}  (${rate}%)\n`;
     msg += `⏳ Active pending: ${activePending.length}\n`;
     if (removedUnpaid.length)  msg += `❌ Removed unpaid: ${removedUnpaid.length}\n`;
