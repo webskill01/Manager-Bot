@@ -46,3 +46,22 @@ test('a member added AND renewed today counts as a renewal, not a new join', asy
   assert.match(out, /Renewals: 1/);
   assert.match(out, /Subhash/);
 });
+
+test('an existing member whose joinDate was hand-edited to today is NOT a new join', async () => {
+  // Real-world case: Sunil/Sukhpreet are old members (added long ago, billing == today because
+  // their cycle is current) whose joinDate cell was manually changed to today. A genuine new join
+  // always has billing a cycle AHEAD of join; billing == join (or earlier) ⇒ not a new join.
+  const members = [
+    { name: 'Sunil', phone: '8264757593', status: 'ACTIVE', joinDate: today,
+      billingDate: today, paidLast: 90, renewals: 0, lastRenewed: '', lastUpdated: '17-05-2026 20:17' },
+    { name: 'Pintu', phone: '9034710530', status: 'ACTIVE', joinDate: today,
+      billingDate: '17-07-2099', paidLast: 90, renewals: 0, lastRenewed: '', lastUpdated: today },
+  ];
+  const report = createReportHandlers(makeStore(members), makeConfig(), Date.now(), log);
+  const out = await report.handleSummary([]);
+
+  const newSection = out.split('♻️')[0];
+  assert.match(newSection, /New Members: 1/, 'only the forward-billing join counts');
+  assert.match(newSection, /Pintu/);
+  assert.doesNotMatch(newSection, /Sunil/, 'hand-edited existing member must not appear as new');
+});

@@ -6,6 +6,16 @@ import { daysFromToday, todayStr, getReferralsInBillingPeriod, parseDate, format
 // a new member or as join revenue. Real joins (add/rejoin) store the joining fee.
 const isPaidJoinRow = m => Number(m.paidLast) !== 0;
 
+// A genuine new join always has its billing date set a cycle AHEAD of the join date — the `add`
+// command pushes billing to the next month, so billing > join always holds for a real join (and
+// keeps holding, since renewals only move billing further forward). A row where billing <= join is
+// an EXISTING member whose joinDate was hand-edited in the sheet to a recent/today's date (their
+// billing still reflects the real current cycle). Such rows must never be counted as new joins.
+const hasForwardBilling = m => {
+  const b = parseDate(m.billingDate), j = parseDate(m.joinDate);
+  return !!b && !!j && b.getTime() > j.getTime();
+};
+
 // Unified date extractor → always returns "DD-MM-YYYY" or null.
 // Handles: DD-MM-YYYY, DD-MM-YYYY HH:MM, ISO YYYY-MM-DDTHH:...
 function toDDMMYYYY(dateStr) {
@@ -146,7 +156,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
     // added today (e.g. an existing member re-added via `add`, then `renewed`). Previously the
     // renewal filters excluded joinDate===today, so such a member fell through to "New Members".
     // Honour the explicit renewed action as the classifier and keep them out of newToday.
-    const newToday = all.filter(m => isPaidJoin(m, targetDateStr) && !renewedOnTarget(m));
+    const newToday = all.filter(m => isPaidJoin(m, targetDateStr) && !renewedOnTarget(m) && hasForwardBilling(m));
     const renewedToday = all.filter(m => renewedOnTarget(m) && Number(m.paidLast) !== 0)
       .sort((a, b) => (a.lastRenewed || '').localeCompare(b.lastRenewed || ''));
     const autoRenewedToday = all.filter(m => renewedOnTarget(m) && Number(m.paidLast) === 0)
@@ -279,6 +289,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
       if (!m.joinDate || m.joinDate.length < 10) return false;
       if (!isPaidJoinRow(m)) return false;
       if (renewedPhonesThisMonth.has(m.phone)) return false;
+      if (!hasForwardBilling(m)) return false;
       return m.joinDate.slice(3, 5) === mm && m.joinDate.slice(6, 10) === yyyy;
     });
     const joinRevenue = joinsThisMonth.length * config.joining.fee;
@@ -490,7 +501,7 @@ Example: R1 R2 S3
       const yyyy = String(d.getFullYear());
       const label = d.toLocaleString('en-IN', { month: 'short', year: 'numeric' });
 
-      const joins    = all.filter(m => isPaidJoinRow(m) && inMonth(m.joinDate, mm, yyyy)).length;
+      const joins    = all.filter(m => isPaidJoinRow(m) && inMonth(m.joinDate, mm, yyyy) && hasForwardBilling(m)).length;
       const removals = all.filter(m => m.status === 'REMOVED' && inMonth(m.lastUpdated, mm, yyyy)).length;
       const net = joins - removals;
       const arrow = net > 0 ? '↑' : net < 0 ? '↓' : '→';
@@ -556,7 +567,7 @@ Example: R1 R2 S3
       // A member renewed this month is counted as a renewal, not also a join — otherwise a
       // same-month add+renew is billed twice (matches summary/monthly).
       const renewedPhones = new Set(renewed.map(m => m.phone));
-      const joins    = all.filter(m => isPaidJoinRow(m) && inMonth(m.joinDate, mm, yyyy) && !renewedPhones.has(m.phone));
+      const joins    = all.filter(m => isPaidJoinRow(m) && inMonth(m.joinDate, mm, yyyy) && !renewedPhones.has(m.phone) && hasForwardBilling(m));
       const revenue  = renewed.reduce((s, m) => s + (Number(m.paidLast) || 0), 0)
                      + joins.length * config.joining.fee;
 
@@ -574,7 +585,7 @@ Example: R1 R2 S3
     const yyyy = String(now.getFullYear());
     const monthName = now.toLocaleString('en-IN', { month: 'long' });
 
-    const joins    = all.filter(m => isPaidJoinRow(m) && inMonth(m.joinDate, mm, yyyy));
+    const joins    = all.filter(m => isPaidJoinRow(m) && inMonth(m.joinDate, mm, yyyy) && hasForwardBilling(m));
     const removals = all.filter(m => m.status === 'REMOVED' && inMonth(m.lastUpdated, mm, yyyy));
     const net = joins.length - removals.length;
     const indicator = net > 0 ? '📈 growing' : net < 0 ? '📉 shrinking' : '→ stable';
@@ -711,7 +722,7 @@ Example: R1 R2 S3
     // renewal, not a new join (mirrors handleSummary). Without this they'd show as new members.
     const renewedThisWeek = all.filter(m => m.lastRenewed && last7Set.has(toDDMMYYYY(m.lastRenewed)) && Number(m.renewals) > 0);
     const renewedPhones7  = new Set(renewedThisWeek.map(m => m.phone));
-    const newThisWeek     = all.filter(m => isPaidJoinRow(m) && last7Set.has(m.joinDate) && !renewedPhones7.has(m.phone));
+    const newThisWeek     = all.filter(m => isPaidJoinRow(m) && last7Set.has(m.joinDate) && !renewedPhones7.has(m.phone) && hasForwardBilling(m));
     const autoRenewed     = renewedThisWeek.filter(m => Number(m.paidLast) === 0);
     const paidRenewed     = renewedThisWeek.filter(m => Number(m.paidLast) > 0);
     const removedThisWeek = all.filter(m => m.status === 'REMOVED' && inLast7(m.lastUpdated));
@@ -773,7 +784,7 @@ Example: R1 R2 S3
     // counts once, as a renewal — otherwise the member wrongly appears under New Members.
     const allRenewed     = all.filter(m => m.lastRenewed && isIn(m.lastRenewed) && Number(m.renewals) > 0);
     const renewedPhonesM = new Set(allRenewed.map(m => m.phone));
-    const newMembers     = all.filter(m => isPaidJoinRow(m) && isIn(m.joinDate) && !renewedPhonesM.has(m.phone));
+    const newMembers     = all.filter(m => isPaidJoinRow(m) && isIn(m.joinDate) && !renewedPhonesM.has(m.phone) && hasForwardBilling(m));
     const autoRenewed    = allRenewed.filter(m => Number(m.paidLast) === 0);
     const paidRenewed    = allRenewed.filter(m => Number(m.paidLast) > 0);
     const fullRenewals   = paidRenewed.filter(m => Number(m.paidLast) === config.renewal.fullAmount);
