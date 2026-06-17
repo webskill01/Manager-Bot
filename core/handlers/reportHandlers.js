@@ -136,18 +136,21 @@ export function createReportHandlers(store, config, botStartTime, log) {
       String(targetDateObj.getFullYear()),
     ].join('-'); // "DD-MM-YYYY"
 
-    const newToday = all.filter(m => isPaidJoin(m, targetDateStr));
-    // Detect renewals via lastRenewed (set ONLY by the "renewed" command), NOT lastUpdated —
-    // lastUpdated is bumped by every write (incl. kickall's status→REMOVED), which would otherwise
-    // make a previously-renewed member who was removed today wrongly appear as "renewed today".
-    const renewedToday = all.filter(m =>
-      m.lastRenewed && isUpdatedOn(m.lastRenewed, targetDateStr) && m.renewals > 0
-      && m.joinDate !== targetDateStr && Number(m.paidLast) !== 0
-    ).sort((a, b) => (a.lastRenewed || '').localeCompare(b.lastRenewed || ''));
-    const autoRenewedToday = all.filter(m =>
-      m.lastRenewed && isUpdatedOn(m.lastRenewed, targetDateStr) && m.renewals > 0
-      && m.joinDate !== targetDateStr && Number(m.paidLast) === 0
-    ).sort((a, b) => (a.lastRenewed || '').localeCompare(b.lastRenewed || ''));
+    // Detect renewals via lastRenewed (set ONLY by the "renewed" command / auto-renew), NOT
+    // lastUpdated — lastUpdated is bumped by every write (incl. kickall's status→REMOVED), which
+    // would otherwise make a previously-renewed member who was removed today wrongly appear as
+    // "renewed today".
+    const renewedOnTarget = m =>
+      m.lastRenewed && isUpdatedOn(m.lastRenewed, targetDateStr) && m.renewals > 0;
+    // A member explicitly renewed today is a RENEWAL, never a new join — even when they were also
+    // added today (e.g. an existing member re-added via `add`, then `renewed`). Previously the
+    // renewal filters excluded joinDate===today, so such a member fell through to "New Members".
+    // Honour the explicit renewed action as the classifier and keep them out of newToday.
+    const newToday = all.filter(m => isPaidJoin(m, targetDateStr) && !renewedOnTarget(m));
+    const renewedToday = all.filter(m => renewedOnTarget(m) && Number(m.paidLast) !== 0)
+      .sort((a, b) => (a.lastRenewed || '').localeCompare(b.lastRenewed || ''));
+    const autoRenewedToday = all.filter(m => renewedOnTarget(m) && Number(m.paidLast) === 0)
+      .sort((a, b) => (a.lastRenewed || '').localeCompare(b.lastRenewed || ''));
     const removedToday = all.filter(m =>
       m.status === 'REMOVED' && isUpdatedOn(m.lastUpdated, targetDateStr)
     );
@@ -690,8 +693,11 @@ Example: R1 R2 S3
 
     const inLast7 = (dateStr) => last7Set.has(toDDMMYYYY(dateStr));
 
-    const newThisWeek     = all.filter(m => isPaidJoinRow(m) && last7Set.has(m.joinDate));
-    const renewedThisWeek = all.filter(m => m.lastRenewed && last7Set.has(toDDMMYYYY(m.lastRenewed)) && Number(m.renewals) > 0 && !last7Set.has(m.joinDate));
+    // Members renewed this week take priority over their join: a same-week add+renew counts as a
+    // renewal, not a new join (mirrors handleSummary). Without this they'd show as new members.
+    const renewedThisWeek = all.filter(m => m.lastRenewed && last7Set.has(toDDMMYYYY(m.lastRenewed)) && Number(m.renewals) > 0);
+    const renewedPhones7  = new Set(renewedThisWeek.map(m => m.phone));
+    const newThisWeek     = all.filter(m => isPaidJoinRow(m) && last7Set.has(m.joinDate) && !renewedPhones7.has(m.phone));
     const autoRenewed     = renewedThisWeek.filter(m => Number(m.paidLast) === 0);
     const paidRenewed     = renewedThisWeek.filter(m => Number(m.paidLast) > 0);
     const removedThisWeek = all.filter(m => m.status === 'REMOVED' && inLast7(m.lastUpdated));
@@ -749,8 +755,11 @@ Example: R1 R2 S3
 
     const isIn = (dateStr) => inMonth(dateStr, mm, yyyy);
 
-    const newMembers     = all.filter(m => isPaidJoinRow(m) && isIn(m.joinDate));
-    const allRenewed     = all.filter(m => m.lastRenewed && isIn(m.lastRenewed) && Number(m.renewals) > 0 && !isIn(m.joinDate));
+    // Renewed-this-month takes priority over join (mirrors handleSummary): a same-month add+renew
+    // counts once, as a renewal — otherwise the member wrongly appears under New Members.
+    const allRenewed     = all.filter(m => m.lastRenewed && isIn(m.lastRenewed) && Number(m.renewals) > 0);
+    const renewedPhonesM = new Set(allRenewed.map(m => m.phone));
+    const newMembers     = all.filter(m => isPaidJoinRow(m) && isIn(m.joinDate) && !renewedPhonesM.has(m.phone));
     const autoRenewed    = allRenewed.filter(m => Number(m.paidLast) === 0);
     const paidRenewed    = allRenewed.filter(m => Number(m.paidLast) > 0);
     const fullRenewals   = paidRenewed.filter(m => Number(m.paidLast) === config.renewal.fullAmount);
