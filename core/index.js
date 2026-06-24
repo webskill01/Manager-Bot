@@ -160,11 +160,12 @@ export async function startBot(config, log, authDir) {
       return;
     }
 
-    // Resolve @lid to phone JID if we have the mapping
+    // Resolve @lid to phone JID — for the allow-list check only.
     const resolvedJid = (jid.endsWith('@lid') && lidToPhoneJid.has(jid)) ? lidToPhoneJid.get(jid) : jid;
-    // Always reply to the phone JID — @lid Signal sessions can desync (Bad MAC), and sendMessage
-    // to a broken @lid session resolves locally but never actually delivers. ponytail: send to resolvedJid
-    const replyJid = resolvedJid;
+    // Reply to the EXACT JID the message arrived on. The live Signal session is keyed to that
+    // address (we just decrypted their message on it); the phone JID has no session and won't
+    // deliver. ponytail: reply to incoming jid, never remap.
+    const replyJid = jid;
 
     // Early reject — only allowedCommandJids (allowedNumbers, auto-resolved to JID + LID
     // at connect) may command the bot. Anyone else is silently ignored.
