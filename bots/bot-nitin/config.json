@@ -67,7 +67,6 @@
   },
   "allowedNumbers": ["6283380110", "9914623976"],
   "auditExclude": ["9464177279", "9464180617"],
-  "allowedLids": ["242902009692413","150714831646943"],
   "schedule": {
     "morningDigest": "0 6 * * *",
     "reminderSend": "30 6 * * *",

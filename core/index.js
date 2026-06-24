@@ -56,7 +56,6 @@ export async function startBot(config, log, authDir) {
   let qrTimestamp = null;
   let commandParser = null;
   let schedulerStarted = false;
-  const notifiedUnknownLids = new Set(); // notify admin once per unknown LID per session
   const seenMessageIds = new Map();     // msg id → timestamp, prevents double-processing duplicates
   const DEDUP_TTL_MS = 60 * 1000;      // evict after 60s
 
@@ -79,8 +78,9 @@ export async function startBot(config, log, authDir) {
   const scheduler = createScheduler(config, log);
   const reminderSender = createReminderSender(config, log);
   const overdueEngine = createOverdueEngine(config, log);
-  const trialEngine = createTrialRemovalEngine(config, log, getSock, getBroadcastJids);
   const lidToPhoneJid = new Map();
+  const adminLids = new Set();   // raw numeric LIDs of allowedNumbers, auto-resolved on connect
+  const trialEngine = createTrialRemovalEngine(config, log, getSock, getBroadcastJids, adminLids);
 
   log.info('📊 Connecting to Google Sheets...');
   const sheetClient = await createSheetClient(config.serviceAccountPath, config.sheetId);
@@ -163,26 +163,9 @@ export async function startBot(config, log, authDir) {
     // Resolve @lid to phone JID if we have the mapping
     const resolvedJid = (jid.endsWith('@lid') && lidToPhoneJid.has(jid)) ? lidToPhoneJid.get(jid) : jid;
 
-    // Early reject — only allowedCommandJids can send commands
-    if (!allowedCommandJids.has(jid) && !allowedCommandJids.has(resolvedJid)) {
-      // LID discovery: only notify when there are allowedNumbers whose LIDs
-      // haven't been added to allowedLids yet (fires once per unknown LID per
-      // session, stops permanently once all LIDs are configured in config.json)
-      const hasUnconfiguredLids =
-        (config.allowedNumbers || []).length > (config.allowedLids || []).length;
-      if (jid.endsWith('@lid') && hasUnconfiguredLids && !notifiedUnknownLids.has(jid)) {
-        const probe = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
-        if (probe.trim()) {
-          notifiedUnknownLids.add(jid);
-          const rawLid = jid.replace('@lid', '');
-          const hint = `🔔 Unknown LID messaged the bot:\n${jid}\n\nIf this is your number, add to config.json allowedLids:\n"${rawLid}"`;
-          for (const adminJid of getBroadcastJids()) {
-            try { await sock?.sendMessage(adminJid, { text: hint }); } catch (_) {}
-          }
-        }
-      }
-      return;
-    }
+    // Early reject — only allowedCommandJids (allowedNumbers, auto-resolved to JID + LID
+    // at connect) may command the bot. Anyone else is silently ignored.
+    if (!allowedCommandJids.has(jid) && !allowedCommandJids.has(resolvedJid)) return;
 
     const text =
       msg.message?.conversation ||
@@ -263,7 +246,7 @@ export async function startBot(config, log, authDir) {
       });
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids);
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {
@@ -312,7 +295,16 @@ export async function startBot(config, log, authDir) {
               const results = await sock.onWhatsApp(normalized);
               if (results?.[0]?.exists && results[0].jid) {
                 allowedCommandJids.add(results[0].jid);
-                log.info(`📱 ${phone} → ${results[0].jid}`);
+                // WhatsApp now delivers individual messages from the sender's @lid, not their
+                // phone JID — register the LID too or commands from this number get early-rejected.
+                if (results[0].lid) {
+                  const rawLid = String(results[0].lid).replace(/@lid$/, '').split(':')[0];
+                  const lidJid = `${rawLid}@lid`;
+                  allowedCommandJids.add(lidJid);
+                  lidToPhoneJid.set(lidJid, results[0].jid);
+                  adminLids.add(rawLid);   // feeds trial-protection + audit counting
+                }
+                log.info(`📱 ${phone} → ${results[0].jid}${results[0].lid ? ` (lid ${results[0].lid})` : ''}`);
               }
             } catch (err) {
               log.warn(`⚠️  Could not resolve JID for ${phone}: ${err.message}`);

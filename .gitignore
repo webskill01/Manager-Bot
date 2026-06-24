@@ -6,6 +6,11 @@ scripts/
 
 # Raw member data exports (contain real phone numbers — keep local only)
 *.xlsx
+*.xls
+*.csv
+
+# Local-only migration scripts (contain real member data — never commit)
+migrate.js
 
 # Bot secrets & auth (per-instance — never commit these)
 bots/*/baileys_auth/

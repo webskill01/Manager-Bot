@@ -48,7 +48,7 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set()) {
   const memberH = createMemberHandlers(store, groupManager, config, log);
   const renewalH = createRenewalHandlers(store, config, log);
   const lookupH = createLookupHandlers(store, config, log);
@@ -99,7 +99,11 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   async function handleDiag() {
     const members = store.getAll();
     const sheetPhones = new Set(members.map(m => normPhone(m.phone)));
-    const allowedLids = (config.allowedLids || []).map(l => String(l).split(':')[0]);
+    // Auto-resolved admin LIDs (from allowedNumbers) + config.allowedLids manual fallback
+    const allowedLids = new Set([
+      ...adminLids,
+      ...(config.allowedLids || []).map(l => String(l).split(':')[0]),
+    ]);
 
     let total = 0, phoneJid = 0, lidJid = 0, otherJid = 0;
     let phoneInSheet = 0, phoneNotInSheet = 0;
@@ -133,7 +137,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         } else if (jid.endsWith('@lid')) {
           lidJid++; gLid++;
           const raw = jid.replace('@lid', '').split(':')[0];
-          if (allowedLids.includes(raw)) { lidOwnAdmin++; continue; }
+          if (allowedLids.has(raw)) { lidOwnAdmin++; continue; }
           // Can we recover a phone for this LID from any field?
           const recovered = String(phoneField).includes('@s.whatsapp.net')
             ? normPhone(String(phoneField).replace('@s.whatsapp.net', '').replace(/\D/g, ''))

@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomBetween, sleep, normalizePhone } from './globalConfig.js';
 
-export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids) {
+export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids, adminLids = new Set()) {
   const stateFile = path.join(config.botDir, 'trial-state.json');
   const tc = config.trial;
 
@@ -35,7 +35,7 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids)
 
   // ── Whitelist matching ────────────────────────────────────────────────────
   // Phone JID (91XXXXXXXXXX@s.whatsapp.net) → normalize to 10 digits → check trial.whitelist
-  // LID JID (XXXXXXXXX:XX@lid)              → check numeric prefix against config.allowedLids
+  // LID JID (XXXXXXXXX:XX@lid)              → check numeric prefix against auto-resolved adminLids
   // Anything else                           → treat as protected (never remove)
 
   function isWhitelisted(jid) {
@@ -46,7 +46,9 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids)
     }
     if (jid.endsWith('@lid')) {
       const rawLid = jid.replace('@lid', '').split(':')[0];
-      return (config.allowedLids || []).some(lid => String(lid).split(':')[0] === rawLid);
+      // Auto-resolved admin LIDs (from allowedNumbers), with config.allowedLids as manual fallback
+      return adminLids.has(rawLid) ||
+        (config.allowedLids || []).some(lid => String(lid).split(':')[0] === rawLid);
     }
     return true;
   }
