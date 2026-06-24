@@ -162,6 +162,9 @@ export async function startBot(config, log, authDir) {
 
     // Resolve @lid to phone JID if we have the mapping
     const resolvedJid = (jid.endsWith('@lid') && lidToPhoneJid.has(jid)) ? lidToPhoneJid.get(jid) : jid;
+    // Always reply to the phone JID — @lid Signal sessions can desync (Bad MAC), and sendMessage
+    // to a broken @lid session resolves locally but never actually delivers. ponytail: send to resolvedJid
+    const replyJid = resolvedJid;
 
     // Early reject — only allowedCommandJids (allowedNumbers, auto-resolved to JID + LID
     // at connect) may command the bot. Anyone else is silently ignored.
@@ -187,7 +190,7 @@ export async function startBot(config, log, authDir) {
       const label = text.trim().split(/\s+/).slice(0, 2).join(' ');
       try {
         if (activeSock === sock && sock?.user) {
-          await sock.sendMessage(jid, { text: `⏳ Got it — working on "${label}"…` });
+          await sock.sendMessage(replyJid, { text: `⏳ Got it — working on "${label}"…` });
         }
       } catch (err) {
         log.warn(`⚠️  Ack send failed: ${err.message}`);
@@ -201,8 +204,8 @@ export async function startBot(config, log, authDir) {
           log.warn(`⚠️  Session ended while processing "${text.substring(0, 40)}" — reply dropped`);
           return;
         }
-        await sock.sendMessage(jid, { text: reply });
-        log.info(`📤 Reply sent to ${jid} (${reply.length} chars)`);
+        await sock.sendMessage(replyJid, { text: reply });
+        log.info(`📤 Reply sent to ${replyJid} (${reply.length} chars)`);
       } catch (err) {
         log.error(`❌ Send failed: ${err.message}`);
       }
