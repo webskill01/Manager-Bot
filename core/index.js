@@ -160,12 +160,17 @@ export async function startBot(config, log, authDir) {
       return;
     }
 
-    // Resolve @lid to phone JID — for the allow-list check only.
-    const resolvedJid = (jid.endsWith('@lid') && lidToPhoneJid.has(jid)) ? lidToPhoneJid.get(jid) : jid;
-    // Reply to the EXACT JID the message arrived on. The live Signal session is keyed to that
-    // address (we just decrypted their message on it); the phone JID has no session and won't
-    // deliver. ponytail: reply to incoming jid, never remap.
-    const replyJid = jid;
+    // WhatsApp stamps every @lid message with the sender's real phone JID (key.senderPn).
+    // Use it for the allow-list check; fall back to our connect-time map, else the raw jid.
+    const resolvedJid =
+      msg.key?.senderPn ||
+      (jid.endsWith('@lid') && lidToPhoneJid.has(jid) ? lidToPhoneJid.get(jid) : jid);
+    // Reply to the PHONE JID, not the raw @lid. Sending to @lid makes Baileys usync the
+    // recipient's devices over LID and build a fresh outbound session — that path is new and
+    // flaky: when it resolves no devices it encrypts to nobody, so sendMessage succeeds and
+    // logs "sent" but nothing is delivered. The PN send path is mature and reliable.
+    // ponytail: senderPn → mapped PN → incoming jid.
+    const replyJid = msg.key?.senderPn || (jid.endsWith('@lid') ? lidToPhoneJid.get(jid) : null) || jid;
 
     // Early reject — only allowedCommandJids (allowedNumbers, auto-resolved to JID + LID
     // at connect) may command the bot. Anyone else is silently ignored.
