@@ -235,7 +235,8 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
       scanned++;
       const label = groupLabel(meta.subject, i);
       for (const p of (meta.participants || [])) {
-        const jid = p.jid || p.id || '';
+        // LID-addressed groups report p.id as @lid; the paired phone JID rides on p.phoneNumber
+        const jid = p.phoneNumber || p.jid || p.id || '';
         if (!jid.endsWith('@s.whatsapp.net')) continue; // LID/unknown — can't match
         const ph = normPhone(jid.replace('@s.whatsapp.net', '').replace(/\D/g, ''));
         if (!ph || ph.length < 10) continue;

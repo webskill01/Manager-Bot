@@ -53,6 +53,21 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids,
     return true;
   }
 
+  // Kickable participant JIDs. Baileys exposes the JID as `jid` on some builds and `id` on
+  // others — read both; a participant with neither is un-identifiable and left alone.
+  // LID-addressed groups report p.id as @lid with the paired phone JID on p.phoneNumber:
+  // honor the phone whitelist through it, or whitelisted members get kicked by their LID.
+  function removableJids(participants) {
+    return (participants || [])
+      .filter(p => {
+        const id = p.jid || p.id || '';
+        if (!id || isWhitelisted(id)) return false;
+        if (p.phoneNumber && isWhitelisted(p.phoneNumber)) return false;
+        return true;
+      })
+      .map(p => p.jid || p.id);
+  }
+
   // ── Message sending ───────────────────────────────────────────────────────
 
   async function sendBatchMessages(batchIndex) {
@@ -119,13 +134,7 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids,
         return;
       }
 
-      // Baileys exposes the participant JID as `jid` on some builds and `id` on others — read both
-      // (matches commandParser/ghostRemovalEngine/groupManager). Using bare `p.jid` meant that on a
-      // build that only populates `p.id`, every participant looked un-identifiable → isWhitelisted
-      // returned true for all → removable was empty → trial removal silently removed nobody.
-      const removable = (metadata.participants || [])
-        .map(p => p.jid || p.id || '')
-        .filter(jid => jid && !isWhitelisted(jid));
+      const removable = removableJids(metadata.participants);
 
       if (removable.length === 0) {
         log.info('✅ Trial group clear — only whitelisted members remain');
@@ -174,9 +183,7 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids,
       // Check if group is fully clear after this batch
       try {
         const fresh = await getSock()?.groupMetadata(tc.groupId);
-        const remaining = (fresh?.participants || [])
-          .map(p => p.jid || p.id || '')
-          .filter(jid => jid && !isWhitelisted(jid));
+        const remaining = removableJids(fresh?.participants);
         if (remaining.length === 0) {
           log.info('✅ Trial group fully cleared');
           await notifyCompletion(state?.totalRemoved || removed);

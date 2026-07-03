@@ -3,7 +3,9 @@
   "version": "1.0.0",
   "description": "WhatsApp subscription group manager",
   "type": "module",
-  "engines": { "node": ">=18" },
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "test": "node --test tests/*.test.js",
     "start:nitin": "node bots/bot-nitin/start.js",
@@ -14,7 +16,7 @@
     "pm2:status": "pm2 status"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.9",
+    "@whiskeysockets/baileys": "^7.0.0-rc13",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
     "googleapis": "^144.0.0",

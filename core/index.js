@@ -160,21 +160,21 @@ export async function startBot(config, log, authDir) {
       return;
     }
 
-    // WhatsApp stamps every @lid message with the sender's real phone JID (key.senderPn).
-    // Use it for the allow-list check; fall back to our connect-time map, else the raw jid.
-    const resolvedJid =
-      msg.key?.senderPn ||
-      (jid.endsWith('@lid') && lidToPhoneJid.has(jid) ? lidToPhoneJid.get(jid) : jid);
-    // Reply to the PHONE JID, not the raw @lid. Sending to @lid makes Baileys usync the
-    // recipient's devices over LID and build a fresh outbound session — that path is new and
-    // flaky: when it resolves no devices it encrypts to nobody, so sendMessage succeeds and
-    // logs "sent" but nothing is delivered. The PN send path is mature and reliable.
-    // ponytail: senderPn → mapped PN → incoming jid.
-    const replyJid = msg.key?.senderPn || (jid.endsWith('@lid') ? lidToPhoneJid.get(jid) : null) || jid;
+    // Baileys 7.x stamps every DM with the sender's alternate address: key.remoteJidAlt is
+    // the phone JID when the message arrived LID-addressed (and the LID when PN-addressed).
+    // Use it for the allow-list check only (older builds called it senderPn).
+    const altJid = String(msg.key?.remoteJidAlt || msg.key?.senderPn || '')
+      .replace(/:\d+@/, '@');   // strip device suffix so it matches allowedCommandJids entries
+    const mappedJid = jid.endsWith('@lid') ? lidToPhoneJid.get(jid) : null;
+    // Reply to the EXACT JID the message arrived on — the Signal session that just decrypted
+    // this message is keyed to it. Baileys 7.x maps PN↔LID sessions internally, so never remap.
+    const replyJid = jid;
 
     // Early reject — only allowedCommandJids (allowedNumbers, auto-resolved to JID + LID
     // at connect) may command the bot. Anyone else is silently ignored.
-    if (!allowedCommandJids.has(jid) && !allowedCommandJids.has(resolvedJid)) return;
+    if (!allowedCommandJids.has(jid) &&
+        !(altJid && allowedCommandJids.has(altJid)) &&
+        !(mappedJid && allowedCommandJids.has(mappedJid))) return;
 
     const text =
       msg.message?.conversation ||
@@ -244,7 +244,6 @@ export async function startBot(config, log, authDir) {
           keys: makeCacheableSignalKeyStore(authState.keys, baileysLogger),
         },
         logger: baileysLogger,
-        printQRInTerminal: false,
         browser: Browsers.ubuntu('Chrome'),
         markOnlineOnConnect: false,
         syncFullHistory: false,
@@ -304,16 +303,19 @@ export async function startBot(config, log, authDir) {
               const results = await sock.onWhatsApp(normalized);
               if (results?.[0]?.exists && results[0].jid) {
                 allowedCommandJids.add(results[0].jid);
-                // WhatsApp now delivers individual messages from the sender's @lid, not their
-                // phone JID — register the LID too or commands from this number get early-rejected.
-                if (results[0].lid) {
-                  const rawLid = String(results[0].lid).replace(/@lid$/, '').split(':')[0];
+                // WhatsApp delivers DMs from the sender's @lid, not their phone JID — register
+                // the LID too or commands get early-rejected. Baileys 7.x dropped the .lid field
+                // from onWhatsApp; ask its LID mapping store instead (usyncs + caches).
+                let lid = null;
+                try { lid = await sock.signalRepository?.lidMapping?.getLIDForPN(results[0].jid); } catch {}
+                if (lid) {
+                  const rawLid = String(lid).split('@')[0].split(':')[0];
                   const lidJid = `${rawLid}@lid`;
                   allowedCommandJids.add(lidJid);
                   lidToPhoneJid.set(lidJid, results[0].jid);
                   adminLids.add(rawLid);   // feeds trial-protection + audit counting
                 }
-                log.info(`📱 ${phone} → ${results[0].jid}${results[0].lid ? ` (lid ${results[0].lid})` : ''}`);
+                log.info(`📱 ${phone} → ${results[0].jid}${lid ? ` (lid ${lid})` : ''}`);
               }
             } catch (err) {
               log.warn(`⚠️  Could not resolve JID for ${phone}: ${err.message}`);
@@ -365,9 +367,11 @@ export async function startBot(config, log, authDir) {
           // operations continuing after 408 timeout or other non-401 closures
           groupManager.markAborted();
 
-          if (statusCode === DisconnectReason.loggedOut) {
-            // 401 = WhatsApp forcibly unlinked this device. On a fresh/low-trust
-            // number this usually means the account is restricted or temp-banned.
+          if (statusCode === DisconnectReason.loggedOut || statusCode === DisconnectReason.forbidden) {
+            // 401 = WhatsApp forcibly unlinked this device; 403 = account flagged/
+            // forbidden. On a fresh/low-trust number either usually means the
+            // account is restricted or temp-banned. Reconnect-looping into a 403
+            // (as pm2 logs showed bot-abhi doing) escalates the restriction.
             // DO NOT auto-wipe auth and loop a fresh QR: repeatedly re-linking a
             // flagged number escalates a temporary restriction toward a permanent
             // ban. Halt all reconnects, preserve auth for inspection, and require
@@ -375,7 +379,7 @@ export async function startBot(config, log, authDir) {
             // number is healthy again.
             loggedOut = true;
             if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-            log.error('❌ LOGGED OUT by WhatsApp (401) — device unlinked. Reconnects HALTED.');
+            log.error(`❌ ${statusCode === 403 ? 'FORBIDDEN (403) — account flagged by WhatsApp' : 'LOGGED OUT by WhatsApp (401) — device unlinked'}. Reconnects HALTED.`);
             log.error('   This number is likely restricted/temp-banned. Do NOT keep rescanning it.');
             log.error('   To re-link AFTER the number is confirmed healthy:');
             log.error(`     1) pm2 stop ${config.botName}`);
@@ -535,9 +539,10 @@ export async function startBot(config, log, authDir) {
     });
 
     app.listen(port, '0.0.0.0', () => {
-      log.info(`🌐 HTTP server: http://localhost:${port}`);
-      log.info(`📱 Scan page:   http://localhost:${port}/   (shareable)`);
-      log.info(`💚 Health:      http://localhost:${port}/health`);
+      const host = process.env.PUBLIC_HOST || 'localhost';
+      log.info(`🌐 HTTP server: http://${host}:${port}`);
+      log.info(`📱 Scan page:   http://${host}:${port}/   (shareable)`);
+      log.info(`💚 Health:      http://${host}:${port}/health`);
     });
   }
 
