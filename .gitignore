@@ -1,8 +1,10 @@
 # Dependencies
 node_modules/
 
-# Local-only dev & migration tooling (never needed on the VPS)
-scripts/
+# Local-only dev & migration tooling (never needed on the VPS)…
+scripts/*
+# …except the watchdog — it runs on the VPS as a pm2 app
+!scripts/watchdog.js
 
 # Raw member data exports (contain real phone numbers — keep local only)
 *.xlsx
