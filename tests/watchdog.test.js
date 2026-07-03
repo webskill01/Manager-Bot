@@ -5,10 +5,16 @@ import { createWatchdog } from '../scripts/watchdog.js';
 
 // Fake bot: real HTTP server serving /health from a mutable state object and
 // recording every /alert POST it receives.
-function fakeBot({ connected = true, loggedOut = false } = {}) {
-  const state = { connected, loggedOut };
+function fakeBot({ connected = true, loggedOut = false, alertBroken = false } = {}) {
+  const state = { connected, loggedOut, alertBroken };
   const alerts = [];
   const srv = http.createServer((req, res) => {
+    if (state.alertBroken && req.url === '/alert') {
+      // models a bot on ANOTHER VPS: healthy over its public host, but its
+      // local alert port on this machine has nothing useful behind it
+      res.statusCode = 404;
+      return res.end();
+    }
     if (req.url === '/health') {
       res.setHeader('content-type', 'application/json');
       res.end(JSON.stringify({ status: 'x', connected: state.connected, loggedOut: state.loggedOut }));
@@ -96,6 +102,63 @@ test('logged-out alerts immediately and only once', async () => {
   } finally {
     a.srv.close();
     b.srv.close();
+  }
+});
+
+test('preferred sender is used even when listed after other healthy bots', async () => {
+  const other = await fakeBot({ connected: true });
+  const nitin = await fakeBot({ connected: true });
+  const down = await fakeBot({ connected: false });
+  try {
+    const wd = createWatchdog(
+      [
+        { name: 'bot-2', port: other.port },       // healthy, listed first
+        { name: 'bot-nitin', port: nitin.port },   // healthy, preferred
+        { name: 'bot-abhi', port: down.port },
+      ],
+      { failThreshold: 1, log: silent, preferredSender: 'bot-nitin' },
+    );
+    await wd.tick();
+    assert.equal(nitin.alerts.length, 1, 'alert delivered via preferred bot-nitin');
+    assert.equal(other.alerts.length, 0, 'first-listed healthy bot skipped');
+    assert.match(nitin.alerts[0], /🚨 \*bot-abhi\*/);
+
+    // preferred sender goes down too → falls back to the other healthy bot
+    nitin.state.connected = false;
+    down.state.loggedOut = true;
+    await wd.tick();
+    assert.ok(other.alerts.length >= 1, 'fallback to another healthy bot when preferred is down');
+  } finally {
+    other.srv.close();
+    nitin.srv.close();
+    down.srv.close();
+  }
+});
+
+test('relay falls through to the next candidate when the preferred bot is not on this machine', async () => {
+  // preferred bot is healthy (health OK) but cannot relay locally (alert 404 —
+  // i.e. it lives on the other VPS); the local healthy bot must deliver instead
+  const remote = await fakeBot({ connected: true, alertBroken: true });
+  const local = await fakeBot({ connected: true });
+  const down = await fakeBot({ connected: false });
+  try {
+    const wd = createWatchdog(
+      [
+        { name: 'bot-nitin', port: remote.port },
+        { name: 'bot-abhi', port: local.port },
+        { name: 'bot-sachin2', port: down.port },
+      ],
+      { failThreshold: 1, log: silent, preferredSender: 'bot-nitin' },
+    );
+    await wd.tick();
+    assert.equal(remote.alerts.length, 0, 'remote preferred bot cannot relay');
+    assert.equal(local.alerts.length, 1, 'local bot delivered instead');
+    assert.match(local.alerts[0], /🚨 \*bot-sachin2\*/);
+    assert.equal(wd.pending.length, 0, 'nothing left queued');
+  } finally {
+    remote.srv.close();
+    local.srv.close();
+    down.srv.close();
   }
 });
 

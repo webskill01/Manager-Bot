@@ -24,7 +24,7 @@ module.exports = {
       log_type: 'raw',
       env: {
         NODE_ENV: 'production',
-        PUBLIC_HOST: '161.118.166.229',
+        PUBLIC_HOST: '217.217.249.93',
         TZ: 'Asia/Kolkata',
         NODE_OPTIONS: '--max-old-space-size=256',
         BOT_NAME: 'bot-nitin',
@@ -55,7 +55,7 @@ module.exports = {
       log_type: 'raw',
       env: {
         NODE_ENV: 'production',
-        PUBLIC_HOST: '161.118.166.229',
+        PUBLIC_HOST: '217.217.249.93',
         TZ: 'Asia/Kolkata',
         NODE_OPTIONS: '--max-old-space-size=256',
         BOT_NAME: 'bot-2',
@@ -117,7 +117,7 @@ module.exports = {
       log_type: 'raw',
       env: {
         NODE_ENV: 'production',
-        PUBLIC_HOST: '161.118.166.229',
+        PUBLIC_HOST: '217.217.249.93',
         TZ: 'Asia/Kolkata',
         NODE_OPTIONS: '--max-old-space-size=256',
         BOT_NAME: 'bot-sachin2',
@@ -148,7 +148,7 @@ module.exports = {
       log_type: 'raw',
       env: {
         NODE_ENV: 'production',
-        PUBLIC_HOST: '161.118.166.229',
+        PUBLIC_HOST: '217.217.249.93',
         TZ: 'Asia/Kolkata',
         NODE_OPTIONS: '--max-old-space-size=256',
         BOT_NAME: 'bot-aayush2',

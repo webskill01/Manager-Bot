@@ -12,11 +12,18 @@ const require = createRequire(import.meta.url);
 const INTERVAL_MS = Number(process.env.WATCHDOG_INTERVAL_MS || 60000);
 const FAIL_THRESHOLD = Number(process.env.WATCHDOG_FAIL_THRESHOLD || 3); // consecutive bad checks (~3 min) — skips pm2 restarts and reconnect blips
 
+// Bots may live on different VPSes: health is checked over each bot's PUBLIC_HOST,
+// but alert relay always targets 127.0.0.1 (the /alert endpoint is loopback-only) —
+// remote bots simply fail fast locally and the next candidate is tried.
 export function botsFromEcosystem(ecoPath) {
   const eco = require(ecoPath);
   return eco.apps
     .filter(a => a.env?.STATS_PORT)
-    .map(a => ({ name: a.name, port: Number(a.env.STATS_PORT) }));
+    .map(a => ({
+      name: a.name,
+      port: Number(a.env.STATS_PORT),
+      host: a.env.PUBLIC_HOST || '127.0.0.1',
+    }));
 }
 
 async function fetchJson(url, opts = {}, timeoutMs = 5000) {
@@ -31,7 +38,9 @@ async function fetchJson(url, opts = {}, timeoutMs = 5000) {
   }
 }
 
-export function createWatchdog(bots, { failThreshold = FAIL_THRESHOLD, log = console } = {}) {
+const PREFERRED_SENDER = process.env.WATCHDOG_PREFERRED_SENDER || 'bot-nitin';
+
+export function createWatchdog(bots, { failThreshold = FAIL_THRESHOLD, log = console, preferredSender = PREFERRED_SENDER } = {}) {
   // per-bot: consecutive fail count + which alerts have already fired (no spam)
   const state = new Map(bots.map(b => [b.name, { fails: 0, alertedDown: false, alertedLoggedOut: false }]));
   const pending = []; // alerts not yet delivered (queued while no bot is healthy)
@@ -42,7 +51,7 @@ export function createWatchdog(bots, { failThreshold = FAIL_THRESHOLD, log = con
     const results = new Map();
     for (const bot of bots) {
       try {
-        results.set(bot.name, await fetchJson(`http://127.0.0.1:${bot.port}/health`));
+        results.set(bot.name, await fetchJson(`http://${bot.host || '127.0.0.1'}:${bot.port}/health`));
       } catch {
         results.set(bot.name, null);
       }
@@ -73,24 +82,34 @@ export function createWatchdog(bots, { failThreshold = FAIL_THRESHOLD, log = con
       }
     }
 
-    // Deliver queued alerts through the first connected bot; on failure keep them
-    // queued and retry next tick.
+    // Deliver queued alerts. Candidates: preferred bot (most reliable / owner-run)
+    // first, then every other connected bot. Relay is always via 127.0.0.1 —
+    // /alert only accepts loopback — so candidates running on ANOTHER VPS fail
+    // instantly (nothing bound on that local port) and the next one is tried.
+    // Undeliverable alerts stay queued and retry next tick.
     while (pending.length) {
-      const sender = bots.find(b => results.get(b.name)?.connected);
-      if (!sender) {
-        log.warn?.(`⚠️  ${pending.length} alert(s) pending — no healthy bot to send through`);
-        break;
+      const candidates = [
+        ...bots.filter(b => b.name === preferredSender && results.get(b.name)?.connected),
+        ...bots.filter(b => b.name !== preferredSender && results.get(b.name)?.connected),
+      ];
+      let delivered = false;
+      for (const sender of candidates) {
+        try {
+          await fetchJson(`http://127.0.0.1:${sender.port}/alert`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ text: pending[0] }),
+          });
+          log.log?.(`📣 Alert sent via ${sender.name}: ${pending[0].split('\n')[0]}`);
+          pending.shift();
+          delivered = true;
+          break;
+        } catch {
+          // not on this machine or relay failed — try the next candidate
+        }
       }
-      try {
-        await fetchJson(`http://127.0.0.1:${sender.port}/alert`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text: pending[0] }),
-        });
-        log.log?.(`📣 Alert sent via ${sender.name}: ${pending[0].split('\n')[0]}`);
-        pending.shift();
-      } catch (err) {
-        log.warn?.(`⚠️  Alert delivery via ${sender.name} failed: ${err.message}`);
+      if (!delivered) {
+        log.warn?.(`⚠️  ${pending.length} alert(s) pending — no bot on this machine can relay right now`);
         break;
       }
     }
@@ -104,7 +123,7 @@ const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPat
 if (isMain) {
   const ecoPath = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'ecosystem.config.cjs');
   const bots = botsFromEcosystem(ecoPath);
-  console.log(`🐶 Watchdog started — monitoring ${bots.map(b => `${b.name}:${b.port}`).join(', ')} every ${INTERVAL_MS / 1000}s (alert after ${FAIL_THRESHOLD} misses)`);
+  console.log(`🐶 Watchdog started — monitoring ${bots.map(b => `${b.name}@${b.host}:${b.port}`).join(', ')} every ${INTERVAL_MS / 1000}s (alert after ${FAIL_THRESHOLD} misses, preferred sender ${PREFERRED_SENDER})`);
   const wd = createWatchdog(bots);
   wd.tick().catch(() => {});
   setInterval(() => wd.tick().catch(err => console.error(`watchdog tick error: ${err.message}`)), INTERVAL_MS);
