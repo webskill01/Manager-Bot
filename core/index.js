@@ -75,6 +75,10 @@ export async function startBot(config, log, authDir) {
   const getBroadcastJids = () => [...broadcastSet];
 
   const getSock = () => sock;
+  // Group metadata cache — serves Baileys' internal group-send path only (no metadata
+  // query per group send). Explicit groupMetadata() calls always fetch live and repopulate
+  // it; membership events and reconnects invalidate. ponytail: plain Map, no TTL needed.
+  const groupMetaCache = new Map();
   const scheduler = createScheduler(config, log);
   const reminderSender = createReminderSender(config, log);
   const overdueEngine = createOverdueEngine(config, log);
@@ -248,10 +252,22 @@ export async function startBot(config, log, authDir) {
         markOnlineOnConnect: false,
         syncFullHistory: false,
         getMessage: async () => undefined,
+        cachedGroupMetadata: async (jid) => groupMetaCache.get(jid),
         defaultQueryTimeoutMs: 60000,
         connectTimeoutMs: 60000,
         keepAliveIntervalMs: 30000,
       });
+
+      // Populate the send-path cache from every live metadata fetch; drop entries the
+      // moment membership/subject changes so sends never encrypt against a stale roster.
+      const liveGroupMetadata = sock.groupMetadata.bind(sock);
+      sock.groupMetadata = async (jid) => {
+        const meta = await liveGroupMetadata(jid);
+        if (String(jid).endsWith('@g.us') && meta) groupMetaCache.set(jid, meta);
+        return meta;
+      };
+      sock.ev.on('group-participants.update', (u) => groupMetaCache.delete(u?.id));
+      sock.ev.on('groups.update', (updates) => { for (const u of updates || []) groupMetaCache.delete(u?.id); });
 
       const groupManager = createGroupManager(sock, config, log);
       commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids);
@@ -285,6 +301,7 @@ export async function startBot(config, log, authDir) {
           log.info('✅ CONNECTED — Member Bot operational');
           latestQR = null;
           reconnectAttempts = 0;
+          groupMetaCache.clear();   // roster may have changed while offline
           await store.refresh();
           log.info(`📊 Cache refreshed: ${store.getAll().length} members`);
           trialEngine.resume();
@@ -428,6 +445,43 @@ export async function startBot(config, log, authDir) {
       qrAvailable: !loggedOut && !!latestQR && (Date.now() - (qrTimestamp || 0) < 60000),
       uptime: Date.now() - BOT_START_TIME,
     }));
+    // Pairing-code login (alternative to QR): GET /pair?number=9198xxxxxx21
+    // Only valid while the socket is in the QR/link-waiting phase. The code is
+    // entered on the phone: WhatsApp → Linked devices → Link with phone number.
+    app.get('/pair', async (req, res) => {
+      try {
+        if (sock?.user) return res.status(409).json({ error: 'Already connected — unlink first if you want to re-pair.' });
+        if (loggedOut) return res.status(409).json({ error: 'Bot is halted after a 401/403 — clear the auth folder and restart first.' });
+        if (!sock || !latestQR) return res.status(503).json({ error: 'Bot not ready for pairing yet — wait for the QR to appear, then retry.' });
+        let digits = String(req.query.number || '').replace(/\D/g, '');
+        if (digits.length === 10) digits = `91${digits}`;   // default to India like the rest of the bot
+        if (digits.length < 11 || digits.length > 15) {
+          return res.status(400).json({ error: 'Enter the 10-digit number (or full number with country code).' });
+        }
+        const code = await sock.requestPairingCode(digits);
+        log.info(`🔗 Pairing code for ${digits}: ${code}`);
+        res.json({ code, number: digits });
+      } catch (err) {
+        log.error(`❌ Pairing code failed: ${err.message}`);
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // Watchdog alert relay — localhost-only. The watchdog process POSTs {text} here
+    // and this bot broadcasts it to its allowedNumbers. Never exposed to the internet:
+    // any non-loopback source is rejected regardless of what the firewall allows.
+    app.post('/alert', express.json(), async (req, res) => {
+      const ip = req.socket.remoteAddress || '';
+      if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ip)) {
+        return res.status(403).json({ error: 'localhost only' });
+      }
+      if (!sock?.user) return res.status(503).json({ error: 'not connected' });
+      const text = String(req.body?.text || '').slice(0, 4000);
+      if (!text) return res.status(400).json({ error: 'text required' });
+      await broadcast(text);
+      res.json({ sent: true });
+    });
+
     app.get('/qr', async (req, res) => {
       if (!latestQR) return res.status(404).send('No QR — bot may already be connected.');
       if (Date.now() - (qrTimestamp || 0) > 60000) return res.status(410).send('QR expired — wait for new one.');
@@ -465,6 +519,11 @@ export async function startBot(config, log, authDir) {
   .btn{padding:14px 24px;border:none;border-radius:10px;font-size:1em;font-weight:600;cursor:pointer;background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;margin-top:10px}
   .btn:hover{opacity:.9}
   .hidden{display:none}
+  .pair-section{background:#f8f9fa;padding:18px;border-radius:10px;margin:18px 0;text-align:left}
+  .pair-section h3{color:#333;margin-bottom:12px;font-size:1.1em}
+  .pair-section input{width:100%;padding:12px;border:1px solid #ddd;border-radius:8px;font-size:1em;margin-bottom:10px;box-sizing:border-box}
+  #pair-code{font-size:2em;font-weight:700;letter-spacing:5px;text-align:center;margin:12px 0;color:#333;min-height:1em}
+  #pair-help{color:#666;font-size:.9em;line-height:1.5}
 </style></head><body>
 <div class="container">
   <div class="bot-header">
@@ -488,6 +547,13 @@ export async function startBot(config, log, authDir) {
       <li>Point your phone at the QR above</li>
     </ol>
   </div>
+  <div class="pair-section" id="pair-section">
+    <h3>🔢 Or link with phone number (no QR)</h3>
+    <input id="pair-number" inputmode="numeric" placeholder="10-digit WhatsApp number (or with country code)">
+    <button class="btn" onclick="getPairCode()">Get pairing code</button>
+    <div id="pair-code"></div>
+    <div id="pair-help" class="hidden">On the phone: <strong>WhatsApp → Linked devices → Link a device → Link with phone number instead</strong>, then enter this code.</div>
+  </div>
   <button class="btn" onclick="refreshNow()">🔄 Refresh Now</button>
 </div>
 <script>
@@ -503,6 +569,19 @@ export async function startBot(config, log, authDir) {
     img.src='/qr?t='+Date.now();
   }
   function refreshNow(){ if(!connected) tick(); }
+  async function getPairCode(){
+    var n=document.getElementById('pair-number').value;
+    var out=document.getElementById('pair-code');
+    out.textContent='…';
+    try{
+      var r=await fetch('/pair?number='+encodeURIComponent(n));
+      var d=await r.json();
+      if(d.code){
+        out.textContent=d.code.length===8?d.code.slice(0,4)+'-'+d.code.slice(4):d.code;
+        document.getElementById('pair-help').classList.remove('hidden');
+      } else { out.textContent=''; out.textContent=d.error||'Failed'; out.style.fontSize='1em'; }
+    }catch(e){ out.textContent='Failed — bot unreachable'; out.style.fontSize='1em'; }
+  }
   async function tick(){
     try{
       var d=await (await fetch('/status',{cache:'no-store'})).json();
@@ -514,6 +593,7 @@ export async function startBot(config, log, authDir) {
         loadingText.classList.remove('loading-text');
         loadingText.textContent='Connected — you can close this page.';
         instructions.classList.add('hidden');
+        document.getElementById('pair-section').classList.add('hidden');
         return;
       }
       if(d.qrAvailable){
