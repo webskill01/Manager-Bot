@@ -40,6 +40,7 @@ import { createOverdueEngine } from './overdueEngine.js';
 import { createTrialRemovalEngine } from './trialRemovalEngine.js';
 import { createRemovalEngine } from './removalEngine.js';
 import { createGhostRemovalEngine } from './ghostRemovalEngine.js';
+import { markLinkedAt, getLinkedAt, inWarmup } from './warmup.js';
 
 const BOT_START_TIME = Date.now();
 
@@ -49,7 +50,8 @@ export async function startBot(config, log, authDir) {
   let reconnectTimer = null;
   let isShuttingDown = false;
   let isConnecting = false;
-  let loggedOut = false;   // set on a 401 — halts all reconnects until manual re-link
+  let loggedOut = false;   // set on a 401/403 — halts all reconnects until manual re-link
+  let registeredAtLoad = null;   // was the auth already registered when loaded? false = fresh link this run
   let authState = null;
   let saveCreds = null;
   let latestQR = null;
@@ -65,6 +67,12 @@ export async function startBot(config, log, authDir) {
     ...(config.allowedLids    || []).map(lid => `${String(lid).replace(/@lid$/, '').split(':')[0]}@lid`),
   ]);
   log.info(`📱 Allowed command JIDs (${allowedCommandJids.size}): ${[...allowedCommandJids].join(', ')}`);
+
+  // Warm-up: freshly linked numbers stay quiet (no engines, no scheduled sends,
+  // delayed admin usync) for the first warmupHours so WhatsApp sees a normal
+  // device, not a bot burst. Established links (no marker) are never warmed up.
+  const warmupHours = config.warmupHours ?? 24;
+  const warmingUp = () => inWarmup(authDir, warmupHours);
 
   // JIDs that receive proactive broadcasts (morning digest, evening summary)
   const broadcastJids = [
@@ -234,6 +242,7 @@ export async function startBot(config, log, authDir) {
         const { state, saveCreds: sc } = await useMultiFileAuthState(authDir);
         authState = state;
         saveCreds = sc;
+        registeredAtLoad = !!state.creds?.registered;
       }
 
       const { version } = await fetchLatestBaileysVersion();
@@ -286,7 +295,12 @@ export async function startBot(config, log, authDir) {
       sock.ev.on('contacts.update',       (contacts) => syncContacts(contacts));
       sock.ev.on('messaging-history.set', ({ contacts }) => { if (contacts?.length) syncContacts(contacts); });
 
-      sock.ev.on('creds.update', async () => { if (saveCreds) await saveCreds(); });
+      sock.ev.on('creds.update', async () => {
+        // Registration completed during THIS run → start the warm-up clock. Bots that
+        // loaded already-registered creds never get marked (no warm-up for old links).
+        if (registeredAtLoad === false && authState?.creds?.registered) markLinkedAt(authDir);
+        if (saveCreds) await saveCreds();
+      });
 
       sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
         if (qr) {
@@ -304,52 +318,81 @@ export async function startBot(config, log, authDir) {
           groupMetaCache.clear();   // roster may have changed while offline
           await store.refresh();
           log.info(`📊 Cache refreshed: ${store.getAll().length} members`);
-          trialEngine.resume();
-          removalEngine.resume();
-          ghostEngine.resume();
-          // Catch up any reminder window the bot was offline/restarting across. Same restart-safe
-          // pattern as removalEngine: persistent per-day state + per-phone dedupe, so missed
-          // reminders go out on reconnect and nobody is ever messaged twice.
-          reminderSender.resume(store, getSock, config.botDir, broadcast);
-          overdueEngine.resume(store, getSock, getBroadcastJids);
-
           // Resolve allowedNumbers to actual JIDs (WhatsApp may route as @lid)
-          for (const phone of config.allowedNumbers || []) {
-            try {
-              const normalized = `91${phone.replace(/\D/g, '').slice(-10)}`;
-              const results = await sock.onWhatsApp(normalized);
-              if (results?.[0]?.exists && results[0].jid) {
-                allowedCommandJids.add(results[0].jid);
-                // WhatsApp delivers DMs from the sender's @lid, not their phone JID — register
-                // the LID too or commands get early-rejected. Baileys 7.x dropped the .lid field
-                // from onWhatsApp; ask its LID mapping store instead (usyncs + caches).
-                let lid = null;
-                try { lid = await sock.signalRepository?.lidMapping?.getLIDForPN(results[0].jid); } catch {}
-                if (lid) {
-                  const rawLid = String(lid).split('@')[0].split(':')[0];
-                  const lidJid = `${rawLid}@lid`;
-                  allowedCommandJids.add(lidJid);
-                  lidToPhoneJid.set(lidJid, results[0].jid);
-                  adminLids.add(rawLid);   // feeds trial-protection + audit counting
+          const resolveAdminJids = async () => {
+            for (const phone of config.allowedNumbers || []) {
+              try {
+                const normalized = `91${phone.replace(/\D/g, '').slice(-10)}`;
+                const results = await sock.onWhatsApp(normalized);
+                if (results?.[0]?.exists && results[0].jid) {
+                  allowedCommandJids.add(results[0].jid);
+                  // WhatsApp delivers DMs from the sender's @lid, not their phone JID — register
+                  // the LID too or commands get early-rejected. Baileys 7.x dropped the .lid field
+                  // from onWhatsApp; ask its LID mapping store instead (usyncs + caches).
+                  let lid = null;
+                  try { lid = await sock.signalRepository?.lidMapping?.getLIDForPN(results[0].jid); } catch {}
+                  if (lid) {
+                    const rawLid = String(lid).split('@')[0].split(':')[0];
+                    const lidJid = `${rawLid}@lid`;
+                    allowedCommandJids.add(lidJid);
+                    lidToPhoneJid.set(lidJid, results[0].jid);
+                    adminLids.add(rawLid);   // feeds trial-protection + audit counting
+                  }
+                  log.info(`📱 ${phone} → ${results[0].jid}${lid ? ` (lid ${lid})` : ''}`);
                 }
-                log.info(`📱 ${phone} → ${results[0].jid}${lid ? ` (lid ${lid})` : ''}`);
+              } catch (err) {
+                log.warn(`⚠️  Could not resolve JID for ${phone}: ${err.message}`);
               }
-            } catch (err) {
-              log.warn(`⚠️  Could not resolve JID for ${phone}: ${err.message}`);
             }
+          };
+
+          if (warmingUp()) {
+            const until = new Date(getLinkedAt(authDir) + warmupHours * 3600e3);
+            log.warn(`🐣 WARM-UP MODE — fresh link. Engines & scheduled sends paused until ${until.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}. Admin commands still work (auth via remoteJidAlt).`);
+            // Spare the fresh session the connect-instant usync burst — resolve quietly later.
+            const s = sock;
+            setTimeout(() => { if (sock === s && s?.user) resolveAdminJids().catch(() => {}); }, 10 * 60 * 1000);
+            // If this connection outlives the warm-up window, resume engines right then —
+            // otherwise the next reconnect's 'open' handler does it.
+            const msLeft = getLinkedAt(authDir) + warmupHours * 3600e3 - Date.now();
+            setTimeout(() => {
+              if (sock !== s || !s?.user) return;
+              log.info('🐣 Warm-up over — resuming engines');
+              trialEngine.resume();
+              removalEngine.resume();
+              ghostEngine.resume();
+              reminderSender.resume(store, getSock, config.botDir, broadcast);
+              overdueEngine.resume(store, getSock, getBroadcastJids);
+            }, msLeft + 1000);
+          } else {
+            trialEngine.resume();
+            removalEngine.resume();
+            ghostEngine.resume();
+            // Catch up any reminder window the bot was offline/restarting across. Same restart-safe
+            // pattern as removalEngine: persistent per-day state + per-phone dedupe, so missed
+            // reminders go out on reconnect and nobody is ever messaged twice.
+            reminderSender.resume(store, getSock, config.botDir, broadcast);
+            overdueEngine.resume(store, getSock, getBroadcastJids);
+            await resolveAdminJids();
           }
 
           // Start scheduler once (survives reconnects)
           if (!schedulerStarted) {
             schedulerStarted = true;
+            const skipWarmup = (job) => {
+              if (warmingUp()) { log.info(`🐣 Warm-up — skipped ${job}`); return true; }
+              return false;
+            };
             scheduler.start({
               morningDigest: async () => {
+                if (skipWarmup('morning digest')) return;
                 if (!getSock()?.user) return;
                 const { createReportHandlers } = await import('./handlers/reportHandlers.js');
                 const reportH = createReportHandlers(store, config, BOT_START_TIME, log);
                 await broadcast(reportH.handleMorningDigest());
               },
               reminderSend: async () => {
+                if (skipWarmup('reminder batch 1')) return;
                 const result = await reminderSender.sendReminders(store, getSock, config.botDir);
                 if (result.autoRenewed?.length > 0) {
                   const lines = result.autoRenewed.map(m => `  • ${m.name}  ${m.phone}${m.rolled ? ` (+${m.rolled} ref rolled to next month)` : ''}`).join('\n');
@@ -357,6 +400,7 @@ export async function startBot(config, log, authDir) {
                 }
               },
               reminderSend2: async () => {
+                if (skipWarmup('reminder batch 2')) return;
                 const result = await reminderSender.sendRemindersSecondBatch(store, getSock, config.botDir);
                 if (result.autoRenewed?.length > 0) {
                   const lines = result.autoRenewed.map(m => `  • ${m.name}  ${m.phone}${m.rolled ? ` (+${m.rolled} ref rolled to next month)` : ''}`).join('\n');
@@ -364,9 +408,11 @@ export async function startBot(config, log, authDir) {
                 }
               },
               overdueCheck: async () => {
+                if (skipWarmup('overdue check')) return;
                 await overdueEngine.runOverdueCheck(store, getSock, getBroadcastJids());
               },
               eveningSummary: async () => {
+                if (skipWarmup('evening summary')) return;
                 if (!getSock()?.user) return;
                 const { createReportHandlers } = await import('./handlers/reportHandlers.js');
                 const reportH = createReportHandlers(store, config, BOT_START_TIME, log);
