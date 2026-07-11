@@ -1,4 +1,13 @@
 import cron from 'node-cron';
+import { randomBetween, sleep } from './globalConfig.js';
+
+// Random 0..maxMinutes delay applied before every scheduled job runs, so nothing
+// fires at a predictable time. 0 disables jitter for a bot.
+export function computeJitterMs(maxMinutes) {
+  const max = Number(maxMinutes) || 0;
+  if (max <= 0) return 0;
+  return randomBetween(0, max * 60000);
+}
 
 export function createScheduler(config, log) {
   const { schedule } = config;
@@ -12,12 +21,17 @@ export function createScheduler(config, log) {
       return;
     }
     const job = cron.schedule(expr, async () => {
+      const jitter = computeJitterMs(schedule.jitterMaxMinutes ?? 20);
+      if (jitter > 0) {
+        log.info(`⏰ ${label} jittered +${Math.floor(jitter / 60000)}m ${Math.round((jitter % 60000) / 1000)}s`);
+        await sleep(jitter);
+      }
       log.info(`⏰ Running: ${label}`);
       try { await fn(); }
       catch (err) { log.error(`❌ Scheduled job [${label}]: ${err.message}`); }
     }, { timezone: tz });
     jobs.push(job);
-    log.info(`⏰ Scheduled ${label} @ ${expr} (${tz})`);
+    log.info(`⏰ Scheduled ${label} @ ${expr} (${tz}, jitter ≤${schedule.jitterMaxMinutes ?? 20}m)`);
   }
 
   function start(tasks) {

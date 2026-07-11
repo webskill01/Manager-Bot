@@ -373,6 +373,8 @@ export function createReportHandlers(store, config, botStartTime, log) {
 • renewed [phone] 45  →  ₹${config.renewal.referralAmount}
 • renewed [phone] [day]  /  [day] 45
 • remind [phone]  →  send reminder + QR manually
+• remindall  →  re-fire group reminder (due tags now, overdue tags ~5 min later; group mode only)
+• remindall preview  →  see both messages without sending
 • due / due tomorrow
 • upcoming [days]  →  who's due in next N days (default 7)
 • overdue / pending

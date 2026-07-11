@@ -1,6 +1,33 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate, renewedOn, pickSurplusReferrals, surplusCreditDate, cronTimePassedToday, beforeCatchUpCutoff } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate, renewedOn, pickSurplusReferrals, surplusCreditDate, cronTimePassedToday, beforeCatchUpCutoff, isDelayActive } from './globalConfig.js';
+
+// ── Group digest builder (pure, exported for tests) ──────────────────────────
+// members: [{ name, phone, note? }] — note is an optional annotation appended to the line.
+// participants: Baileys group participants [{ id, phoneNumber? }]. LID-era groups report
+// p.id as @lid with the phone on p.phoneNumber — map by phone, tag with p.id (same
+// pattern as ghostRemovalEngine). Members not found in the group get a plain,
+// untagged "Name (phone)" line.
+export function buildGroupDigest({ header, members, participants }) {
+  const byPhone = new Map();
+  for (const p of participants || []) {
+    const src = p.phoneNumber || (String(p.id || '').endsWith('@s.whatsapp.net') ? p.id : null);
+    if (src) byPhone.set(normalizePhone(src), p.id);
+  }
+  const lines = [];
+  const mentions = [];
+  for (const m of members) {
+    const jid = byPhone.get(normalizePhone(m.phone));
+    const note = m.note ? ` ${m.note}` : '';
+    if (jid) {
+      lines.push(`@${String(jid).split('@')[0]}${note}`);
+      mentions.push(jid);
+    } else {
+      lines.push(`${m.name} (${m.phone})${note}`);
+    }
+  }
+  return { text: `${header}\n\n${lines.join('\n')}`, mentions };
+}
 
 // ── Reminder day-state (reminder-state.json) ──────────────────────────────────
 // Module-level so the `renewed` command can mark a phone as already-handled today
@@ -101,6 +128,47 @@ export function createReminderSender(config, log) {
     }
   }
 
+  // Silent 2-ref auto-renew: advances billing +1 month, paidLast 0, rolls surplus refs
+  // into the next period. Shared by the DM batch path and the group-digest path.
+  // Returns the autoRenewed entry, records the phone in day-state. Throws on store failure.
+  async function autoRenewMember(m, refList, store, botDir, state) {
+    const billing = parseDate(m.billingDate);
+    const newBillingDate = formatDate(
+      clampedBillingDate(billing.getFullYear(), billing.getMonth() + 1, billing.getDate())
+    );
+    await store.update(m.phone, {
+      status: 'ACTIVE',
+      billingDate: newBillingDate,
+      renewals: (m.renewals || 0) + 1,
+      paidLast: 0,
+      lastRenewed: formatDateTime(new Date()),
+    });
+
+    // Referral rollover: 2 refs pay for this free renewal; any surplus refs roll into
+    // the NEXT billing period. We re-pin each surplus referred member's refCreditDate
+    // into [newBilling-1mo, newBilling) so getReferralsInBillingPeriod counts them
+    // again next cycle — i.e. 4 refs → free this month AND next. Chains automatically.
+    let rolled = 0;
+    const { surplus } = pickSurplusReferrals(refList, 2);
+    if (surplus.length > 0) {
+      const creditDate = surplusCreditDate(newBillingDate);
+      for (const ref of surplus) {
+        try {
+          await store.update(ref.phone, { refCreditDate: creditDate });
+          rolled++;
+        } catch (e) {
+          log.warn(`⚠️  Rollover re-pin failed for ${ref.phone}: ${e.message}`);
+        }
+      }
+      log.info(`🔁 Rolled ${rolled} surplus ref(s) for ${m.name} into next period (${creditDate})`);
+    }
+
+    state.sentPhones.push(m.phone);
+    saveState(botDir, state);
+    log.info(`🎁 Auto-renewed ${m.name} (${m.phone}) — ${refList.length} refs${rolled ? `, ${rolled} rolled over` : ''}`);
+    return { name: m.name, phone: m.phone, refs: refList.length, rolled };
+  }
+
   async function runBatch(members, getSock, botDir, state, label, store) {
     const all = store.getAll();
     let sent = 0, referralSent = 0, failed = 0;
@@ -113,41 +181,7 @@ export function createReminderSender(config, log) {
 
       if (refs >= 2) {
         try {
-          const billing = parseDate(m.billingDate);
-          const newBillingDate = formatDate(
-            clampedBillingDate(billing.getFullYear(), billing.getMonth() + 1, billing.getDate())
-          );
-          await store.update(m.phone, {
-            status: 'ACTIVE',
-            billingDate: newBillingDate,
-            renewals: (m.renewals || 0) + 1,
-            paidLast: 0,
-            lastRenewed: formatDateTime(new Date()),
-          });
-
-          // Referral rollover: 2 refs pay for this free renewal; any surplus refs roll into
-          // the NEXT billing period. We re-pin each surplus referred member's refCreditDate
-          // into [newBilling-1mo, newBilling) so getReferralsInBillingPeriod counts them
-          // again next cycle — i.e. 4 refs → free this month AND next. Chains automatically.
-          let rolled = 0;
-          const { surplus } = pickSurplusReferrals(refList, 2);
-          if (surplus.length > 0) {
-            const creditDate = surplusCreditDate(newBillingDate);
-            for (const ref of surplus) {
-              try {
-                await store.update(ref.phone, { refCreditDate: creditDate });
-                rolled++;
-              } catch (e) {
-                log.warn(`⚠️  Rollover re-pin failed for ${ref.phone}: ${e.message}`);
-              }
-            }
-            log.info(`🔁 Rolled ${rolled} surplus ref(s) for ${m.name} into next period (${creditDate})`);
-          }
-
-          autoRenewed.push({ name: m.name, phone: m.phone, refs, rolled });
-          state.sentPhones.push(m.phone);
-          saveState(botDir, state);
-          log.info(`🎁 Auto-renewed ${m.name} (${m.phone}) — ${refs} refs${rolled ? `, ${rolled} rolled over` : ''}`);
+          autoRenewed.push(await autoRenewMember(m, refList, store, botDir, state));
         } catch (err) {
           failed++;
           log.warn(`❌ Auto-renew failed [${m.name}]: ${err.message}`);
@@ -164,7 +198,12 @@ export function createReminderSender(config, log) {
       }
 
       if (i < members.length - 1) {
-        const gap = randomBetween(config.rateLimits.memberToMemberGapMinMs, config.rateLimits.memberToMemberGapMaxMs);
+        // Removal-engine-style spacing when dmReminderGap* is configured (multi-minute,
+        // uneven); bots without it (bot-nitin) keep the original memberToMemberGap pacing.
+        const gap = randomBetween(
+          config.rateLimits.dmReminderGapMinMs ?? config.rateLimits.memberToMemberGapMinMs,
+          config.rateLimits.dmReminderGapMaxMs ?? config.rateLimits.memberToMemberGapMaxMs
+        );
         log.info(`⏳ Next reminder in ${(gap / 1000).toFixed(1)}s`);
         await sleep(gap);
       }
@@ -184,8 +223,239 @@ export function createReminderSender(config, log) {
     );
   }
 
+  // ── Group-digest mode ───────────────────────────────────────────────────────
+  // reminder.mode "group" replaces per-member DMs with (1) one QR+caption group
+  // message tagging due-today members and (2) a separate overdue-tags message a few
+  // minutes later. Returns null (→ DM mode) when unconfigured or groupId missing.
+  function groupCfg() {
+    const r = config.reminder;
+    if (!r || r.mode !== 'group') return null;
+    if (!r.groupId) {
+      log.error('❌ reminder.mode is "group" but reminder.groupId is empty — falling back to DM mode');
+      return null;
+    }
+    return r;
+  }
+
+  // Digest inputs: due-today (2-ref members auto-renewed silently, excluded from the due
+  // tags, and recorded in state.autoRenewedToday for the celebration message) and
+  // 5+ days overdue (same milestone base as the overdue engine's day-5 reminder).
+  // applyAutoRenew=false (preview) leaves the sheet untouched.
+  async function computeDigestSets(store, botDir, state, { applyAutoRenew }) {
+    const dueRaw = await getDueToday(store);
+    const all = store.getAll();
+    const due = [];
+    const autoRenewed = [];
+    for (const m of dueRaw) {
+      const refList = getReferralsInBillingPeriod(m.phone, m.billingDate, all);
+      if (refList.length >= 2) {
+        if (applyAutoRenew) {
+          try {
+            autoRenewed.push(await autoRenewMember(m, refList, store, botDir, state));
+            // Remember today's free-renewal members so the celebration message (msg 3)
+            // can tag them — including on a later remindall, when they're no longer "due".
+            state.autoRenewedToday = state.autoRenewedToday || [];
+            if (!state.autoRenewedToday.some(a => a.phone === m.phone)) {
+              state.autoRenewedToday.push({ name: m.name, phone: m.phone });
+              saveState(botDir, state);
+            }
+          } catch (err) { log.warn(`❌ Auto-renew failed [${m.name}]: ${err.message}`); }
+        }
+        continue; // free renewal — never tagged as due
+      }
+      due.push({ name: m.name, phone: m.phone, note: '' });
+    }
+    const overdueDays = config.overdue?.autoReminderDays ?? 5;
+    const today = todayStr();
+    const overdue = store.getActive()
+      .filter(m => {
+        const d = daysFromToday(m.billingDate);
+        return d !== null && d <= -overdueDays && !isDelayActive(m) && !renewedOn(m, today);
+      })
+      .map(m => ({ name: m.name, phone: m.phone, note: `— ${Math.abs(daysFromToday(m.billingDate))} din overdue` }));
+    return { due, overdue, autoRenewed };
+  }
+
+  function digestHeaders() {
+    return {
+      h1: (config.messages.groupReminder    || '📅 Renewal reminder — {date}').replace('{date}', friendlyDate()),
+      h2: (config.messages.groupOverdue     || '🚨 Overdue — {date}').replace('{date}', friendlyDate()),
+      h3: (config.messages.groupAutoRenewed || '🎁 These members added 2 people — their month is FREE:').replace('{date}', friendlyDate()),
+    };
+  }
+
+  // Random pause between the group digest messages so they never land as one burst.
+  function interMessageGapMs() {
+    return randomBetween(
+      config.reminder?.msgGapMinMs ?? 4 * 60000,
+      config.reminder?.msgGapMaxMs ?? 6 * 60000
+    );
+  }
+
+  // Cron runs skip parts already sent today (digestSent / overdueDigestSent in
+  // reminder-state.json — a restart between msg 1 and msg 2 resumes with msg 2 only).
+  // remindall passes manual=true to re-fire both regardless.
+  async function sendGroupDigest(store, getSock, botDir, { manual = false } = {}) {
+    if (_busy) {
+      log.warn('⏰ Group digest skipped — another reminder run is in progress');
+      return { ...NOOP_RESULT };
+    }
+    _busy = true;
+    try {
+      const g = groupCfg();
+      const state = loadState(botDir);
+      const needMsg1 = manual || !state.digestSent;
+      const needMsg2 = manual || !state.overdueDigestSent;
+      // Celebration message is automatic-only, once per day — remindall never re-fires it.
+      const needMsg3 = !manual && !state.renewFreeDigestSent;
+      if (!needMsg1 && !needMsg2 && !needMsg3) {
+        log.info('⏰ Group digest: all messages already sent today');
+        return { ...NOOP_RESULT };
+      }
+
+      const { due, overdue, autoRenewed } = await computeDigestSets(store, botDir, state, { applyAutoRenew: true });
+
+      let sock = getSock();
+      if (!sock?.user) {
+        log.warn('⚠️  Socket not ready — group digest skipped');
+        return { ...NOOP_RESULT, autoRenewed };
+      }
+
+      let participants = [];
+      try {
+        const meta = await sock.groupMetadata(g.groupId);
+        participants = meta?.participants || [];
+      } catch (err) {
+        log.warn(`⚠️  groupMetadata failed for digest: ${err.message} — sending without tags`);
+      }
+
+      const { h1, h2, h3 } = digestHeaders();
+      let sent = 0;
+      let sentAnything = false;   // gates the pause before follow-up messages
+
+      // Msg 1 — QR image + caption, due-today tags
+      if (needMsg1) {
+        if (due.length === 0) {
+          log.info('⏰ Group digest: no members due today — msg 1 skipped');
+          state.digestSent = true;   // nothing to send counts as done for today
+          saveState(botDir, state);
+        } else {
+          const { text, mentions } = buildGroupDigest({ header: h1, members: due, participants });
+          const qrPath = config.upiQrPath ? path.resolve(botDir, config.upiQrPath) : null;
+          try {
+            if (qrPath && fs.existsSync(qrPath)) {
+              await sock.sendMessage(g.groupId, { image: fs.readFileSync(qrPath), caption: text, mentions });
+            } else {
+              await sock.sendMessage(g.groupId, { text, mentions });
+            }
+            sent = due.length;
+            sentAnything = true;
+            state.digestSent = true;
+            for (const m of due) if (!state.sentPhones.includes(m.phone)) state.sentPhones.push(m.phone);
+            saveState(botDir, state);
+            log.info(`📨 Group digest msg 1 sent — ${due.length} due member(s) tagged`);
+          } catch (err) {
+            log.error(`❌ Group digest msg 1 failed: ${err.message}`);
+            return { ...NOOP_RESULT, autoRenewed, failed: due.length };
+          }
+        }
+      }
+
+      // Msg 2 — separate overdue-tags message, a few minutes later so it never
+      // reads as one machine burst
+      if (needMsg2) {
+        if (overdue.length === 0) {
+          log.info('⏰ Group digest: no 5+ day overdue members — msg 2 skipped');
+          state.overdueDigestSent = true;
+          saveState(botDir, state);
+        } else {
+          if (sentAnything) {
+            const gapMs = interMessageGapMs();
+            log.info(`⏳ Overdue group message in ${(gapMs / 60000).toFixed(1)} min`);
+            await sleep(gapMs);
+          }
+          sock = getSock();
+          if (!sock?.user) {
+            log.warn('⚠️  Socket dropped before overdue message — batch 2 / catch-up will retry');
+            return { sent, referralSent: 0, autoRenewed, failed: 0, queued: overdue.length };
+          }
+          const { text, mentions } = buildGroupDigest({ header: h2, members: overdue, participants });
+          try {
+            await sock.sendMessage(g.groupId, { text, mentions });
+            sentAnything = true;
+            state.overdueDigestSent = true;
+            saveState(botDir, state);
+            log.info(`📨 Group digest msg 2 sent — ${overdue.length} overdue member(s) tagged`);
+          } catch (err) {
+            log.error(`❌ Group digest msg 2 failed: ${err.message}`);
+          }
+        }
+      }
+
+      // Msg 3 — referral celebration: tag today's 2-ref members whose month came free.
+      // Public, so it advertises the referral programme to the whole group.
+      if (needMsg3) {
+        const freeMembers = (state.autoRenewedToday || []).map(a => ({ name: a.name, phone: a.phone, note: '' }));
+        if (freeMembers.length === 0) {
+          log.info('⏰ Group digest: no 2-ref auto-renewals today — msg 3 skipped');
+          state.renewFreeDigestSent = true;
+          saveState(botDir, state);
+        } else {
+          if (sentAnything) {
+            const gapMs = interMessageGapMs();
+            log.info(`⏳ Referral celebration message in ${(gapMs / 60000).toFixed(1)} min`);
+            await sleep(gapMs);
+          }
+          sock = getSock();
+          if (!sock?.user) {
+            log.warn('⚠️  Socket dropped before celebration message — batch 2 / catch-up will retry');
+            return { sent, referralSent: 0, autoRenewed, failed: 0, queued: 0 };
+          }
+          const { text, mentions } = buildGroupDigest({ header: h3, members: freeMembers, participants });
+          try {
+            await sock.sendMessage(g.groupId, { text, mentions });
+            state.renewFreeDigestSent = true;
+            saveState(botDir, state);
+            log.info(`📨 Group digest msg 3 sent — ${freeMembers.length} free-renewal member(s) celebrated`);
+          } catch (err) {
+            log.error(`❌ Group digest msg 3 failed: ${err.message}`);
+          }
+        }
+      }
+
+      return { sent, referralSent: 0, autoRenewed, failed: 0, queued: 0 };
+    } finally {
+      _busy = false;
+    }
+  }
+
+  // Manual `remindall` command — re-fires the digest (msg 1 now, msg 2 ~5 min later),
+  // running in the background so the command reply is instant. The day-6 final DM is
+  // never part of this (it goes once per day via the overdue engine only).
+  async function remindAll(store, getSock, botDir, { preview = false } = {}) {
+    if (!groupCfg()) {
+      return '❌ remindall works in group reminder mode only — set reminder.mode to "group" and fill reminder.groupId in this bot\'s config.';
+    }
+
+    if (preview) {
+      const state = loadState(botDir);
+      const { due, overdue } = await computeDigestSets(store, botDir, state, { applyAutoRenew: false });
+      const { h1, h2 } = digestHeaders();
+      const m1 = due.length     ? buildGroupDigest({ header: h1, members: due,     participants: [] }).text : '(no members due today — msg 1 skipped)';
+      const m2 = overdue.length ? buildGroupDigest({ header: h2, members: overdue, participants: [] }).text : '(no 5+ day overdue members — msg 2 skipped)';
+      return `🔎 PREVIEW — names shown; the real send tags members\n(celebration msg is automatic-only, not part of remindall)\n\n━━ Message 1 (QR + caption) ━━\n${m1}\n\n━━ Message 2 (~5 min later) ━━\n${m2}`;
+    }
+
+    if (_busy) return '⏳ A reminder run is already in progress — try again in a few minutes.';
+    sendGroupDigest(store, getSock, botDir, { manual: true })
+      .then(r => log.info(`🔔 remindall done — ${r.sent} due tagged`))
+      .catch(err => log.error(`❌ remindall failed: ${err.message}`));
+    return '🔔 Group reminder firing — due-today message now, overdue message in ~5 min.';
+  }
+
   // Batch 1 (6:30 AM cron) — sends up to batchSize members, skips already-sent
   async function sendReminders(store, getSock, botDir) {
+    if (groupCfg()) return sendGroupDigest(store, getSock, botDir);
     if (_busy) {
       log.warn('⏰ Reminder batch 1 skipped — another reminder run is in progress');
       return { ...NOOP_RESULT };
@@ -221,8 +491,10 @@ export function createReminderSender(config, log) {
     }
   }
 
-  // Batch 2 (7:30 AM cron) — sends remaining members not yet sent today
+  // Batch 2 (7:30 AM cron) — sends remaining members not yet sent today.
+  // Group mode: acts as a retry — sendGroupDigest only sends parts still unsent.
   async function sendRemindersSecondBatch(store, getSock, botDir) {
+    if (groupCfg()) return sendGroupDigest(store, getSock, botDir);
     if (_busy) {
       log.warn('⏰ Reminder batch 2 skipped — another reminder run is in progress');
       return { ...NOOP_RESULT };
@@ -268,6 +540,9 @@ export function createReminderSender(config, log) {
       log.info(`⏰ Reminder catch-up: past the ${cutoff}:00 cutoff — not replaying missed reminders this late`);
       return { ...NOOP_RESULT };
     }
+    // Group mode: resend whichever digest part never went out (idempotent via
+    // digestSent/overdueDigestSent flags — same restart-safety as sentPhones).
+    if (groupCfg()) return sendGroupDigest(store, getSock, botDir);
     _busy = true;
     try {
       const state = loadState(botDir);
@@ -305,5 +580,5 @@ export function createReminderSender(config, log) {
     log.info('⏰ Reminder catch-up scheduled (2-min grace after reconnect)');
   }
 
-  return { sendReminders, sendRemindersSecondBatch, sendToMember, markReminded: markPhoneReminded, catchUp, resume };
+  return { sendReminders, sendRemindersSecondBatch, sendToMember, markReminded: markPhoneReminded, catchUp, resume, remindAll };
 }

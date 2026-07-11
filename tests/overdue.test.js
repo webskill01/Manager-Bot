@@ -45,10 +45,12 @@ function daysAgo(n) {
 test('overdue check is idempotent — re-running never double-messages members or the owner', async () => {
   const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ovr-'));
   const store = makeStore([
-    // Exactly 7 days overdue → gets a day-7 FINAL reminder AND appears in the consolidated list.
-    { name: 'A', phone: '9000000001', status: 'ACTIVE', billingDate: daysAgo(7), renewals: 0 },
-    // 5 days overdue → gets a day-6 (autoReminderDays) reminder.
+    // Exactly 6 days overdue (removal day - 1) → gets the FINAL reminder.
+    { name: 'A', phone: '9000000001', status: 'ACTIVE', billingDate: daysAgo(6), renewals: 0 },
+    // 5 days overdue → gets a day-5 (autoReminderDays) reminder.
     { name: 'B', phone: '9000000002', status: 'ACTIVE', billingDate: daysAgo(5), renewals: 0 },
+    // 7 days overdue → removal day: consolidated owner list only, no member DM.
+    { name: 'C', phone: '9000000003', status: 'ACTIVE', billingDate: daysAgo(7), renewals: 0 },
   ]);
   const { sock, sent } = makeSock();
   const broadcastJids = ['owner@s.whatsapp.net'];
@@ -74,8 +76,8 @@ test('overdue check is idempotent — re-running never double-messages members o
 test('overdue check resumes a run interrupted mid-way without re-sending the first member', async () => {
   const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ovr-'));
   const store = makeStore([
-    { name: 'A', phone: '9000000001', status: 'ACTIVE', billingDate: daysAgo(7), renewals: 0 },
-    { name: 'B', phone: '9000000002', status: 'ACTIVE', billingDate: daysAgo(7), renewals: 0 },
+    { name: 'A', phone: '9000000001', status: 'ACTIVE', billingDate: daysAgo(6), renewals: 0 },
+    { name: 'B', phone: '9000000002', status: 'ACTIVE', billingDate: daysAgo(6), renewals: 0 },
   ]);
   const broadcastJids = ['owner@s.whatsapp.net'];
   const engine = createOverdueEngine(makeConfig(botDir), log);
@@ -92,7 +94,7 @@ test('overdue check resumes a run interrupted mid-way without re-sending the fir
     },
   };
   await engine.runOverdueCheck(store, () => flakySock, broadcastJids);
-  // A delivered; B failed; consolidated list also failed (still calls===... ) — partial run.
+  // A delivered; B's send threw — partial run.
   const partial = JSON.parse(fs.readFileSync(path.join(botDir, 'overdue-state.json'), 'utf8'));
   assert.ok(partial.sentPhones.includes('9000000001'), 'A recorded as sent');
   assert.ok(!partial.sentPhones.includes('9000000002'), 'B not recorded — its send threw');

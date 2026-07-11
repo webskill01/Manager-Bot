@@ -212,36 +212,61 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
     return msg;
   }
 
-  async function warnall() {
+  let _warnRunning = false;
+
+  // Runs in the background with the same multi-minute spacing as reminder DMs
+  // (dmReminderGap*, fallback memberToMemberGap*) — the command replies instantly and
+  // the admins get a completion summary when the batch finishes.
+  async function runWarnBatch(list) {
+    let sent = 0, failed = 0;
+    try {
+      for (let i = 0; i < list.length; i++) {
+        const m = list[i];
+        const sock = getSock();   // re-fetch each member — the batch can span an hour+
+        if (!sock?.user) {
+          failed++;
+          log.warn(`⚠️  Socket not ready — final warning skipped for ${m.name}`);
+        } else {
+          const jid = `91${normalizePhone(m.phone)}@s.whatsapp.net`;
+          const text = config.messages.overdue
+            .replace('{name}', m.name)
+            .replace('{days}', String(m.daysOverdue));
+          try {
+            await sock.sendMessage(jid, { text });
+            sent++;
+            log.info(`📨 Final warning → ${m.name} (${m.phone})`);
+          } catch (err) {
+            failed++;
+            log.warn(`❌ Final warning failed [${m.name}]: ${err.message}`);
+          }
+        }
+        if (i < list.length - 1) {
+          const gap = randomBetween(
+            config.rateLimits.dmReminderGapMinMs ?? config.rateLimits.memberToMemberGapMinMs,
+            config.rateLimits.dmReminderGapMaxMs ?? config.rateLimits.memberToMemberGapMaxMs
+          );
+          log.info(`⏳ Next warning in ${(gap / 1000).toFixed(0)}s`);
+          await sleep(gap);
+        }
+      }
+      await notify(`✅ warnall done: ${sent}/${list.length} warned${failed > 0 ? ` (${failed} failed)` : ''}`);
+    } finally {
+      _warnRunning = false;
+    }
+  }
+
+  function warnall() {
     const list = getRemovalList();
     if (list.length === 0) return `✅ No members overdue by ${config.overdue.consolidatedListDays}+ days.`;
+    if (!getSock()?.user) return '❌ Bot not connected.';
+    if (_warnRunning) return '⚠️ warnall already running — wait for the completion summary.';
 
-    const sock = getSock();
-    if (!sock?.user) return '❌ Bot not connected.';
+    _warnRunning = true;
+    runWarnBatch(list).catch(err => { log.error(`❌ warnall batch failed: ${err.message}`); _warnRunning = false; });
 
-    let sent = 0, failed = 0;
-    for (let i = 0; i < list.length; i++) {
-      const m = list[i];
-      const jid = `91${normalizePhone(m.phone)}@s.whatsapp.net`;
-      const text = config.messages.overdue
-        .replace('{name}', m.name)
-        .replace('{days}', String(m.daysOverdue));
-      try {
-        await sock.sendMessage(jid, { text });
-        sent++;
-        log.info(`📨 Final warning → ${m.name} (${m.phone})`);
-      } catch (err) {
-        failed++;
-        log.warn(`❌ Final warning failed [${m.name}]: ${err.message}`);
-      }
-      if (i < list.length - 1) {
-        await sleep(randomBetween(
-          config.rateLimits.memberToMemberGapMinMs,
-          config.rateLimits.memberToMemberGapMaxMs
-        ));
-      }
-    }
-    return `✅ Final warning sent to ${sent}/${list.length} members${failed > 0 ? ` (${failed} failed)` : ''}`;
+    const gapMaxMin = (config.rateLimits.dmReminderGapMaxMs ?? config.rateLimits.memberToMemberGapMaxMs) / 60000;
+    const etaMin = Math.ceil((list.length - 1) * gapMaxMin);
+    return `📨 Sending final warnings to ${list.length} members with spaced gaps — done within ~${Math.max(etaMin, 1)} min. Summary will follow.`;
   }
 
   function kickall() {

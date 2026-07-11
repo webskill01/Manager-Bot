@@ -22,11 +22,18 @@
   },
   "overdue": {
     "autoReminderDays": 5,
+    "finalReminderDays": 6,
     "consolidatedListDays": 7
+  },
+  "reminder": {
+    "mode": "group",
+    "groupId": "120363408598698876@g.us"
   },
   "rateLimits": {
     "memberToMemberGapMinMs": 7000,
     "memberToMemberGapMaxMs": 10000,
+    "dmReminderGapMinMs": 300000,
+    "dmReminderGapMaxMs": 900000,
     "groupOpGapMinMs": 8000,
     "groupOpGapMaxMs": 12000,
     "batchCooldownMs": 300000,
@@ -58,9 +65,15 @@
     "reminderSend2": "30 7 * * *",
     "overdueCheck": "0 10 * * *",
     "eveningSummary": "0 22 * * *",
-    "timezone": "Asia/Kolkata"
+    "timezone": "Asia/Kolkata",
+    "jitterMaxMinutes": 20
   },
   "messages": {
+    "groupReminder": "SSA ji 🙏 Ajj {date} nu Malwa Travels group vich inna members da mahina pura ho gya — upar QR te 100rs pay karke screenshot share kredeyo deo ji:",
+    "groupOverdue": "🚨 Malwa Travels — inna veera di renwe date nikal gyi hai, jaldi renew krke dss do ji:",
+    "groupAutoRenewed": "Malwa Travels — inna veer ne 2 bande add karwaye, inna da is mahine da renewal FREE:",
+
+
     "reminder": "SSA {name} Paaji ajj {date} nu tohada Malwa Travels group vich ik mahina pura hogya is mahine layi iste 100rs pay kardo ji 🙏",
     "referralReminder": "SSA {name} Paaji ajj {date} nu tohada Malwa Travels group vich ik mahina pura hogya tusi ik bnda add krwaya islayi iste 50rs pay kardo ji 🙏",
     "overdue": "Hanji paaji tuhada group vich ik mahina pura hogya ajj hi renew karke das deo 🚨🚨",

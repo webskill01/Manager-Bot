@@ -63,12 +63,14 @@ export function createOverdueEngine(config, log) {
         return d !== null && d === -config.overdue.autoReminderDays;
       });
 
-      // Day 7 exactly → final reminder to the member. This is their removal day (bulk removal
-      // runs in the evening), so it's the last nudge before they're taken out. Skip delayed.
+      // Final reminder to the member — one day BEFORE removal day (default day-6 when
+      // removal is day-7), so they get a full day to pay before the evening removal.
+      // Skip delayed.
       const removalDay = config.overdue.consolidatedListDays;
+      const finalReminderDay = config.overdue.finalReminderDays ?? (removalDay - 1);
       const finalDay = active.filter(m => {
         const d = daysFromToday(m.billingDate);
-        return d !== null && d === -removalDay && !isDelayActive(m);
+        return d !== null && d === -finalReminderDay && !isDelayActive(m);
       });
 
       // Day 7+ → send consolidated list to owner
@@ -81,9 +83,19 @@ export function createOverdueEngine(config, log) {
         .map(m => ({ ...m, daysOverdue: Math.abs(daysFromToday(m.billingDate)) }))
         .sort((a, b) => b.daysOverdue - a.daysOverdue);
 
-      log.info(`⚠️  Overdue check: ${day6.length} at day-${config.overdue.autoReminderDays}, ${finalDay.length} at day-${removalDay} (final), ${day7plus.length} at day-7+`);
+      log.info(`⚠️  Overdue check: ${day6.length} at day-${config.overdue.autoReminderDays}, ${finalDay.length} at day-${finalReminderDay} (final), ${day7plus.length} at day-${removalDay}+`);
 
-      // Send day-7 FINAL reminders directly to members (last day before removal).
+      // Removal-engine-style spacing when dmReminderGap* is configured; bots without
+      // it (bot-nitin) keep the original memberToMemberGap pacing.
+      const gapMin = config.rateLimits.dmReminderGapMinMs ?? config.rateLimits.memberToMemberGapMinMs;
+      const gapMax = config.rateLimits.dmReminderGapMaxMs ?? config.rateLimits.memberToMemberGapMaxMs;
+
+      // Group reminder mode: the day-5 milestone members are tagged in the morning
+      // group digest (msg 2) instead of getting a DM here. The FINAL reminder below
+      // stays a personal DM in BOTH modes — it's the last-chance personal touch.
+      const groupMode = config.reminder?.mode === 'group' && !!config.reminder?.groupId;
+
+      // Send FINAL reminders directly to members (day before removal).
       // Skip anyone already messaged today — makes a restart catch-up safe to re-run.
       const finalTemplate = config.messages.finalReminder || config.messages.overdue;
       for (let i = 0; i < finalDay.length; i++) {
@@ -92,28 +104,26 @@ export function createOverdueEngine(config, log) {
         const jid = `91${normalizePhone(m.phone)}@s.whatsapp.net`;
         const text = finalTemplate
           .replace('{name}', m.name)
-          .replace('{days}', String(removalDay))
+          .replace('{days}', String(finalReminderDay))
           .replace('{date}', friendlyDate());
 
         try {
           await sock.sendMessage(jid, { text });
           state.sentPhones.push(m.phone);
           saveState(state);
-          log.info(`📨 Day-${removalDay} FINAL reminder → ${m.name} (${m.phone})`);
+          log.info(`📨 Day-${finalReminderDay} FINAL reminder → ${m.name} (${m.phone})`);
         } catch (err) {
           log.warn(`❌ Final reminder failed [${m.name}]: ${err.message}`);
         }
 
         if (i < finalDay.length - 1) {
-          await sleep(randomBetween(
-            config.rateLimits.memberToMemberGapMinMs,
-            config.rateLimits.memberToMemberGapMaxMs
-          ));
+          await sleep(randomBetween(gapMin, gapMax));
         }
       }
 
-      // Send day-6 reminders directly to members (deduped per day, same as above)
-      for (let i = 0; i < day6.length; i++) {
+      // Send day-5 milestone reminders directly to members (deduped per day, same as
+      // above) — DM mode only; group mode covers these via the overdue group message.
+      for (let i = 0; i < day6.length && !groupMode; i++) {
         const m = day6[i];
         if (state.sentPhones.includes(m.phone)) continue;
         const jid = `91${normalizePhone(m.phone)}@s.whatsapp.net`;
@@ -125,16 +135,13 @@ export function createOverdueEngine(config, log) {
           await sock.sendMessage(jid, { text });
           state.sentPhones.push(m.phone);
           saveState(state);
-          log.info(`📨 Day-6 overdue reminder → ${m.name} (${m.phone})`);
+          log.info(`📨 Day-${config.overdue.autoReminderDays} overdue reminder → ${m.name} (${m.phone})`);
         } catch (err) {
-          log.warn(`❌ Day-6 reminder failed [${m.name}]: ${err.message}`);
+          log.warn(`❌ Day-${config.overdue.autoReminderDays} reminder failed [${m.name}]: ${err.message}`);
         }
 
         if (i < day6.length - 1) {
-          await sleep(randomBetween(
-            config.rateLimits.memberToMemberGapMinMs,
-            config.rateLimits.memberToMemberGapMaxMs
-          ));
+          await sleep(randomBetween(gapMin, gapMax));
         }
       }
 
@@ -169,7 +176,9 @@ export function createOverdueEngine(config, log) {
       // Mark the day handled ONLY if everything actually went out — every targeted member is
       // now recorded and the owner list (if any) was sent. A partial run (a send threw, socket
       // dropped mid-batch) leaves done=false so the next reconnect catch-up retries the rest.
-      const allMembersDone = [...finalDay, ...day6].every(m => state.sentPhones.includes(m.phone));
+      // Group mode never DMs the day-5 milestone set, so only finalDay counts toward done.
+      const mustDm = groupMode ? finalDay : [...finalDay, ...day6];
+      const allMembersDone = mustDm.every(m => state.sentPhones.includes(m.phone));
       const listDone = day7plus.length === 0 || state.listSent;
       state.done = allMembersDone && listDone;
       saveState(state);

@@ -16,6 +16,7 @@ const SLOW_COMMANDS = new Set([
   'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
   'kick', 'rejoin', 'sendlinks', 'links', 'groupcheck', 'remind', 'renewed',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
+  'remindall',
 ]);
 
 export function isSlowCommand(text) {
@@ -48,7 +49,7 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set()) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null) {
   const memberH = createMemberHandlers(store, groupManager, config, log);
   const renewalH = createRenewalHandlers(store, config, log);
   const lookupH = createLookupHandlers(store, config, log);
@@ -480,6 +481,12 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           } catch (err) {
             return `❌ Failed to send reminder: ${err.message}`;
           }
+        }
+
+        case 'remindall': {
+          if (!reminderSender) return '❌ remindall not available on this bot.';
+          const preview = /^preview$/i.test(args[0] || '');
+          return reminderSender.remindAll(store, getSock || (() => sock), config.botDir, { preview });
         }
 
         case 'removal':    return removalEngine.handleRemoval();

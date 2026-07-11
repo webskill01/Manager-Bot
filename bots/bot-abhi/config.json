@@ -23,11 +23,18 @@
   },
   "overdue": {
     "autoReminderDays": 5,
+    "finalReminderDays": 6,
     "consolidatedListDays": 7
+  },
+  "reminder": {
+    "mode": "group",
+    "groupId": "120363424287416053@g.us"
   },
   "rateLimits": {
     "memberToMemberGapMinMs": 7000,
     "memberToMemberGapMaxMs": 10000,
+    "dmReminderGapMinMs": 300000,
+    "dmReminderGapMaxMs": 900000,
     "groupOpGapMinMs": 8000,
     "groupOpGapMaxMs": 12000,
     "batchCooldownMs": 300000,
@@ -60,9 +67,15 @@
     "reminderSend2": "30 7 * * *",
     "overdueCheck": "0 10 * * *",
     "eveningSummary": "0 22 * * *",
-    "timezone": "Asia/Kolkata"
+    "timezone": "Asia/Kolkata",
+    "jitterMaxMinutes": 20
   },
   "messages": {
+    "groupReminder": "Hlo veer 🙏\nAjj {date} — Singh Travels paid group di renewal date aa gyi hai 🚨\nupar dite QR te, repay karke dass deo ji:",
+    "groupOverdue": "🚨 Singh Travels — inna members di renew di date nikal chuki hai, jaldi repay kardo ji:",
+    "groupAutoRenewed": "Singh Travels — inna veera ne 2 members add karaye, inna da eh mahina FREE",
+
+
     "reminder": "Hlo veer\nAjj tuhadi singh travels monthly paid groups di last date hai 🚨🚨\n\nRepay krdeo",
     "referralReminder": "Hlo veer\nAjj tuhadi singh travels monthly paid groups di last date hai 🚨🚨\n\nRepay krdeo",
     "overdue": "Hlo veer\ntuhadi monthly paid group di date nikal gyi hai 🚨 🚨 \nrepay krdo",

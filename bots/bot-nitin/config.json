@@ -25,11 +25,18 @@
   },
   "overdue": {
     "autoReminderDays": 5,
+    "finalReminderDays": 6,
     "consolidatedListDays": 7
+  },
+  "reminder": {
+    "mode": "dm",
+    "groupId": ""
   },
   "rateLimits": {
     "memberToMemberGapMinMs": 7000,
     "memberToMemberGapMaxMs": 10000,
+    "dmReminderGapMinMs": 300000,
+    "dmReminderGapMaxMs": 900000,
     "groupOpGapMinMs": 8000,
     "groupOpGapMaxMs": 12000,
     "batchCooldownMs": 300000,
@@ -73,9 +80,15 @@
     "reminderSend2": "30 7 * * *",
     "overdueCheck": "0 10 * * *",
     "eveningSummary": "0 22 * * *",
-    "timezone": "Asia/Kolkata"
+    "timezone": "Asia/Kolkata",
+    "jitterMaxMinutes": 20
   },
   "messages": {
+    "groupReminder": "Sat Sri Akal ji 🙏🏻 Aaj {date} nu inna members da ik mahina pura ho gya — upar dite QR te 90 pay karke dss deyo ji 🙏🏻:",
+    "groupOverdue": "🚨 Inna veera di renew di aaj last date aaji — jaldi to jaldi renew karke dss deyo ji 🙏🏻:",
+    "groupAutoRenewed": "Inna members ne 2 bande add karaye ne — inna da is mahine da renewal FREE aaji",
+
+    
     "reminder": "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\niss mahine lyi iste 90 pay krdo ji 🙏🏻",
     "referralReminder": "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\nTusi ik banda add kraya si, iss lyi iste sirf ₹45/- pay krdo ji 🙏🏻",
     "overdue": "Sat Sri Akal {name} paaji 🙏🏻\n🚨🚨 Aaj last date aaji renew krke dss deyo. 🙏🏻",
