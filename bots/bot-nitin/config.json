@@ -29,8 +29,8 @@
     "consolidatedListDays": 7
   },
   "reminder": {
-    "mode": "dm",
-    "groupId": ""
+    "mode": "group",
+    "groupId": "120363423042952422@g.us"
   },
   "rateLimits": {
     "memberToMemberGapMinMs": 7000,
@@ -84,9 +84,9 @@
     "jitterMaxMinutes": 20
   },
   "messages": {
-    "groupReminder": "Sat Sri Akal ji 🙏🏻 Aaj {date} nu inna members da ik mahina pura ho gya — upar dite QR te 90 pay karke dss deyo ji 🙏🏻:",
+    "groupReminder": "Sat Sri Akal ji 🙏🏻 Aaj {date} nu ehna members da ik mahina pura ho gya — upar dite QR te 90 pay karke dss deyo ji 🙏🏻:",
     "groupOverdue": "🚨 Inna veera di renew di aaj last date aaji — jaldi to jaldi renew karke dss deyo ji 🙏🏻:",
-    "groupAutoRenewed": "Inna members ne 2 bande add karaye ne — inna da is mahine da renewal FREE aaji",
+    "groupAutoRenewed": "Inna members ne 2 bande add karaye ne — ehna da is mahine da renewal FREE aaji",
 
     
     "reminder": "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\niss mahine lyi iste 90 pay krdo ji 🙏🏻",
