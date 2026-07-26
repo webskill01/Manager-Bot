@@ -4,7 +4,7 @@ import {
   daysFromToday, formatDate, todayStr, randomBetween,
   overdueCohort, renewedOn, friendlyDate, sleep,
 } from './globalConfig.js';
-import { buildGroupDigest } from './reminderSender.js';
+import { buildGroupDigest, chunkMembers, MAX_TAGS_PER_MSG } from './reminderSender.js';
 
 // One catch-up "stage" per day: the same three group messages the daily digest
 // normally spreads across a member's cycle, compressed into three consecutive days
@@ -18,10 +18,6 @@ const STAGES = [
 // Grace applied to the cohort at start: covers all three stages (days 0,1,2) plus one
 // buffer day, so nobody is removed mid-sequence or the moment the last message lands.
 const GRACE_DAYS = 3;
-
-// Hard cap on @mentions in one message. Batches are normally one billing date (~10-20
-// people over an 8-day outage); this only bites when a single date is unusually crowded.
-const MAX_TAGS_PER_MSG = 20;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -86,16 +82,17 @@ export function createCatchupEngine(config, log, getSock, store) {
     // Oldest billing date first — they've been waiting longest.
     const dates = [...byDate.keys()].sort((a, b) => daysFromToday(a) - daysFromToday(b));
     for (const date of dates) {
-      const group = byDate.get(date);
-      for (let i = 0; i < group.length; i += MAX_TAGS_PER_MSG) {
-        const slice = group.slice(i, i + MAX_TAGS_PER_MSG);
+      // Shared with the daily digest so both paths split the same way — balanced, so a
+      // crowded date becomes 12 + 11 rather than 20 + 3.
+      const parts = chunkMembers(byDate.get(date));
+      parts.forEach((members, i) => {
         batches.push({
           date,
-          part: group.length > MAX_TAGS_PER_MSG ? Math.floor(i / MAX_TAGS_PER_MSG) + 1 : null,
-          key: `${date}#${Math.floor(i / MAX_TAGS_PER_MSG)}`,
-          members: slice,
+          part: parts.length > 1 ? i + 1 : null,
+          key: `${date}#${i}`,
+          members,
         });
-      }
+      });
     }
     return batches;
   }

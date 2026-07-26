@@ -227,7 +227,16 @@ test('chunkMembers: one message at or below the cap, split above it', () => {
   assert.equal(chunkMembers(mk(1)).length, 1);
   assert.equal(chunkMembers(mk(20)).length, 1, 'exactly at the cap is still one message');
   assert.equal(chunkMembers(mk(21)).length, 2);
-  assert.deepEqual(chunkMembers(mk(45)).map(c => c.length), [20, 20, 5]);
+  assert.deepEqual(chunkMembers(mk(21)).map(c => c.length), [11, 10], 'balanced, not 20 + 1');
+  assert.deepEqual(chunkMembers(mk(23)).map(c => c.length), [12, 11], 'the 20 + 3 case');
+  assert.deepEqual(chunkMembers(mk(45)).map(c => c.length), [15, 15, 15]);
+  // Balanced split never exceeds the cap and never loses anyone.
+  for (const n of [21, 23, 40, 41, 98, 115, 200]) {
+    const cs = chunkMembers(mk(n)).map(c => c.length);
+    assert.ok(cs.every(c => c <= MAX_TAGS_PER_MSG), `n=${n} respects the cap`);
+    assert.equal(cs.reduce((a, b) => a + b, 0), n, `n=${n} loses nobody`);
+    assert.ok(Math.max(...cs) - Math.min(...cs) <= 1, `n=${n} is balanced`);
+  }
   assert.equal(chunkMembers([]).length, 1);
   assert.equal(MAX_TAGS_PER_MSG, 20);
 });
@@ -251,7 +260,7 @@ test('digest msg 1 splits when more members are due than the cap allows', async 
 
   assert.equal(sent.length, 2, '25 due → 20 + 5, never one 25-mention message');
   const counts = sent.map(s => (s.msg.text || s.msg.caption).split('\n').filter(l => /^D\d+ \(/.test(l)).length);
-  assert.deepEqual(counts, [20, 5]);
+  assert.deepEqual(counts, [13, 12], 'balanced, not 20 + 5');
   assert.ok(sent.every(s => (s.msg.text || s.msg.caption).startsWith('DUE ')), 'every part keeps the header');
 
   fs.rmSync(botDir, { recursive: true, force: true });
@@ -278,7 +287,7 @@ test('remindall splits a large overdue list instead of tagging everyone at once'
 
   assert.equal(sent.length, 6, '115 overdue → 6 messages (20×5 + 15), not 1');
   const counts = sent.map(s => (s.msg.text || s.msg.caption).split('\n').filter(l => /^O\d+ \(/.test(l)).length);
-  assert.deepEqual(counts, [20, 20, 20, 20, 20, 15]);
+  assert.deepEqual(counts, [20, 19, 19, 19, 19, 19], 'balanced across all six');
   assert.equal(counts.reduce((a, b) => a + b, 0), 115, 'everyone still reached');
   assert.ok(counts.every(c => c <= MAX_TAGS_PER_MSG));
 

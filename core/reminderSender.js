@@ -38,8 +38,18 @@ export const MAX_TAGS_PER_MSG = 20;
 
 export function chunkMembers(members, max = MAX_TAGS_PER_MSG) {
   if (members.length <= max) return [members];
+  // Balanced, not greedy: 23 members become 12 + 11, never 20 + 3. Same number of
+  // messages either way, but a 3-person message on its own reads like an afterthought.
+  const parts = Math.ceil(members.length / max);
+  const base = Math.floor(members.length / parts);
+  const extra = members.length % parts;   // the first `extra` chunks carry one more
   const out = [];
-  for (let i = 0; i < members.length; i += max) out.push(members.slice(i, i + max));
+  let i = 0;
+  for (let p = 0; p < parts; p++) {
+    const size = base + (p < extra ? 1 : 0);
+    out.push(members.slice(i, i + size));
+    i += size;
+  }
   return out;
 }
 

@@ -449,9 +449,9 @@ test('catchup: one crowded date is chunked so no message exceeds the cap', async
   await e.start(8);
   await drain(40);
 
-  assert.equal(sent.length, 3, '45 on one date → 20 + 20 + 5');
+  assert.equal(sent.length, 3, '45 on one date → three messages');
   const counts = sent.map(m => (m.caption || m.text).split('\n').filter(l => /din overdue/.test(l)).length);
-  assert.deepEqual(counts, [20, 20, 5]);
+  assert.deepEqual(counts, [15, 15, 15], 'balanced, not 20 + 20 + 5');
 
   e.stop();
 });
