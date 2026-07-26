@@ -227,6 +227,39 @@ All sends use patterns from the taxi bot codebase:
 
 ## 💬 Command Reference
 
+> **Send `help` to the bot for the authoritative, per-bot list** — it's generated from the
+> running config and differs between the two profiles. The sections below predate the
+> July 2026 rework and are kept for background; where they disagree with `help`, `help` wins.
+
+### Added 27 Jul 2026
+
+```
+digest                     Today's due / overdue / auto-renewed  (was the 6 AM cron)
+summary                    Day report                            (was the 10 PM cron)
+delayall [days] [confirm]  Bulk-delay everyone overdue. Writes delayUntil only —
+                           BILLING_DATE never moves, so no billing day drifts
+catchup [days]             Preview who was missed during an outage
+catchup [days] confirm     Start now — first group message goes out immediately
+catchup [days] confirm 9   Grace applies NOW, first message at 9 AM
+catchup status             Stage, who paid, who's left
+stop catchup               Cancel (grace stays)
+cloudapi                   Show official-API status
+cloudapi test [phone]      Send a real test template before flipping the channel
+```
+
+**Tracker profile only** (`"profile": "tracker"` — the friend bots):
+```
+pending                    Who to call now (month up) + who to chase again
+called [phone]             You pitched the app. Member stays in the group
+moved [phone]              They're on the app → mark MOVED + remove from ALL groups
+calls                      Funnel counts + conversion %
+```
+On tracker bots `pending` means the call list, not the overdue list, and the renewal
+commands (`renewed`, `remind`, `due`, `overdue`, `refs`, `kickall`, …) are refused.
+
+**Removed:** the `morning-digest` and `evening-summary` cron jobs, and the daily DM of the
+day-7+ removal list. Nothing is pushed to admins on a schedule — see BAN-SAFETY-GUIDELINES.md §5.
+
 ### Member Management
 ```
 add [phone] [name]         Add new member + attempt all 11 groups
@@ -280,7 +313,7 @@ R1 R2 S3                   Multiple actions in one message
 
 ## 📈 Daily Summary Format
 
-**Auto-sent at 10:00 PM:**
+**Pull it with the `summary` command** (the 10 PM auto-send was removed on 27 Jul 2026):
 ```
 📊 Daily Summary — 17 May 2026
 

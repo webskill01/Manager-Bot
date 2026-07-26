@@ -115,8 +115,30 @@ The bot's engines already pace these safely. Operator rules:
 
 The July 2026 rework exists because payment-demand DMs are our #1 ban signal. Rules:
 
+> **27 Jul 2026 — no bot sends anything to anyone on a schedule any more.**
+> A freshly linked number was banned the morning after warm-up expired: its first-ever
+> outbound act was the 6 AM digest DMing three admins. "Group mode" was never the DM
+> kill-switch it looked like — it gated only the daily batch and the day-5 nudge, while
+> the morning digest, evening summary, day-6 final reminder and auto-renew notices all
+> still went out as DMs. Every one of those paths is now closed:
+>
+> - `morning-digest` and `evening-summary` cron jobs **deleted**. Pull the same reports
+>   on demand with the `digest` and `summary` commands.
+> - Day-6 final reminder is **group-tagged** in group mode (a private version belongs on
+>   the official Cloud API, where it cannot get the number banned).
+> - The day-7+ removal list is no longer DM'd daily — run `removal` or `overdue`.
+> - Auto-renew notices are logged and shown in `digest`.
+> - `warmupHours` default raised 24 → 72.
+>
+> The only automated outbound left on a full-profile bot is one group message per group
+> per day. Tracker-profile bots register **zero** cron jobs.
+
 - ✅ **Group reminder mode is the default for fragile numbers.** One tagged digest in the paid group replaces
   all cold DMs. Members are in that group by choice — near-zero report risk.
+- ✅ **No message tags more than 20 people.** Larger lists split automatically and are spaced apart. Bulk
+  @mentions are a spam signal in their own right — don't defeat this by pasting a long tag list by hand.
+- ✅ `catchup [days]` after an outage — group messages only, one per renewal date, 8–12 min apart, and it
+  grants 3 days grace so nobody is removed for downtime the bot caused. Preview first (no `confirm`).
 - ✅ `remindall` — safe (group message). Still, don't fire it 5 times a day; 1–2 manual re-fires max.
 - ⚠️ `remind [phone]` (manual DM) — only for members who reply to you and have your number saved.
 - ⚠️ `warnall` — it DMs everyone on the removal list. The bot spaces it 5–15 min per person now. Use at most
@@ -131,12 +153,15 @@ The July 2026 rework exists because payment-demand DMs are our #1 ban signal. Ru
 
 | Protection | What it means for you |
 |---|---|
-| **Cron jitter (0–20 min)** | Digests/reminders fire at slightly different times daily — don't "fix" the timing |
-| **Warm-up mode (24–72h)** | Fresh links stay silent — wait it out |
+| **No scheduled DMs at all** | Nothing is pushed to you or to members on a timer — reports are commands now |
+| **Cron jitter (0–20 min)** | The remaining reminder jobs fire at slightly different times daily — don't "fix" the timing |
+| **Warm-up mode (72h default)** | Fresh links stay silent — wait it out. Only set `warmupHours: 0` on an established, healthy number |
 | **403/401 halt** | After a ban the bot STOPS reconnecting — never delete auth and re-scan without the 2-week protocol |
 | **Group digest mode** | Reminders without DMs — keep fragile bots in `"mode": "group"` |
-| **DM spacing (5–15 min)** | Reminder/warning DMs trickle out — a "slow" bot is a healthy bot |
+| **20-mention cap** | Long tag lists split into spaced messages automatically |
+| **DM spacing (5–15 min)** | The few remaining manual DMs (`remind`, `warnall`) trickle out — a "slow" bot is a healthy bot |
 | **Engine gaps & cooldowns** | Kicks/adds are paced — don't restart pm2 to hurry them |
+| **Sheets retry/backoff** | Rate limits pause and resume instead of crash-looping — a restart loop burns more quota |
 
 ---
 
