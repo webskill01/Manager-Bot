@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import {
   daysFromToday, formatDate, todayStr, randomBetween,
-  overdueCohort, renewedOn,
+  overdueCohort, renewedOn, friendlyDate, sleep,
 } from './globalConfig.js';
 import { buildGroupDigest } from './reminderSender.js';
 
@@ -18,6 +18,10 @@ const STAGES = [
 // Grace applied to the cohort at start: covers all three stages (days 0,1,2) plus one
 // buffer day, so nobody is removed mid-sequence or the moment the last message lands.
 const GRACE_DAYS = 3;
+
+// Hard cap on @mentions in one message. Batches are normally one billing date (~10-20
+// people over an 8-day outage); this only bites when a single date is unusually crowded.
+const MAX_TAGS_PER_MSG = 20;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -55,14 +59,53 @@ export function createCatchupEngine(config, log, getSock, store) {
     return r;
   }
 
-  function headerFor(stage) {
+  function headerFor(stage, billingDate = null) {
     const m = config.messages || {};
     // groupFinal is optional — a bot that never configured it falls back to its
     // overdue wording rather than failing the last (most important) stage.
     const raw = m[stage.headerKey] || m.groupOverdue || '🚨 Renewal pending — please repay';
-    return raw.replace('{date}', new Date().toLocaleDateString('en-IN', {
+    // {date} renders the BATCH's billing date, not today's: every message goes to one
+    // date's cohort, so "21 July — your renewal date came" is literally true for everyone
+    // tagged in it.
+    return raw.replace('{date}', billingDate ? friendlyDate(billingDate) : new Date().toLocaleDateString('en-IN', {
       day: 'numeric', month: 'long', timeZone: 'Asia/Kolkata',
     }));
+  }
+
+  // One message per billing date. Tagging 115 people in a single message is unreadable for
+  // members and a textbook bulk-mention spam signal; a date-sized batch is ~10-20 people and
+  // the message is actually true for all of them. A single date with more than
+  // MAX_TAGS_PER_MSG members is chunked further.
+  function batchByBillingDate(members) {
+    const byDate = new Map();
+    for (const m of members) {
+      if (!byDate.has(m.billingDate)) byDate.set(m.billingDate, []);
+      byDate.get(m.billingDate).push(m);
+    }
+    const batches = [];
+    // Oldest billing date first — they've been waiting longest.
+    const dates = [...byDate.keys()].sort((a, b) => daysFromToday(a) - daysFromToday(b));
+    for (const date of dates) {
+      const group = byDate.get(date);
+      for (let i = 0; i < group.length; i += MAX_TAGS_PER_MSG) {
+        const slice = group.slice(i, i + MAX_TAGS_PER_MSG);
+        batches.push({
+          date,
+          part: group.length > MAX_TAGS_PER_MSG ? Math.floor(i / MAX_TAGS_PER_MSG) + 1 : null,
+          key: `${date}#${Math.floor(i / MAX_TAGS_PER_MSG)}`,
+          members: slice,
+        });
+      }
+    }
+    return batches;
+  }
+
+  // Reuses the digest's inter-message spacing so a stage never lands as one burst.
+  function batchGapMs() {
+    return randomBetween(
+      config.reminder?.msgGapMinMs ?? 4 * 60000,
+      config.reminder?.msgGapMaxMs ?? 6 * 60000,
+    );
   }
 
   // Re-derived from the live sheet at every stage, never trusted from the state file:
@@ -80,6 +123,7 @@ export function createCatchupEngine(config, log, getSock, store) {
       .map(m => ({
         name: m.name,
         phone: m.phone,
+        billingDate: m.billingDate,
         note: `— ${Math.abs(daysFromToday(m.billingDate))} din overdue`,
       }));
   }
@@ -100,19 +144,29 @@ export function createCatchupEngine(config, log, getSock, store) {
       return `✅ Nobody fell due in the last ${windowDays} days and is still unpaid — nothing to catch up on.`;
     }
 
-    const lines = cohort.slice(0, 20)
-      .map((m, i) => `${i + 1}. ${m.name} (${m.phone}) — ${Math.abs(daysFromToday(m.billingDate))}d overdue`);
-    const more = cohort.length > 20 ? `\n…and ${cohort.length - 20} more` : '';
+    // Show the batching, not 115 names — the batch shape is the decision being made here.
+    const batches = batchByBillingDate(cohort);
+    const lines = batches.map(b =>
+      `  ${friendlyDate(b.date)}${b.part ? ` (part ${b.part})` : ''} — ${b.members.length} member(s), ${Math.abs(daysFromToday(b.date))}d overdue`);
+
+    const gapMin = Math.round((config.reminder?.msgGapMinMs ?? 4 * 60000) / 60000);
+    const gapMax = Math.round((config.reminder?.msgGapMaxMs ?? 6 * 60000) / 60000);
+    const perStageMin = Math.round(((batches.length - 1) * gapMin));
+    const perStageMax = Math.round(((batches.length - 1) * gapMax));
 
     return `📣 CATCHUP PREVIEW — ${cohort.length} member(s) missed while the bot was down\n\n` +
-      `${lines.join('\n')}${more}\n\n` +
+      `Split into ${batches.length} message(s), one per renewal date:\n${lines.join('\n')}\n\n` +
+      `Nobody is tagged with people who have a different date, and no message\n` +
+      `tags more than ${MAX_TAGS_PER_MSG}. Messages are ${gapMin}–${gapMax} min apart\n` +
+      `(~${perStageMin}–${perStageMax} min per stage).\n\n` +
       `Plan (group messages only — no DMs):\n` +
-      `  Today  → ${STAGES[0].label}${STAGES[0].withQr ? ' + QR' : ''}\n` +
-      `  Day 2  → ${STAGES[1].label}\n` +
-      `  Day 3  → ${STAGES[2].label}\n\n` +
+      `  Stage 1 → ${STAGES[0].label}${STAGES[0].withQr ? ' + QR' : ''}\n` +
+      `  Stage 2 → ${STAGES[1].label}   (next day)\n` +
+      `  Stage 3 → ${STAGES[2].label}    (day after)\n\n` +
       `All ${cohort.length} delayed ${GRACE_DAYS} days so nobody is removed mid-sequence.\n` +
-      `Billing dates are NOT changed.\n\n` +
-      `To start: catchup ${windowDays} confirm`;
+      `Billing dates are NOT changed. Anyone who pays drops out of later stages.\n\n` +
+      `To start: catchup ${windowDays} confirm      (first message now)\n` +
+      `      or: catchup ${windowDays} confirm 9    (first message at 9 AM)`;
   }
 
   // Next occurrence of `hour` (0–23) local time. Today if it hasn't passed, else tomorrow.
@@ -222,25 +276,61 @@ export function createCatchupEngine(config, log, getSock, store) {
         log.warn(`⚠️  Catchup groupMetadata failed: ${err.message} — sending without tags`);
       }
 
-      const { text, mentions } = buildGroupDigest({
-        header: headerFor(stage), members, participants,
-      });
+      // One message per billing date, spaced. sentBatches survives a restart mid-stage, so a
+      // crash after batch 3 of 8 resumes at batch 4 — nobody is tagged twice.
+      const batches = batchByBillingDate(members);
+      state.sentBatches = state.sentBatches || [];
+      const todo = batches.filter(b => !state.sentBatches.includes(b.key));
+      let tagged = 0;
 
-      try {
-        const qrPath = stage.withQr && config.upiQrPath
-          ? path.resolve(config.botDir, config.upiQrPath) : null;
-        if (qrPath && fs.existsSync(qrPath)) {
-          await sock.sendMessage(g.groupId, { image: fs.readFileSync(qrPath), caption: text, mentions });
-        } else {
-          await sock.sendMessage(g.groupId, { text, mentions });
+      for (let i = 0; i < todo.length; i++) {
+        const batch = todo[i];
+        const live = getSock();
+        if (!live?.user) {
+          log.warn(`⚠️  Catchup: socket lost after ${i}/${todo.length} batches — retrying in 10 min`);
+          saveState(state);
+          scheduleIn(10 * 60 * 1000);
+          return;
         }
-        log.info(`📨 Catchup stage ${state.stage + 1}/${STAGES.length} (${stage.label}) — ${members.length} tagged`);
-        state.log.push({ stage: stage.key, at: new Date().toISOString(), tagged: members.length });
-        advance(state);
-      } catch (err) {
-        log.error(`❌ Catchup stage ${state.stage + 1} send failed: ${err.message} — retrying in 30 min`);
-        scheduleIn(30 * 60 * 1000);
+
+        const label = `${friendlyDate(batch.date)}${batch.part ? ` (part ${batch.part})` : ''}`;
+        const { text, mentions } = buildGroupDigest({
+          header: headerFor(stage, batch.date),
+          members: batch.members,
+          participants,
+        });
+
+        try {
+          const qrPath = stage.withQr && config.upiQrPath
+            ? path.resolve(config.botDir, config.upiQrPath) : null;
+          if (qrPath && fs.existsSync(qrPath)) {
+            await live.sendMessage(g.groupId, { image: fs.readFileSync(qrPath), caption: text, mentions });
+          } else {
+            await live.sendMessage(g.groupId, { text, mentions });
+          }
+          state.sentBatches.push(batch.key);
+          tagged += batch.members.length;
+          saveState(state);
+          log.info(`📨 Catchup stage ${state.stage + 1}/${STAGES.length} (${stage.label}) — ${label}: ${batch.members.length} tagged  [${i + 1}/${todo.length}]`);
+        } catch (err) {
+          log.error(`❌ Catchup batch ${label} failed: ${err.message} — retrying stage in 30 min`);
+          saveState(state);
+          scheduleIn(30 * 60 * 1000);
+          return;
+        }
+
+        if (i < todo.length - 1) {
+          const gap = batchGapMs();
+          log.info(`⏳ Next catch-up batch in ${(gap / 60000).toFixed(1)} min`);
+          await sleep(gap);
+        }
       }
+
+      state.log.push({
+        stage: stage.key, at: new Date().toISOString(),
+        tagged, batches: batches.length,
+      });
+      advance(state);
     } finally {
       _running = false;
     }
@@ -248,6 +338,7 @@ export function createCatchupEngine(config, log, getSock, store) {
 
   function advance(state) {
     state.stage += 1;
+    state.sentBatches = [];   // per-stage; the next stage re-batches from the live sheet
     if (state.stage >= STAGES.length) { finish(state); return; }
     // ~24h later, jittered, so three consecutive days never land at the same clock time.
     // With a startHour the jitter is one-sided (never earlier), so a 9 AM cycle can drift

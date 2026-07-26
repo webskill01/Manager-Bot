@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { overdueCohort, formatDate, daysFromToday } from '../core/globalConfig.js';
+import { overdueCohort, formatDate, daysFromToday, friendlyDate } from '../core/globalConfig.js';
 import { createCatchupEngine } from '../core/catchupEngine.js';
 import { createMemberHandlers } from '../core/handlers/memberHandlers.js';
 
@@ -49,6 +49,12 @@ function fakeStore(members) {
   };
 }
 
+// start() fires the first stage in the background and each stage awaits between batches,
+// so a single setImmediate is not enough to drain a multi-batch stage.
+async function drain(ticks = 12) {
+  for (let i = 0; i < ticks; i++) await new Promise(r => setTimeout(r, 0));
+}
+
 function tmpBotDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'catchup-'));
 }
@@ -56,7 +62,8 @@ function tmpBotDir() {
 const baseConfig = botDir => ({
   botDir,
   paidGroups: ['g1@g.us'],
-  reminder: { mode: 'group', groupId: 'g1@g.us' },
+  // Zero gap so tests don't sit through the real 4-6 min inter-batch spacing.
+  reminder: { mode: 'group', groupId: 'g1@g.us', msgGapMinMs: 0, msgGapMaxMs: 0 },
   messages: {
     groupReminder: 'REMIND {date}',
     groupOverdue: 'OVERDUE {date}',
@@ -192,13 +199,23 @@ test('catchup start: applies grace, freezes the cohort, and sends stage 1 with t
   }
 
   // start() fires stage 0 in the background — let the microtask queue drain.
-  await new Promise(r => setImmediate(r));
+  await drain();
 
-  assert.equal(sent.length, 1, 'exactly one group message');
-  assert.equal(sent[0].jid, 'g1@g.us');
-  assert.ok(sent[0].msg.image, 'stage 1 carries the QR image');
-  assert.match(sent[0].msg.caption, /^REMIND /);
-  assert.ok(sent[0].msg.caption.includes('@919000000003'), 'in-group member is tagged');
+  // Two different billing dates -> two messages, oldest date first. Nobody is tagged
+  // alongside people whose renewal date is different.
+  assert.equal(sent.length, 2, 'one message per renewal date');
+  assert.ok(sent.every(s => s.jid === 'g1@g.us'));
+  assert.ok(sent.every(s => s.msg.image), 'every stage-1 batch carries the QR');
+  assert.ok(sent.every(s => /^REMIND /.test(s.msg.caption)));
+  // M6 is not a group participant → plain "name (phone)" line.
+  // M3 IS a participant → rendered as an @mention, never as their name.
+  const m6 = sent[0].msg.caption, m3 = sent[1].msg.caption;
+  assert.ok(m6.includes('M6 (9000000006)'), 'oldest date first');
+  assert.ok(!m6.includes('919000000003'), 'the other date is NOT in this message');
+  assert.ok(m3.includes('@919000000003'), 'in-group member tagged in their own batch');
+  assert.ok(!m3.includes('M6'), 'batches never mix renewal dates');
+  assert.deepEqual(sent[1].msg.mentions, ['919000000003@s.whatsapp.net'],
+    'mentions are scoped to the batch, not the whole cohort');
 
   const state = JSON.parse(fs.readFileSync(path.join(botDir, 'catchup-state.json'), 'utf8'));
   assert.equal(state.stage, 1, 'advanced to stage 2');
@@ -221,18 +238,18 @@ test('catchup: a member who pays drops out of the next stage', async () => {
   const e = createCatchupEngine(baseConfig(botDir), log, () => sock, store);
 
   await e.start(8);
-  await new Promise(r => setImmediate(r));
-  assert.equal(sent.length, 1);
+  await drain();
+  assert.equal(sent.length, 2, 'stage 1: one message per date');
 
   // M3 pays: `renewed` pushes their billing date into the future.
   const paid = store.findByPhone('9000000003');
   paid.billingDate = dayOffset(27);
 
   await e.runStage();
-  assert.equal(sent.length, 2, 'stage 2 sent');
-  assert.match(sent[1].text, /^OVERDUE /);
-  assert.ok(!sent[1].text.includes('M3'), 'payer dropped out');
-  assert.ok(sent[1].text.includes('M6'), 'still-unpaid member remains');
+  assert.equal(sent.length, 3, 'stage 2 sent ONE message — the payer date batch is gone');
+  assert.match(sent[2].text, /^OVERDUE /);
+  assert.ok(!sent[2].text.includes('M3'), 'payer dropped out');
+  assert.ok(sent[2].text.includes('M6'), 'still-unpaid member remains');
 
   e.stop();
 });
@@ -249,7 +266,7 @@ test('catchup: three stages then self-cleanup, final stage uses groupFinal', asy
   const e = createCatchupEngine(baseConfig(botDir), log, () => sock, store);
 
   await e.start(8);
-  await new Promise(r => setImmediate(r));
+  await drain();
   await e.runStage();
   await e.runStage();
 
@@ -278,7 +295,7 @@ test('catchup: groupFinal falls back to groupOverdue when unconfigured', async (
   const e = createCatchupEngine(cfg, log, () => sock, store);
 
   await e.start(8);
-  await new Promise(r => setImmediate(r));
+  await drain();
   await e.runStage();
   await e.runStage();
 
@@ -329,7 +346,7 @@ test('catchup with a start hour applies grace immediately but sends nothing yet'
   const e = createCatchupEngine(baseConfig(botDir), log, () => sock, store);
 
   const reply = await e.start(8, 9);
-  await new Promise(r => setImmediate(r));
+  await drain();
 
   assert.equal(sent.length, 0, 'nothing sent at arm time');
   assert.equal(store.writes.length, 2, 'grace applied to both immediately');
@@ -367,6 +384,137 @@ test('catchup start hour: grace is counted from the first message day, not the a
   e.stop();
 });
 
+// The reason batching exists: 115 people in one message is unreadable for members and a
+// textbook bulk-mention spam signal.
+test('catchup: a large cohort is split by renewal date, never one mega-message', async () => {
+  const botDir = tmpBotDir();
+  // 115 members spread over an 8-day outage, ~14 per date.
+  const rows = [];
+  for (let d = 1; d <= 8; d++) {
+    for (let i = 0; i < 14 + (d === 8 ? 3 : 0); i++) {
+      rows.push({
+        name: `D${d}-${i}`,
+        phone: `9${String(d).padStart(2, '0')}000${String(i).padStart(4, '0')}`,
+        billingDate: dayOffset(-d),
+        status: 'ACTIVE',
+      });
+    }
+  }
+  assert.equal(rows.length, 115, 'fixture matches the real cohort size');
+
+  const store = fakeStore(rows);
+  const sent = [];
+  const sock = {
+    user: {},
+    groupMetadata: async () => ({ participants: [] }),
+    sendMessage: async (jid, msg) => { sent.push(msg); },
+  };
+  const e = createCatchupEngine(baseConfig(botDir), log, () => sock, store);
+
+  const pre = await e.preview(8);
+  assert.match(pre, /Split into 8 message\(s\), one per renewal date/);
+  assert.ok(!/D1-0/.test(pre), 'preview shows the batch shape, not 115 names');
+
+  await e.start(8);
+  await drain(60);
+
+  assert.equal(sent.length, 8, 'one message per renewal date, not one for all 115');
+  const counts = sent.map(m => (m.caption || m.text).split('\n').filter(l => /din overdue/.test(l)).length);
+  assert.deepEqual(counts, [17, 14, 14, 14, 14, 14, 14, 14], 'oldest date first');
+  assert.equal(counts.reduce((a, b) => a + b, 0), 115, 'everyone is reached');
+  assert.ok(counts.every(c => c <= 20), 'no message exceeds the mention cap');
+
+  e.stop();
+});
+
+test('catchup: one crowded date is chunked so no message exceeds the cap', async () => {
+  const botDir = tmpBotDir();
+  const rows = Array.from({ length: 45 }, (_, i) => ({
+    name: `X${i}`,
+    phone: `95${String(i).padStart(8, '0')}`,
+    billingDate: dayOffset(-4),      // all on the SAME date
+    status: 'ACTIVE',
+  }));
+  const store = fakeStore(rows);
+  const sent = [];
+  const sock = {
+    user: {},
+    groupMetadata: async () => ({ participants: [] }),
+    sendMessage: async (jid, msg) => { sent.push(msg); },
+  };
+  const e = createCatchupEngine(baseConfig(botDir), log, () => sock, store);
+
+  assert.match(await e.preview(8), /part 1/, 'preview shows the chunking');
+
+  await e.start(8);
+  await drain(40);
+
+  assert.equal(sent.length, 3, '45 on one date → 20 + 20 + 5');
+  const counts = sent.map(m => (m.caption || m.text).split('\n').filter(l => /din overdue/.test(l)).length);
+  assert.deepEqual(counts, [20, 20, 5]);
+
+  e.stop();
+});
+
+test('catchup: a mid-stage crash resumes at the next batch, never re-tagging', async () => {
+  const botDir = tmpBotDir();
+  const store = fakeStore([member(2), member(4), member(6)]);
+  const sent = [];
+  let failAfter = 2;
+  const sock = {
+    user: {},
+    groupMetadata: async () => ({ participants: [] }),
+    sendMessage: async (jid, msg) => {
+      if (sent.length >= failAfter) throw new Error('socket dropped');
+      sent.push(msg);
+    },
+  };
+  const e = createCatchupEngine(baseConfig(botDir), log, () => sock, store);
+
+  await e.start(8);
+  await drain(20);
+  assert.equal(sent.length, 2, 'two batches out, third threw');
+
+  let state = JSON.parse(fs.readFileSync(path.join(botDir, 'catchup-state.json'), 'utf8'));
+  assert.equal(state.stage, 0, 'stage not consumed');
+  assert.equal(state.sentBatches.length, 2, 'the two delivered batches are recorded');
+
+  // Socket recovers; the retry must send ONLY the third batch.
+  failAfter = Infinity;
+  await e.runStage();
+  assert.equal(sent.length, 3, 'exactly one more message — no re-tagging');
+
+  state = JSON.parse(fs.readFileSync(path.join(botDir, 'catchup-state.json'), 'utf8'));
+  assert.equal(state.stage, 1, 'stage now complete');
+  assert.deepEqual(state.sentBatches, [], 'batch log reset for the next stage');
+
+  e.stop();
+});
+
+test('catchup: each message carries its OWN renewal date, not today', async () => {
+  const botDir = tmpBotDir();
+  const store = fakeStore([member(3), member(6)]);
+  const sent = [];
+  const sock = {
+    user: {},
+    groupMetadata: async () => ({ participants: [] }),
+    sendMessage: async (jid, msg) => { sent.push(msg); },
+  };
+  const e = createCatchupEngine(baseConfig(botDir), log, () => sock, store);
+
+  await e.start(8);
+  await drain();
+
+  // Header template is 'REMIND {date}' — {date} must be that batch's billing date, so
+  // "your renewal date came" is literally true for everyone tagged in that message.
+  const body = m => m.caption || m.text;
+  assert.ok(body(sent[0]).startsWith(`REMIND ${friendlyDate(dayOffset(-6))}`), '6d batch carries its own date');
+  assert.ok(body(sent[1]).startsWith(`REMIND ${friendlyDate(dayOffset(-3))}`), '3d batch carries its own date');
+  assert.notEqual(body(sent[0]).split('\n')[0], body(sent[1]).split('\n')[0], 'headers differ per batch');
+
+  e.stop();
+});
+
 test('catchup: a stage with the socket down does not consume the stage', async () => {
   const botDir = tmpBotDir();
   const store = fakeStore([member(3)]);
@@ -374,7 +522,7 @@ test('catchup: a stage with the socket down does not consume the stage', async (
   const e = createCatchupEngine(baseConfig(botDir), log, () => sock, store);
 
   await e.start(8);
-  await new Promise(r => setImmediate(r));
+  await drain();
 
   sock = null;                       // connection drops before stage 2
   await e.runStage();
