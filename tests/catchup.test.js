@@ -62,8 +62,8 @@ function tmpBotDir() {
 const baseConfig = botDir => ({
   botDir,
   paidGroups: ['g1@g.us'],
-  // Zero gap so tests don't sit through the real 4-6 min inter-batch spacing.
-  reminder: { mode: 'group', groupId: 'g1@g.us', msgGapMinMs: 0, msgGapMaxMs: 0 },
+  // Zero gap so tests don't sit through the real 8-12 min inter-batch spacing.
+  reminder: { mode: 'group', groupId: 'g1@g.us', catchupGapMinMs: 0, catchupGapMaxMs: 0 },
   messages: {
     groupReminder: 'REMIND {date}',
     groupOverdue: 'OVERDUE {date}',

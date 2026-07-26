@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { buildGroupDigest, createReminderSender } from '../core/reminderSender.js';
+import { buildGroupDigest, createReminderSender, chunkMembers, MAX_TAGS_PER_MSG } from '../core/reminderSender.js';
 import { createRemovalEngine } from '../core/removalEngine.js';
 import { computeJitterMs } from '../core/scheduler.js';
 import { formatDate } from '../core/globalConfig.js';
@@ -191,5 +191,121 @@ test('group mode with missing groupId falls back to the DM path (no crash)', asy
   const rs = createReminderSender(config, log);
   const r = await rs.sendReminders(store, () => ({ user: { id: 'bot' } }), botDir);
   assert.equal(r.sent, 0, 'DM path ran (no members due) without touching group logic');
+  fs.rmSync(botDir, { recursive: true, force: true });
+});
+
+// ── mention cap on the digest path (remindall fires this same code) ──────────
+// The catchup engine batches by billing date; the daily digest is a different path and
+// was still capable of tagging every overdue member in one message. At ~650 members a
+// busy day is ~22 due, and after an outage the overdue list runs into the hundreds.
+
+function capStore(members) {
+  return {
+    async refresh() {},
+    getActive() { return members; },
+    getAll() { return members.map(m => ({ ...m })); },
+  };
+}
+
+function capConfig() {
+  return {
+    reminder: { mode: 'group', groupId: '111@g.us', msgGapMinMs: 0, msgGapMaxMs: 0 },
+    messages: { groupReminder: 'DUE {date}', groupOverdue: 'LATE {date}' },
+    rateLimits: {},
+    overdue: { autoReminderDays: 5 },
+  };
+}
+
+function daysBack(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return formatDate(d);
+}
+
+test('chunkMembers: one message at or below the cap, split above it', () => {
+  const mk = n => Array.from({ length: n }, (_, i) => ({ name: `M${i}`, phone: `9${i}` }));
+  assert.equal(chunkMembers(mk(1)).length, 1);
+  assert.equal(chunkMembers(mk(20)).length, 1, 'exactly at the cap is still one message');
+  assert.equal(chunkMembers(mk(21)).length, 2);
+  assert.deepEqual(chunkMembers(mk(45)).map(c => c.length), [20, 20, 5]);
+  assert.equal(chunkMembers([]).length, 1);
+  assert.equal(MAX_TAGS_PER_MSG, 20);
+});
+
+test('digest msg 1 splits when more members are due than the cap allows', async () => {
+  const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'digest-'));
+  const dueToday = formatDate(new Date());
+  const members = Array.from({ length: 25 }, (_, i) => ({
+    name: `D${i}`, phone: `91000000${String(i).padStart(2, '0')}`,
+    status: 'ACTIVE', billingDate: dueToday, renewals: 0,
+  }));
+  const sent = [];
+  const sock = {
+    user: { id: 'bot' },
+    async sendMessage(jid, msg) { sent.push({ jid, msg }); },
+    async groupMetadata() { return { participants: [] }; },
+  };
+
+  const rs = createReminderSender(capConfig(), log);
+  await rs.sendReminders(capStore(members), () => sock, botDir);
+
+  assert.equal(sent.length, 2, '25 due → 20 + 5, never one 25-mention message');
+  const counts = sent.map(s => (s.msg.text || s.msg.caption).split('\n').filter(l => /^D\d+ \(/.test(l)).length);
+  assert.deepEqual(counts, [20, 5]);
+  assert.ok(sent.every(s => (s.msg.text || s.msg.caption).startsWith('DUE ')), 'every part keeps the header');
+
+  fs.rmSync(botDir, { recursive: true, force: true });
+});
+
+test('remindall splits a large overdue list instead of tagging everyone at once', async () => {
+  const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'digest-'));
+  // 115 overdue — the real post-outage number — and nobody due today.
+  const members = Array.from({ length: 115 }, (_, i) => ({
+    name: `O${i}`, phone: `92000000${String(i).padStart(3, '0')}`,
+    status: 'ACTIVE', billingDate: daysBack(6 + (i % 3)), renewals: 0,
+  }));
+  const sent = [];
+  const sock = {
+    user: { id: 'bot' },
+    async sendMessage(jid, msg) { sent.push({ jid, msg }); },
+    async groupMetadata() { return { participants: [] }; },
+  };
+
+  const rs = createReminderSender(capConfig(), log);
+  rs.remindAll(capStore(members), () => sock, botDir, {});
+  // remindall is fire-and-forget — let the background run drain.
+  for (let i = 0; i < 60; i++) await new Promise(r => setTimeout(r, 0));
+
+  assert.equal(sent.length, 6, '115 overdue → 6 messages (20×5 + 15), not 1');
+  const counts = sent.map(s => (s.msg.text || s.msg.caption).split('\n').filter(l => /^O\d+ \(/.test(l)).length);
+  assert.deepEqual(counts, [20, 20, 20, 20, 20, 15]);
+  assert.equal(counts.reduce((a, b) => a + b, 0), 115, 'everyone still reached');
+  assert.ok(counts.every(c => c <= MAX_TAGS_PER_MSG));
+
+  fs.rmSync(botDir, { recursive: true, force: true });
+});
+
+test('remindall is unaffected by the cap when the list is small — still one message each', async () => {
+  const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'digest-'));
+  const dueToday = formatDate(new Date());
+  const members = [
+    { name: 'A', phone: '9300000001', status: 'ACTIVE', billingDate: dueToday, renewals: 0 },
+    { name: 'B', phone: '9300000002', status: 'ACTIVE', billingDate: daysBack(6), renewals: 0 },
+  ];
+  const sent = [];
+  const sock = {
+    user: { id: 'bot' },
+    async sendMessage(jid, msg) { sent.push({ jid, msg }); },
+    async groupMetadata() { return { participants: [] }; },
+  };
+
+  const rs = createReminderSender(capConfig(), log);
+  rs.remindAll(capStore(members), () => sock, botDir, {});
+  for (let i = 0; i < 40; i++) await new Promise(r => setTimeout(r, 0));
+
+  assert.equal(sent.length, 2, 'one due message + one overdue message, exactly as before');
+  assert.ok((sent[0].msg.text || sent[0].msg.caption).startsWith('DUE '));
+  assert.ok((sent[1].msg.text || sent[1].msg.caption).startsWith('LATE '));
+
   fs.rmSync(botDir, { recursive: true, force: true });
 });

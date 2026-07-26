@@ -100,11 +100,13 @@ export function createCatchupEngine(config, log, getSock, store) {
     return batches;
   }
 
-  // Reuses the digest's inter-message spacing so a stage never lands as one burst.
+  // Wider than the daily digest's 4–6 min: a stage can be 8+ messages where the digest is
+  // at most 3, so the same spacing would put four times the traffic in the same window.
+  // Override per bot with reminder.catchupGapMinMs / catchupGapMaxMs.
   function batchGapMs() {
     return randomBetween(
-      config.reminder?.msgGapMinMs ?? 4 * 60000,
-      config.reminder?.msgGapMaxMs ?? 6 * 60000,
+      config.reminder?.catchupGapMinMs ?? 8 * 60000,
+      config.reminder?.catchupGapMaxMs ?? 12 * 60000,
     );
   }
 
@@ -149,8 +151,8 @@ export function createCatchupEngine(config, log, getSock, store) {
     const lines = batches.map(b =>
       `  ${friendlyDate(b.date)}${b.part ? ` (part ${b.part})` : ''} — ${b.members.length} member(s), ${Math.abs(daysFromToday(b.date))}d overdue`);
 
-    const gapMin = Math.round((config.reminder?.msgGapMinMs ?? 4 * 60000) / 60000);
-    const gapMax = Math.round((config.reminder?.msgGapMaxMs ?? 6 * 60000) / 60000);
+    const gapMin = Math.round((config.reminder?.catchupGapMinMs ?? 8 * 60000) / 60000);
+    const gapMax = Math.round((config.reminder?.catchupGapMaxMs ?? 12 * 60000) / 60000);
     const perStageMin = Math.round(((batches.length - 1) * gapMin));
     const perStageMax = Math.round(((batches.length - 1) * gapMax));
 

@@ -29,6 +29,20 @@ export function buildGroupDigest({ header, members, participants }) {
   return { text: `${header}\n\n${lines.join('\n')}`, mentions };
 }
 
+// Hard cap on @mentions in one group message. A digest normally tags a handful, but
+// ~650 members means ~22 due on a busy day, and after an outage the overdue list can run
+// into the hundreds. One message tagging 100+ people is unreadable for members and a
+// textbook bulk-mention spam signal. At or below the cap the behaviour is unchanged —
+// exactly one message, same as before.
+export const MAX_TAGS_PER_MSG = 20;
+
+export function chunkMembers(members, max = MAX_TAGS_PER_MSG) {
+  if (members.length <= max) return [members];
+  const out = [];
+  for (let i = 0; i < members.length; i += max) out.push(members.slice(i, i + max));
+  return out;
+}
+
 // ── Reminder day-state (reminder-state.json) ──────────────────────────────────
 // Module-level so the `renewed` command can mark a phone as already-handled today
 // (markPhoneReminded) without holding a reminderSender instance.
@@ -340,13 +354,20 @@ export function createReminderSender(config, log) {
           state.digestSent = true;   // nothing to send counts as done for today
           saveState(botDir, state);
         } else {
-          const { text, mentions } = buildGroupDigest({ header: h1, members: due, participants });
           const qrPath = config.upiQrPath ? path.resolve(botDir, config.upiQrPath) : null;
+          const chunks = chunkMembers(due);
           try {
-            if (qrPath && fs.existsSync(qrPath)) {
-              await sock.sendMessage(g.groupId, { image: fs.readFileSync(qrPath), caption: text, mentions });
-            } else {
-              await sock.sendMessage(g.groupId, { text, mentions });
+            for (let ci = 0; ci < chunks.length; ci++) {
+              if (ci > 0) await sleep(interMessageGapMs());
+              const { text, mentions } = buildGroupDigest({ header: h1, members: chunks[ci], participants });
+              const live = getSock();
+              if (!live?.user) throw new Error('socket dropped mid-digest');
+              if (qrPath && fs.existsSync(qrPath)) {
+                await live.sendMessage(g.groupId, { image: fs.readFileSync(qrPath), caption: text, mentions });
+              } else {
+                await live.sendMessage(g.groupId, { text, mentions });
+              }
+              if (chunks.length > 1) log.info(`📨 Group digest msg 1 part ${ci + 1}/${chunks.length} — ${chunks[ci].length} tagged`);
             }
             sent = due.length;
             sentAnything = true;
@@ -379,9 +400,16 @@ export function createReminderSender(config, log) {
             log.warn('⚠️  Socket dropped before overdue message — batch 2 / catch-up will retry');
             return { sent, referralSent: 0, autoRenewed, failed: 0, queued: overdue.length };
           }
-          const { text, mentions } = buildGroupDigest({ header: h2, members: overdue, participants });
+          const chunks2 = chunkMembers(overdue);
           try {
-            await sock.sendMessage(g.groupId, { text, mentions });
+            for (let ci = 0; ci < chunks2.length; ci++) {
+              if (ci > 0) await sleep(interMessageGapMs());
+              const { text, mentions } = buildGroupDigest({ header: h2, members: chunks2[ci], participants });
+              const live = getSock();
+              if (!live?.user) throw new Error('socket dropped mid-digest');
+              await live.sendMessage(g.groupId, { text, mentions });
+              if (chunks2.length > 1) log.info(`📨 Group digest msg 2 part ${ci + 1}/${chunks2.length} — ${chunks2[ci].length} tagged`);
+            }
             sentAnything = true;
             state.overdueDigestSent = true;
             saveState(botDir, state);
@@ -411,9 +439,16 @@ export function createReminderSender(config, log) {
             log.warn('⚠️  Socket dropped before celebration message — batch 2 / catch-up will retry');
             return { sent, referralSent: 0, autoRenewed, failed: 0, queued: 0 };
           }
-          const { text, mentions } = buildGroupDigest({ header: h3, members: freeMembers, participants });
+          const chunks3 = chunkMembers(freeMembers);
           try {
-            await sock.sendMessage(g.groupId, { text, mentions });
+            for (let ci = 0; ci < chunks3.length; ci++) {
+              if (ci > 0) await sleep(interMessageGapMs());
+              const { text, mentions } = buildGroupDigest({ header: h3, members: chunks3[ci], participants });
+              const live = getSock();
+              if (!live?.user) throw new Error('socket dropped mid-digest');
+              await live.sendMessage(g.groupId, { text, mentions });
+              if (chunks3.length > 1) log.info(`📨 Group digest msg 3 part ${ci + 1}/${chunks3.length} — ${chunks3[ci].length} tagged`);
+            }
             state.renewFreeDigestSent = true;
             saveState(botDir, state);
             log.info(`📨 Group digest msg 3 sent — ${freeMembers.length} free-renewal member(s) celebrated`);
