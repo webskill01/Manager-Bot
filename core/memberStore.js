@@ -46,11 +46,16 @@ export function createMemberStore(sheetClient, botName) {
     return findByPhone(member.phone);
   }
 
-  async function update(phone, updates) {
+  // skipRefresh: bulk callers (delayall, catchup) update many rows in a loop and would
+  // otherwise pay a full sheet read per member — 100 members = 200 API calls. They pass
+  // skipRefresh and call refresh() once at the end. Returns null in that case, since the
+  // in-memory copy is deliberately stale until that final refresh.
+  async function update(phone, updates, { skipRefresh = false } = {}) {
     const member = findByPhone(phone);
     if (!member) throw new Error(`Member not found: ${phone}`);
     const updated = { ...member, ...updates, lastUpdated: new Date().toISOString() };
     await sheetClient.updateRow(member.rowIndex, updated);
+    if (skipRefresh) return null;
     await refresh();
     return findByPhone(phone);
   }

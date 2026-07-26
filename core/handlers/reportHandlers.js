@@ -62,7 +62,11 @@ export function createReportHandlers(store, config, botStartTime, log) {
     return lastUpdated.startsWith(`${yyyy}-${mm}`);
   }
 
-  function handleMorningDigest() {
+  // The `digest` command. Was a 6 AM cron that DM'd every admin — now pulled on demand,
+  // so it refreshes the sheet first and carries the auto-renew and catch-up lines that
+  // used to arrive as separate broadcasts.
+  async function handleMorningDigest() {
+    await store.refresh();
     const all = store.getAll();
     const dueToday = all.filter(m => m.status === 'ACTIVE' && daysFromToday(m.billingDate) === 0);
 
@@ -104,6 +108,25 @@ export function createReportHandlers(store, config, botStartTime, log) {
     }
 
     msg += `\n📊 Active: ${totalActive}  |  Overdue: ${overdue.length}  |  Due today: ${dueToday.length}  |  Skipped: ${totalSkipped}`;
+
+    // Today's 2-ref free renewals — replaces the old post-batch admin broadcast.
+    try {
+      const rState = JSON.parse(fs.readFileSync(path.join(config.botDir, 'reminder-state.json'), 'utf8'));
+      const free = rState?.autoRenewedToday || [];
+      if (free.length > 0) {
+        msg += `\n\n🎁 AUTO-RENEWED TODAY (2 refs → free): ${free.length}\n`;
+        msg += free.map(a => `   • ${a.name}  ${a.phone}`).join('\n');
+      }
+    } catch (_) {}
+
+    // Catch-up cycle progress (if one is running)
+    try {
+      const cState = JSON.parse(fs.readFileSync(path.join(config.botDir, 'catchup-state.json'), 'utf8'));
+      if (cState?.cohort) {
+        msg += `\n\n📣 Catch-up running — stage ${Math.min(cState.stage + 1, 3)}/3, ` +
+          `${cState.cohort.length} in cohort, delayed until ${cState.delayUntil}`;
+      }
+    } catch (_) {}
 
     // Trial removal schedule (if active)
     try {
@@ -363,6 +386,8 @@ export function createReportHandlers(store, config, botStartTime, log) {
 • kick [phone]
 • skip [phone] [reason]  /  unskip [phone]
 • delay [phone] [days]  →  hide from removal list N days (still overdue; default 1)
+• delayall [days]  →  preview delaying EVERYONE overdue (billing dates unchanged)
+• delayall [days] confirm  →  apply it
 • approve / approveall  /  rejectall
 • sendlinks [phone]  /  links [phone]
 • groupcheck [phone]
@@ -388,8 +413,9 @@ export function createReportHandlers(store, config, botStartTime, log) {
 • find [phone or name]  →  full profile + ref count
 • status [phone]
 
-📊 REPORTS
-• summary / summary 1 / summary 2
+📊 REPORTS  (pull-only — nothing is sent to you on a schedule any more)
+• digest  →  today's due / overdue / auto-renewed (was the 6 AM cron)
+• summary / summary 1 / summary 2  →  (was the 10 PM cron)
 • weekly  →  last 7 days
 • monthly / monthly [month] / monthly [month] [year]
 • stats / revenue / groups / ping
@@ -398,6 +424,12 @@ export function createReportHandlers(store, config, botStartTime, log) {
 • notinsheet [n]  →  only group #n
 • leftmembers  →  ACTIVE in sheet but not in any group
 • stillin  →  REMOVED in sheet but still in a group
+
+📣 OUTAGE CATCH-UP  (group mode only)
+• catchup [days]  →  preview who was missed while the bot was down
+• catchup [days] confirm  →  send all 3 messages over 3 days, +3d grace
+• catchup status  →  stage, who paid, who's left
+• stop catchup  →  cancel (grace stays)
 
 🧹 GROUP CLEANUP
 • kickghosts  →  preview bulk removal of not-in-sheet numbers

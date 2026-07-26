@@ -40,6 +40,7 @@ import { createOverdueEngine } from './overdueEngine.js';
 import { createTrialRemovalEngine } from './trialRemovalEngine.js';
 import { createRemovalEngine } from './removalEngine.js';
 import { createGhostRemovalEngine } from './ghostRemovalEngine.js';
+import { createCatchupEngine } from './catchupEngine.js';
 import { markLinkedAt, getLinkedAt, inWarmup } from './warmup.js';
 
 const BOT_START_TIME = Date.now();
@@ -71,10 +72,15 @@ export async function startBot(config, log, authDir) {
   // Warm-up: freshly linked numbers stay quiet (no engines, no scheduled sends,
   // delayed admin usync) for the first warmupHours so WhatsApp sees a normal
   // device, not a bot burst. Established links (no marker) are never warmed up.
-  const warmupHours = config.warmupHours ?? 24;
+  // Default raised 24 → 72 on 2026-07-27: at 24h a re-linked number went from total
+  // silence to the full production schedule overnight, and the first thing the account
+  // ever did was a 6 AM burst. Three days of quiet is cheap; a burned number is not.
+  const warmupHours = config.warmupHours ?? 72;
   const warmingUp = () => inWarmup(authDir, warmupHours);
 
-  // JIDs that receive proactive broadcasts (morning digest, evening summary)
+  // JIDs that receive command replies and engine progress reports (kickall, catch-up
+  // completion, watchdog alerts). No longer used for scheduled digests — those are
+  // pull-only commands now.
   const broadcastJids = [
     ...(config.allowedNumbers || []).map(n => `91${n.replace(/\D/g, '').slice(-10)}@s.whatsapp.net`),
   ];
@@ -102,6 +108,7 @@ export async function startBot(config, log, authDir) {
 
   const removalEngine = createRemovalEngine(config, log, getSock, store, getBroadcastJids);
   const ghostEngine = createGhostRemovalEngine(config, log, getSock, store, getBroadcastJids);
+  const catchupEngine = createCatchupEngine(config, log, getSock, store);
 
   function destroySocket(reason) {
     if (!sock) return;
@@ -279,7 +286,7 @@ export async function startBot(config, log, authDir) {
       sock.ev.on('groups.update', (updates) => { for (const u of updates || []) groupMetaCache.delete(u?.id); });
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, catchupEngine);
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {
@@ -361,6 +368,7 @@ export async function startBot(config, log, authDir) {
               trialEngine.resume();
               removalEngine.resume();
               ghostEngine.resume();
+              catchupEngine.resume();
               reminderSender.resume(store, getSock, config.botDir, broadcast);
               overdueEngine.resume(store, getSock, getBroadcastJids);
             }, msLeft + 1000);
@@ -368,6 +376,7 @@ export async function startBot(config, log, authDir) {
             trialEngine.resume();
             removalEngine.resume();
             ghostEngine.resume();
+            catchupEngine.resume();
             // Catch up any reminder window the bot was offline/restarting across. Same restart-safe
             // pattern as removalEngine: persistent per-day state + per-phone dedupe, so missed
             // reminders go out on reconnect and nobody is ever messaged twice.
@@ -383,40 +392,28 @@ export async function startBot(config, log, authDir) {
               if (warmingUp()) { log.info(`🐣 Warm-up — skipped ${job}`); return true; }
               return false;
             };
+            // No morningDigest / eveningSummary jobs — see the note in scheduler.js.
+            // Auto-renewals are logged and surfaced by the `digest` command instead of
+            // broadcast: an unprompted DM to every admin is the exact traffic that got
+            // fresh numbers banned, and nobody needs it at 6:30 AM.
             scheduler.start({
-              morningDigest: async () => {
-                if (skipWarmup('morning digest')) return;
-                if (!getSock()?.user) return;
-                const { createReportHandlers } = await import('./handlers/reportHandlers.js');
-                const reportH = createReportHandlers(store, config, BOT_START_TIME, log);
-                await broadcast(reportH.handleMorningDigest());
-              },
               reminderSend: async () => {
                 if (skipWarmup('reminder batch 1')) return;
                 const result = await reminderSender.sendReminders(store, getSock, config.botDir);
                 if (result.autoRenewed?.length > 0) {
-                  const lines = result.autoRenewed.map(m => `  • ${m.name}  ${m.phone}${m.rolled ? ` (+${m.rolled} ref rolled to next month)` : ''}`).join('\n');
-                  await broadcast(`🎁 Auto-renewed (2 refs) — no reminder sent:\n${lines}`);
+                  log.info(`🎁 Auto-renewed (2 refs), batch 1: ${result.autoRenewed.map(m => `${m.name} ${m.phone}${m.rolled ? ` +${m.rolled} rolled` : ''}`).join(', ')}`);
                 }
               },
               reminderSend2: async () => {
                 if (skipWarmup('reminder batch 2')) return;
                 const result = await reminderSender.sendRemindersSecondBatch(store, getSock, config.botDir);
                 if (result.autoRenewed?.length > 0) {
-                  const lines = result.autoRenewed.map(m => `  • ${m.name}  ${m.phone}${m.rolled ? ` (+${m.rolled} ref rolled to next month)` : ''}`).join('\n');
-                  await broadcast(`🎁 Auto-renewed (2 refs) — batch 2:\n${lines}`);
+                  log.info(`🎁 Auto-renewed (2 refs), batch 2: ${result.autoRenewed.map(m => `${m.name} ${m.phone}${m.rolled ? ` +${m.rolled} rolled` : ''}`).join(', ')}`);
                 }
               },
               overdueCheck: async () => {
                 if (skipWarmup('overdue check')) return;
                 await overdueEngine.runOverdueCheck(store, getSock, getBroadcastJids());
-              },
-              eveningSummary: async () => {
-                if (skipWarmup('evening summary')) return;
-                if (!getSock()?.user) return;
-                const { createReportHandlers } = await import('./handlers/reportHandlers.js');
-                const reportH = createReportHandlers(store, config, BOT_START_TIME, log);
-                await broadcast(`🌙 Evening Summary\n\n${await reportH.handleSummary()}`);
               },
             });
           }

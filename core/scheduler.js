@@ -34,12 +34,16 @@ export function createScheduler(config, log) {
     log.info(`⏰ Scheduled ${label} @ ${expr} (${tz}, jitter ≤${schedule.jitterMaxMinutes ?? 20}m)`);
   }
 
+  // morning-digest and evening-summary were removed deliberately (2026-07-27): both DM'd
+  // every admin twice a day, and that was the traffic that got freshly linked numbers
+  // banned — a brand-new account whose first-ever action is a 6 AM text blast to three
+  // non-contacts. The same reports are now the `digest` and `summary` commands, so the
+  // information is pulled on demand instead of pushed. Do NOT reintroduce them as crons.
+  // The schedule.morningDigest / schedule.eveningSummary config keys are now inert.
   function start(tasks) {
-    register(schedule.morningDigest,  'morning-digest',   tasks.morningDigest);
     register(schedule.reminderSend,   'reminder-send',    tasks.reminderSend);
     register(schedule.reminderSend2,  'reminder-send-2',  tasks.reminderSend2);
     register(schedule.overdueCheck,   'overdue-check',    tasks.overdueCheck);
-    register(schedule.eveningSummary, 'evening-summary',  tasks.eveningSummary);
     log.info(`⏰ Scheduler started — ${jobs.length} jobs active`);
   }
 

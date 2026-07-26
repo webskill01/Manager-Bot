@@ -159,6 +159,23 @@ export function isDelayActive(member) {
   return d !== null && d >= 0;
 }
 
+// ACTIVE members whose billing date has already passed (i.e. they owe money), sorted
+// most-overdue first. `windowDays` bounds how far back to look: null = every overdue
+// member (used by `delayall`), a number = only those who fell due within the last N days
+// (used by `catchup`, so people who were already overdue BEFORE an outage — and who
+// therefore did get their messages — aren't dragged back into the catch-up sequence).
+// Members due today (d === 0) are excluded: the normal daily digest still covers them.
+export function overdueCohort(members, windowDays = null) {
+  return members
+    .filter(m => {
+      if (!m || m.status !== 'ACTIVE') return false;
+      const d = daysFromToday(m.billingDate);
+      if (d === null || d >= 0) return false;
+      return windowDays === null || Math.abs(d) <= windowDays;
+    })
+    .sort((a, b) => daysFromToday(a.billingDate) - daysFromToday(b.billingDate));
+}
+
 // Builds a Date for `day` of the given month/year, clamped to that month's last day.
 // Prevents JS month overflow: day 31 in a 30-day month → the 30th (never spills to next month).
 // e.g. clampedBillingDate(2026, 5, 31) → 30 Jun 2026 (not 1 Jul). Month index may be ±, JS normalizes years.

@@ -1,4 +1,4 @@
-import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod, clampedBillingDate, daysFromToday } from '../globalConfig.js';
+import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod, clampedBillingDate, daysFromToday, overdueCohort } from '../globalConfig.js';
 
 export function createMemberHandlers(store, groupManager, config, log) {
   const inFlightAdds = new Set();
@@ -406,6 +406,56 @@ export function createMemberHandlers(store, groupManager, config, log) {
       `Reappears for removal after ${delayUntil} if still unpaid.`;
   }
 
+  // Bulk `delay` — pauses the removal clock for everyone currently overdue, without
+  // touching BILLING_DATE. Used after an outage so members aren't kicked for downtime
+  // the bot caused. Preview by default; `delayall 7 confirm` applies (same
+  // preview/confirm shape as kickghosts).
+  async function handleDelayAll(args) {
+    if (args.length < 1) return '❌ Format: delayall [days] [confirm]  (e.g. delayall 7 confirm)';
+    if (!/^\d{1,2}$/.test(args[0])) return '❌ Days must be a number 0–31. Format: delayall [days] [confirm]';
+    const days = Math.min(Math.max(parseInt(args[0], 10), 0), 31);
+    const confirm = args[1]?.toLowerCase() === 'confirm';
+
+    await store.refresh();
+    const cohort = overdueCohort(store.getAll());
+    if (cohort.length === 0) return '✅ Nobody is overdue right now — nothing to delay.';
+
+    const until = new Date();
+    until.setHours(0, 0, 0, 0);
+    until.setDate(until.getDate() + days);
+    const delayUntil = formatDate(until);
+
+    const lines = cohort.slice(0, 15)
+      .map((m, i) => `${i + 1}. ${m.name} (${m.phone}) — ${Math.abs(daysFromToday(m.billingDate))}d overdue`);
+    const more = cohort.length > 15 ? `\n…and ${cohort.length - 15} more` : '';
+
+    if (!confirm) {
+      return `⏸️ DELAYALL PREVIEW — ${cohort.length} overdue member(s)\n\n${lines.join('\n')}${more}\n\n` +
+        `Would delay all of them until ${delayUntil} (${days}d).\n` +
+        `Billing dates are NOT changed — nobody's billing day shifts.\n\n` +
+        `To apply: delayall ${days} confirm`;
+    }
+
+    let ok = 0;
+    const failed = [];
+    for (const m of cohort) {
+      try {
+        await store.update(m.phone, { delayUntil }, { skipRefresh: true });
+        ok++;
+      } catch (err) {
+        failed.push(m.phone);
+        log.warn(`⚠️  delayall failed for ${m.phone}: ${err.message}`);
+      }
+    }
+    await store.refresh();
+
+    log.info(`⏸️  delayall — ${ok}/${cohort.length} member(s) delayed until ${delayUntil}`);
+    return `⏸️ Delayed ${ok} member(s) until ${delayUntil} (${days}d).\n` +
+      `Billing dates unchanged — everyone still bills on their original day.\n` +
+      `Hidden from final reminders and the removal list until then.` +
+      (failed.length ? `\n\n⚠️ Failed for ${failed.length}: ${failed.join(', ')}` : '');
+  }
+
   async function handleUnskip(args) {
     if (args.length < 1) return '❌ Missing arguments. Format: unskip [phone]';
     const phone = normalizePhone(args[0]);
@@ -693,5 +743,5 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return `✅ Rejected ${phone} in ${rejected}/${found} group(s)${failed > 0 ? ` (${failed} failed)` : ''}`;
   }
 
-  return { handleAdd, handleSilentAdd, handleNewAdd, handleKick, handleSkip, handleUnskip, handleDelay, handleLinks, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
+  return { handleAdd, handleSilentAdd, handleNewAdd, handleKick, handleSkip, handleUnskip, handleDelay, handleDelayAll, handleLinks, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
 }

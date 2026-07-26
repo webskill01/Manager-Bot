@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { daysFromToday, sleep, randomBetween, normalizePhone, isDelayActive, friendlyDate, todayStr, cronTimePassedToday, beforeCatchUpCutoff } from './globalConfig.js';
+import { buildGroupDigest } from './reminderSender.js';
 
 export function createOverdueEngine(config, log) {
   // ── Per-day state (overdue-state.json) ──────────────────────────────────────
@@ -90,34 +91,66 @@ export function createOverdueEngine(config, log) {
       const gapMin = config.rateLimits.dmReminderGapMinMs ?? config.rateLimits.memberToMemberGapMinMs;
       const gapMax = config.rateLimits.dmReminderGapMaxMs ?? config.rateLimits.memberToMemberGapMaxMs;
 
-      // Group reminder mode: the day-5 milestone members are tagged in the morning
-      // group digest (msg 2) instead of getting a DM here. The FINAL reminder below
-      // stays a personal DM in BOTH modes — it's the last-chance personal touch.
+      // Group reminder mode: day-5 milestone members are tagged in the morning group
+      // digest (msg 2) instead of getting a DM here, and since 2026-07-27 the FINAL
+      // reminder is group-tagged too. It used to stay a personal DM in both modes, which
+      // meant "group mode" still sent proactive payment-demand DMs — the single strongest
+      // ban signal — so group mode was never the DM kill-switch it appeared to be.
+      // Cloud API (reminderChannel: "cloudapi") is where a private final reminder belongs:
+      // there it cannot get the number banned.
       const groupMode = config.reminder?.mode === 'group' && !!config.reminder?.groupId;
 
-      // Send FINAL reminders directly to members (day before removal).
+      // Send FINAL reminders (day before removal).
       // Skip anyone already messaged today — makes a restart catch-up safe to re-run.
-      const finalTemplate = config.messages.finalReminder || config.messages.overdue;
-      for (let i = 0; i < finalDay.length; i++) {
-        const m = finalDay[i];
-        if (state.sentPhones.includes(m.phone)) continue;
-        const jid = `91${normalizePhone(m.phone)}@s.whatsapp.net`;
-        const text = finalTemplate
-          .replace('{name}', m.name)
-          .replace('{days}', String(finalReminderDay))
-          .replace('{date}', friendlyDate());
+      const pendingFinal = finalDay.filter(m => !state.sentPhones.includes(m.phone));
 
+      if (groupMode && pendingFinal.length > 0) {
+        // One tagged group message for everyone at the final milestone.
+        let participants = [];
         try {
-          await sock.sendMessage(jid, { text });
-          state.sentPhones.push(m.phone);
-          saveState(state);
-          log.info(`📨 Day-${finalReminderDay} FINAL reminder → ${m.name} (${m.phone})`);
+          const meta = await sock.groupMetadata(config.reminder.groupId);
+          participants = meta?.participants || [];
         } catch (err) {
-          log.warn(`❌ Final reminder failed [${m.name}]: ${err.message}`);
+          log.warn(`⚠️  Final reminder groupMetadata failed: ${err.message} — sending without tags`);
         }
+        const header = (config.messages.groupFinal || config.messages.groupOverdue || '🚨 Last day before removal — please repay')
+          .replace('{date}', friendlyDate())
+          .replace('{days}', String(finalReminderDay));
+        const { text, mentions } = buildGroupDigest({
+          header,
+          members: pendingFinal.map(m => ({ name: m.name, phone: m.phone, note: `— ${Math.abs(daysFromToday(m.billingDate))} din overdue` })),
+          participants,
+        });
+        try {
+          await sock.sendMessage(config.reminder.groupId, { text, mentions });
+          for (const m of pendingFinal) state.sentPhones.push(m.phone);
+          saveState(state);
+          log.info(`📨 Day-${finalReminderDay} FINAL reminder → group, ${pendingFinal.length} member(s) tagged`);
+        } catch (err) {
+          log.warn(`❌ Group final reminder failed: ${err.message}`);
+        }
+      } else {
+        const finalTemplate = config.messages.finalReminder || config.messages.overdue;
+        for (let i = 0; i < pendingFinal.length; i++) {
+          const m = pendingFinal[i];
+          const jid = `91${normalizePhone(m.phone)}@s.whatsapp.net`;
+          const text = finalTemplate
+            .replace('{name}', m.name)
+            .replace('{days}', String(finalReminderDay))
+            .replace('{date}', friendlyDate());
 
-        if (i < finalDay.length - 1) {
-          await sleep(randomBetween(gapMin, gapMax));
+          try {
+            await sock.sendMessage(jid, { text });
+            state.sentPhones.push(m.phone);
+            saveState(state);
+            log.info(`📨 Day-${finalReminderDay} FINAL reminder → ${m.name} (${m.phone})`);
+          } catch (err) {
+            log.warn(`❌ Final reminder failed [${m.name}]: ${err.message}`);
+          }
+
+          if (i < pendingFinal.length - 1) {
+            await sleep(randomBetween(gapMin, gapMax));
+          }
         }
       }
 

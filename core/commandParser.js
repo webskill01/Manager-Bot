@@ -16,7 +16,7 @@ const SLOW_COMMANDS = new Set([
   'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
   'kick', 'rejoin', 'sendlinks', 'links', 'groupcheck', 'remind', 'renewed',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
-  'remindall',
+  'remindall', 'delayall', 'catchup',
 ]);
 
 export function isSlowCommand(text) {
@@ -28,7 +28,7 @@ export function isSlowCommand(text) {
   const cmd = parts[0].toLowerCase();
   if (SLOW_COMMANDS.has(cmd)) return true;
   if (cmd === 'start' && /^removal$/i.test(parts[1] || '')) return true;
-  if (cmd === 'stop' && /^(removal|kickall|kickghosts)$/i.test(parts[1] || '')) return true;
+  if (cmd === 'stop' && /^(removal|kickall|kickghosts|catchup)$/i.test(parts[1] || '')) return true;
   return false;
 }
 
@@ -49,7 +49,7 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, catchupEngine = null) {
   const memberH = createMemberHandlers(store, groupManager, config, log);
   const renewalH = createRenewalHandlers(store, config, log);
   const lookupH = createLookupHandlers(store, config, log);
@@ -394,6 +394,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'skip':       return memberH.handleSkip(mergePhoneFromStart(args));
         case 'unskip':     return memberH.handleUnskip(mergePhoneFromStart(args));
         case 'delay':      return memberH.handleDelay(mergePhoneFromStart(args));
+        case 'delayall':   return memberH.handleDelayAll(args);
         case 'approve':
           if (args.length > 0) return memberH.handleApprovePhone(mergePhoneFromStart(args));
           return memberH.handleApproveAll();
@@ -424,6 +425,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'find':       return lookupH.handleFind(args);
         case 'status':     return lookupH.handleStatus(mergePhoneFromStart(args));
 
+        case 'digest':     return reportH.handleMorningDigest();
         case 'summary':    return reportH.handleSummary(args);
         case 'stats':      return reportH.handleStats();
         case 'revenue':    return reportH.handleRevenue();
@@ -493,6 +495,20 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'warnall':    return removalEngine.warnall();
         case 'kickall':    return removalEngine.kickall();
 
+        case 'catchup': {
+          if (!catchupEngine) return '❌ catchup not available on this bot.';
+          if (/^status$/i.test(args[0] || '')) return catchupEngine.status();
+          if (!/^\d{1,2}$/.test(args[0] || '')) {
+            return '❌ Format: catchup [days] [confirm]  — days = how long the bot was down\n' +
+              '   e.g. catchup 8          (preview)\n' +
+              '        catchup 8 confirm  (start)\n' +
+              '        catchup status     (progress)';
+          }
+          const windowDays = Math.min(Math.max(parseInt(args[0], 10), 1), 60);
+          if (/^confirm$/i.test(args[1] || '')) return catchupEngine.start(windowDays);
+          return catchupEngine.preview(windowDays);
+        }
+
         case 'start':
           if (args[0]?.toLowerCase() === 'removal') return trialEngine.start();
           return `❓ Unknown command. Did you mean "start removal"?`;
@@ -500,7 +516,8 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           if (args[0]?.toLowerCase() === 'removal') return trialEngine.stopCommand();
           if (args[0]?.toLowerCase() === 'kickall') return removalEngine.stopKickall();
           if (args[0]?.toLowerCase() === 'kickghosts') return ghostEngine.stop();
-          return `❓ Unknown command. Did you mean "stop removal", "stop kickall", or "stop kickghosts"?`;
+          if (args[0]?.toLowerCase() === 'catchup') return catchupEngine ? catchupEngine.stop() : '❌ catchup not available on this bot.';
+          return `❓ Unknown command. Did you mean "stop removal", "stop kickall", "stop kickghosts", or "stop catchup"?`;
 
         default:
           return `❓ Unknown command: "${cmd}". Send 'help' for full list.`;
