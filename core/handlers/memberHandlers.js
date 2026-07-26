@@ -1,4 +1,4 @@
-import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod, clampedBillingDate, daysFromToday, overdueCohort } from '../globalConfig.js';
+import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod, clampedBillingDate, daysFromToday, overdueCohort, isTracker } from '../globalConfig.js';
 
 export function createMemberHandlers(store, groupManager, config, log) {
   const inFlightAdds = new Set();
@@ -59,6 +59,15 @@ export function createMemberHandlers(store, groupManager, config, log) {
     if (existing && existing.status === 'ACTIVE') {
       return `⚠️ ${existing.name} (${phone}) already ACTIVE. Use 'renewed' to update billing.`;
     }
+    // Tracker duplicates: someone mid-funnel must not be re-added as a fresh NEW join,
+    // which would reset their join date and hide them from the call list for a month.
+    if (existing && ['NEW', 'CALLED'].includes(existing.status)) {
+      const label = existing.status === 'NEW' ? 'already in the group, waiting for their call' : 'already called';
+      return `⚠️ ${existing.name} (${phone}) is ${label} (${existing.status}).\nSee: pending  ·  status ${phone}`;
+    }
+    if (existing && existing.status === 'MOVED') {
+      return `⚠️ ${existing.name} (${phone}) already MOVED to the app.`;
+    }
     if (existing && existing.status === 'REMOVED') {
       return `⚠️ ${existing.name} (${phone}) was previously removed. Use: rejoin ${phone}`;
     }
@@ -90,6 +99,8 @@ export function createMemberHandlers(store, groupManager, config, log) {
         paidLast: config.joining.fee,
         reference: referrerPhone || '',
         refCreditDate,
+        // Tracker bots start everyone at NEW — the head of the call funnel.
+        ...(isTracker(config) ? { status: 'NEW' } : {}),
       });
 
       // Build referrer note (computed after add so store cache includes new member)
@@ -197,6 +208,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
         // member or join revenue in any report (summary/weekly/monthly/revenue/growth/churn).
         paidLast: 0,
         reference: '',
+        ...(isTracker(config) ? { status: 'NEW' } : {}),
       });
 
       log.info(`📋 Silent add: ${name} (${phone}) — not counted as new member`);
@@ -289,6 +301,8 @@ export function createMemberHandlers(store, groupManager, config, log) {
         paidLast: config.joining.fee,
         reference: referrerPhone || '',
         refCreditDate,
+        // Tracker bots start everyone at NEW — the head of the call funnel.
+        ...(isTracker(config) ? { status: 'NEW' } : {}),
       });
 
       let refNote = '';

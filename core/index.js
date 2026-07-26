@@ -41,6 +41,7 @@ import { createTrialRemovalEngine } from './trialRemovalEngine.js';
 import { createRemovalEngine } from './removalEngine.js';
 import { createGhostRemovalEngine } from './ghostRemovalEngine.js';
 import { createCatchupEngine } from './catchupEngine.js';
+import { isTracker } from './globalConfig.js';
 import { markLinkedAt, getLinkedAt, inWarmup } from './warmup.js';
 
 const BOT_START_TIME = Date.now();
@@ -368,20 +369,24 @@ export async function startBot(config, log, authDir) {
               trialEngine.resume();
               removalEngine.resume();
               ghostEngine.resume();
-              catchupEngine.resume();
-              reminderSender.resume(store, getSock, config.botDir, broadcast);
-              overdueEngine.resume(store, getSock, getBroadcastJids);
+              if (!isTracker(config)) {
+                catchupEngine.resume();
+                reminderSender.resume(store, getSock, config.botDir, broadcast);
+                overdueEngine.resume(store, getSock, getBroadcastJids);
+              }
             }, msLeft + 1000);
           } else {
             trialEngine.resume();
             removalEngine.resume();
             ghostEngine.resume();
-            catchupEngine.resume();
-            // Catch up any reminder window the bot was offline/restarting across. Same restart-safe
-            // pattern as removalEngine: persistent per-day state + per-phone dedupe, so missed
-            // reminders go out on reconnect and nobody is ever messaged twice.
-            reminderSender.resume(store, getSock, config.botDir, broadcast);
-            overdueEngine.resume(store, getSock, getBroadcastJids);
+            if (!isTracker(config)) {
+              catchupEngine.resume();
+              // Catch up any reminder window the bot was offline/restarting across. Same restart-safe
+              // pattern as removalEngine: persistent per-day state + per-phone dedupe, so missed
+              // reminders go out on reconnect and nobody is ever messaged twice.
+              reminderSender.resume(store, getSock, config.botDir, broadcast);
+              overdueEngine.resume(store, getSock, getBroadcastJids);
+            }
             await resolveAdminJids();
           }
 
@@ -396,7 +401,13 @@ export async function startBot(config, log, authDir) {
             // Auto-renewals are logged and surfaced by the `digest` command instead of
             // broadcast: an unprompted DM to every admin is the exact traffic that got
             // fresh numbers banned, and nobody needs it at 6:30 AM.
-            scheduler.start({
+            //
+            // Tracker bots register NO cron jobs whatsoever — they collect no renewals,
+            // so there is nothing to send on a timer and the account only ever transmits
+            // in response to an operator command.
+            if (isTracker(config)) {
+              log.info('📋 Tracker profile — no scheduled jobs registered (command-driven only)');
+            } else scheduler.start({
               reminderSend: async () => {
                 if (skipWarmup('reminder batch 1')) return;
                 const result = await reminderSender.sendReminders(store, getSock, config.botDir);

@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { daysFromToday, sleep, randomBetween, normalizePhone, isDelayActive, friendlyDate, todayStr, cronTimePassedToday, beforeCatchUpCutoff } from './globalConfig.js';
 import { buildGroupDigest } from './reminderSender.js';
+import { usesCloudApi, createCloudApiSender } from './cloudApiSender.js';
 
 export function createOverdueEngine(config, log) {
   // ── Per-day state (overdue-state.json) ──────────────────────────────────────
@@ -104,6 +105,35 @@ export function createOverdueEngine(config, log) {
       // Skip anyone already messaged today — makes a restart catch-up safe to re-run.
       const pendingFinal = finalDay.filter(m => !state.sentPhones.includes(m.phone));
 
+      // Official Cloud API takes priority over group mode when configured: a private
+      // last-chance reminder is better for the member, and Meta's own API cannot get the
+      // number banned for sending it. Falls through to group/DM if a send fails, so a
+      // template rejection or an expired token never silently drops the reminder.
+      if (usesCloudApi(config) && pendingFinal.length > 0) {
+        const sender = createCloudApiSender(config, log);
+        const stillPending = [];
+        for (const m of pendingFinal) {
+          const result = await sender.sendTemplate({
+            bodyParams: [m.name, String(finalReminderDay), friendlyDate()],
+            phone: m.phone,
+          });
+          if (result.ok) {
+            state.sentPhones.push(m.phone);
+            saveState(state);
+          } else {
+            stillPending.push(m);
+          }
+          await sleep(randomBetween(1000, 3000));
+        }
+        if (stillPending.length > 0) {
+          log.warn(`⚠️  Cloud API failed for ${stillPending.length} final reminder(s) — falling back to ${groupMode ? 'group' : 'DM'}`);
+          pendingFinal.length = 0;
+          pendingFinal.push(...stillPending);
+        } else {
+          pendingFinal.length = 0;
+        }
+      }
+
       if (groupMode && pendingFinal.length > 0) {
         // One tagged group message for everyone at the final milestone.
         let participants = [];
@@ -129,7 +159,7 @@ export function createOverdueEngine(config, log) {
         } catch (err) {
           log.warn(`❌ Group final reminder failed: ${err.message}`);
         }
-      } else {
+      } else if (pendingFinal.length > 0) {
         const finalTemplate = config.messages.finalReminder || config.messages.overdue;
         for (let i = 0; i < pendingFinal.length; i++) {
           const m = pendingFinal[i];

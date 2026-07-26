@@ -44,7 +44,46 @@ export function loadConfig(botDir) {
     throw new Error(`service-account.json not found at ${config.serviceAccountPath}`);
   }
 
+  // "full"    — the original subscription bot: renewals, referrals, overdue, removals.
+  // "tracker" — operators who no longer collect renewals. They gather new joins, call
+  //             each person after a month to move them onto the app, then remove them.
+  //             No renewal logic, no referrals, no overdue engine, and NO cron jobs at
+  //             all: a tracker bot only ever speaks when the operator types a command.
+  // Absent → "full", so existing bots are unaffected.
+  config.profile = (config.profile || 'full').toLowerCase();
+  if (!['full', 'tracker'].includes(config.profile)) {
+    throw new Error(`Invalid profile "${config.profile}" — must be "full" or "tracker"`);
+  }
+
   return config;
+}
+
+export function isTracker(config) {
+  return config?.profile === 'tracker';
+}
+
+// ── Tracker lifecycle ────────────────────────────────────────────────────────
+// NEW → CALLED → MOVED. DUE_CALL is never stored: a member is due for their app pitch
+// once they've been in the group `callAfterDays` (default 30) and is still NEW. Deriving
+// it means there is no daily job to keep a stored flag honest.
+export const TRACKER_STATUSES = ['NEW', 'CALLED', 'MOVED'];
+
+export function isCallDue(member, callAfterDays = 30, now = new Date()) {
+  if (!member || member.status !== 'NEW') return false;
+  const joined = parseDate(member.joinDate);
+  if (!joined) return false;
+  const days = Math.round((now.setHours(0, 0, 0, 0) - joined.setHours(0, 0, 0, 0)) / 86400000);
+  return days >= callAfterDays;
+}
+
+// A member who was called but never moved onto the app is the leak in the funnel —
+// they're still in the group, still not converted. Resurfaces after `followUpDays`.
+export function needsFollowUp(member, followUpDays = 3, now = new Date()) {
+  if (!member || member.status !== 'CALLED') return false;
+  const called = parseDate(member.callDate);
+  if (!called) return true;   // called but undated → always worth chasing
+  const days = Math.round((now.setHours(0, 0, 0, 0) - called.setHours(0, 0, 0, 0)) / 86400000);
+  return days >= followUpDays;
 }
 
 export function randomBetween(min, max) {

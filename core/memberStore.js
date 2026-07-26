@@ -28,7 +28,9 @@ export function createMemberStore(sheetClient, botName) {
   async function add(memberData) {
     const member = {
       ...memberData,
-      status: 'ACTIVE',
+      // Tracker-profile adds pass status: 'NEW' (start of the call funnel). Everything
+      // else defaults to ACTIVE exactly as before.
+      status: memberData.status || 'ACTIVE',
       renewals: 0,
       // ?? not || — addsilent passes paidLast: 0 as the "silent / not counted" flag.
       // With `|| 90` that intentional 0 was falsy and got overwritten to 90, so every

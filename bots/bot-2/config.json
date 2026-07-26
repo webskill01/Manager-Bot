@@ -42,16 +42,32 @@
   "welcomeMessage": "SSA {name} paaji\nGroup ch duty 120+ group cho forward krde aa veer is krke advance Paytm kise nu ni Krna 🚨 \n\n Group ch free and exchange da msg allowed ni haiga ji",
   "trial": {
     "groupId": "120363406787538779@g.us",
-    "whitelist": ["9914623976","6284992669","9465995696","9465805369","917589414198","7589988141"],
+    "whitelist": [
+      "9914623976",
+      "6284992669",
+      "9465995696",
+      "9465805369",
+      "917589414198",
+      "7589988141"
+    ],
     "batchSize": 10,
-    "batchesPerDay": { "min": 3, "max": 5 },
+    "batchesPerDay": {
+      "min": 3,
+      "max": 5
+    },
     "messages": {
       "warningText": "Group vich continue rehan lyi apna name and gaddi no share kro ji 🚨⚠️",
-      "image": { "path": "./trial-image.jpeg", "caption": "Ehna group ch add hon lyi 7589414198 te msg kro ji\n\n24x7 Duty \nNo free exchange\nOnly duty" }
+      "image": {
+        "path": "./trial-image.jpeg",
+        "caption": "Ehna group ch add hon lyi 7589414198 te msg kro ji\n\n24x7 Duty \nNo free exchange\nOnly duty"
+      }
     },
     "completionMessage": "✅ Trial removal cycle complete."
   },
-  "allowedNumbers": ["6283380110", "9914623976"],
+  "allowedNumbers": [
+    "6283380110",
+    "9914623976"
+  ],
   "schedule": {
     "morningDigest": "0 6 * * *",
     "reminderSend": "30 6 * * *",
@@ -70,5 +86,10 @@
     "overdue": "Sat Sri Akal {name} paaji 🙏🏻\n🚨🚨 Aaj last date aaji renew krke dss deyo. 🙏🏻",
     "finalReminder": "Hnji Veerji knra ji renew ?",
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
+  },
+  "profile": "tracker",
+  "tracker": {
+    "callAfterDays": 30,
+    "followUpDays": 3
   }
 }

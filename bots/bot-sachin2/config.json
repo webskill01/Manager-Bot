@@ -7,9 +7,18 @@
   "upiQrPath": "./qr-payment.jpg",
   "split": {
     "shares": [
-      { "label": "Sachin", "percent": 50 },
-      { "label": "Nitin", "percent": 25 },
-      { "label": "Tanishq", "percent": 25 }
+      {
+        "label": "Sachin",
+        "percent": 60
+      },
+      {
+        "label": "Nitin",
+        "percent": 20
+      },
+      {
+        "label": "Tanishq",
+        "percent": 20
+      }
     ]
   },
   "renewal": {
@@ -49,16 +58,35 @@
   "welcomeMessage": "🚨 Group ch share hon waliyan duties kai groups cho forward hundiyan ne, is karke kise nu vi advance payment na kro.\n\n⚠️ Free te Exchange de messages allowed nahi han.\n\n🙏 Je kise fraud number di duty vekho ta number private msg kar deo.",
   "trial": {
     "groupId": "120363424849920943@g.us",
-    "whitelist": ["9914623976","6284992669","9465995696","9465805369","917589414198","7589988141","7589027841","9464932971"],
+    "whitelist": [
+      "9914623976",
+      "6284992669",
+      "9465995696",
+      "9465805369",
+      "917589414198",
+      "7589988141",
+      "7589027841",
+      "9464932971"
+    ],
     "batchSize": 10,
-    "batchesPerDay": { "min": 3, "max": 5 },
+    "batchesPerDay": {
+      "min": 3,
+      "max": 5
+    },
     "messages": {
       "warningText": "MALWA TRAVELS\n\n🚨FREE MEMBERS REMOVE🚨\n\nJO V VEER GROUP VICH REHNA CHAHNDA HAI JI TA APNA \n\nNAME\n\nADDRESS \n\nCITY\n\nSHARE KRDO JI \n\nMONTHLY 100/- GROUP HAI JIS VICH \n\nMIX DUTY\n\nDELHI NCR ONLY DUTY\n\nALL PUNJAB  DUTY \n\n24/7 SHARE KRI JANGIA \n\nADD HON LYI MESSAGE KRO\n\n9464932971",
-      "image": { "path": "./trial-image.jpeg", "caption": "Ehna group ch add hon lyi 9464932971 te msg kro ji\n\n24x7 Duty \nNo free exchange\nOnly duty" }
+      "image": {
+        "path": "./trial-image.jpeg",
+        "caption": "Ehna group ch add hon lyi 9464932971 te msg kro ji\n\n24x7 Duty \nNo free exchange\nOnly duty"
+      }
     },
     "completionMessage": "✅ Trial removal cycle complete."
   },
-   "allowedNumbers": ["6283380110", "9914623976","9877524103"],
+  "allowedNumbers": [
+    "6283380110",
+    "9914623976",
+    "9877524103"
+  ],
   "schedule": {
     "morningDigest": "0 6 * * *",
     "reminderSend": "30 6 * * *",
@@ -72,12 +100,15 @@
     "groupReminder": "SSA ji 🙏 Ajj {date} nu Malwa Travels group vich inna members da mahina pura ho gya — upar QR te 100rs pay karke screenshot share kredeyo deo ji:",
     "groupOverdue": "🚨 Malwa Travels — inna veera di renwe date nikal gyi hai, jaldi renew krke dss do ji:",
     "groupAutoRenewed": "Malwa Travels — inna veer ne 2 bande add karwaye, inna da is mahine da renewal FREE:",
-
-
     "reminder": "SSA {name} Paaji ajj {date} nu tohada Malwa Travels group vich ik mahina pura hogya is mahine layi iste 100rs pay kardo ji 🙏",
     "referralReminder": "SSA {name} Paaji ajj {date} nu tohada Malwa Travels group vich ik mahina pura hogya tusi ik bnda add krwaya islayi iste 50rs pay kardo ji 🙏",
     "overdue": "Hanji paaji tuhada group vich ik mahina pura hogya ajj hi renew karke das deo 🚨🚨",
     "finalReminder": "Hnji Veerji knra ji repay ?",
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
+  },
+  "profile": "tracker",
+  "tracker": {
+    "callAfterDays": 30,
+    "followUpDays": 3
   }
 }

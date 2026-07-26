@@ -7,9 +7,18 @@
   "upiQrPath": "./qr-payment.jpg",
   "split": {
     "shares": [
-      { "label": "Aayush", "percent": 49 },
-      { "label": "Nitin", "percent": 25 },
-      { "label": "Tanishq", "percent": 25 }
+      {
+        "label": "Aayush",
+        "percent": 60
+      },
+      {
+        "label": "Nitin",
+        "percent": 20
+      },
+      {
+        "label": "Tanishq",
+        "percent": 20
+      }
     ]
   },
   "renewal": {
@@ -49,16 +58,35 @@
   "welcomeMessage": "🚨 Group me share hone wali duties alag-alag groups se forward hoti hain, isliye kisi ko bhi bina jaane ya verify kiye advance payment na karein.\n\n⚠️ Free aur Exchange wale messages allowed nahi hain.\n\n🙏 Agar kisi duty ya number par fraud ka doubt lage, toh uska number mujhe personal message kar dein.",
   "trial": {
     "groupId": "120363424245386199@g.us",
-    "whitelist": ["9914623976","6284992669","9465995696","9465805369","917589414198","7589988141","9465232633","9465571944"],
+    "whitelist": [
+      "9914623976",
+      "6284992669",
+      "9465995696",
+      "9465805369",
+      "917589414198",
+      "7589988141",
+      "9465232633",
+      "9465571944"
+    ],
     "batchSize": 10,
-    "batchesPerDay": { "min": 3, "max": 5 },
+    "batchesPerDay": {
+      "min": 3,
+      "max": 5
+    },
     "messages": {
       "warningText": "🚨MEMBERS REMOVAL NOTICE🚨\n\nAb hum yeh group band kar rahe hai aur sabhi members ko remove kar rahe hai \n\n👉Jinko main group join karna hai woh mujhe message kare",
-      "image": { "path": "./trial-image.jpeg", "caption": "24x7 Duty \nNo free exchange\nOnly duty" }
+      "image": {
+        "path": "./trial-image.jpeg",
+        "caption": "24x7 Duty \nNo free exchange\nOnly duty"
+      }
     },
     "completionMessage": "✅ Trial removal cycle complete."
   },
-   "allowedNumbers": ["6283380110", "9914623976","7696311496"],
+  "allowedNumbers": [
+    "6283380110",
+    "9914623976",
+    "7696311496"
+  ],
   "schedule": {
     "morningDigest": "0 6 * * *",
     "reminderSend": "30 6 * * *",
@@ -72,12 +100,15 @@
     "groupReminder": "🕉️*HAR HAR MAHADEV*🕉️\n\nAaj {date} — in members ka Mahadev Travels paid group ka monthly plan complete ho gya hai. Upar diye QR par ₹99 renew karke screenshot bhej dein:",
     "groupOverdue": "🚨 In members ki renewal date nikal chuki hai — kripya jald se jald renew karein: taaki aapko bina break ke duties milti rahe \n\nPayment ke baad ek screenshot share kar dena \n\nThank you bhai",
     "groupAutoRenewed": "In members ne 2 log add karaye — inka is mahine ka renewal FREE",
-
-
     "reminder": "🕉️*HAR HAR MAHADEV*🕉️\n\nApka Mahadev Travels paid group ka monthly plan complete ho gya hai\n\nkindly ₹99 ka payment renew kar dena, taaki aapko bina break ke duties milti rahe \n\nPayment ke baad ek screenshot share kar dena \n\nThank you bhai",
     "referralReminder": "🕉️*HAR HAR MAHADEV*🕉️\n\nApka Mahadev Travels paid group ka monthly plan complete ho gya hai\n\nkindly ₹99 ka payment renew kar dena, taaki aapko bina break ke duties milti rahe \n\nPayment ke baad ek screenshot share kar dena \n\nThank you bhai",
     "overdue": "Hlo Sir Aaj last date hai repay krne ki. \n\n Upar diye QR par pay krke screenshot bhej do",
     "finalReminder": "Hnji Sir Group chlane hai aapko ?",
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
+  },
+  "profile": "tracker",
+  "tracker": {
+    "callAfterDays": 30,
+    "followUpDays": 3
   }
 }

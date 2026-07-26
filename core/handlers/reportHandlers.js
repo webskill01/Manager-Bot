@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, todayStr, getReferralsInBillingPeriod, parseDate, formatDate, normalizePhone, formatSplit, isPaidJoin } from '../globalConfig.js';
+import { daysFromToday, todayStr, getReferralsInBillingPeriod, parseDate, formatDate, normalizePhone, formatSplit, isPaidJoin, isTracker, isCallDue, needsFollowUp } from '../globalConfig.js';
 
 // Silent/existing-member adds (addsilent) store paidLast = 0 and must never be counted as
 // a new member or as join revenue. Real joins (add/rejoin) store the joining fee.
@@ -169,6 +169,29 @@ export function createReportHandlers(store, config, botStartTime, log) {
       String(targetDateObj.getFullYear()),
     ].join('-'); // "DD-MM-YYYY"
 
+    // Tracker profile: the day's summary is joins, calls and app moves — there are no
+    // renewals, reminders or overdue members to report on.
+    if (isTracker(config)) {
+      const on = d => d && d.slice(0, 10) === targetDateStr;
+      const joined = all.filter(m => on(m.joinDate));
+      const called = all.filter(m => on(m.callDate) && ['CALLED', 'MOVED'].includes(m.status));
+      const moved = all.filter(m => m.status === 'MOVED' && isUpdatedOn(m.lastUpdated, targetDateStr));
+      const dueNow = all.filter(m => isCallDue(m, config.tracker?.callAfterDays ?? 30));
+      const followUp = all.filter(m => needsFollowUp(m, config.tracker?.followUpDays ?? 3));
+      const joinRevenue = joined.filter(isPaidJoinRow).length * config.joining.fee;
+      const label = daysAgo === 0 ? 'Today' : daysAgo === 1 ? 'Yesterday' : `${daysAgo} days ago`;
+      const names = list => list.length ? '\n' + list.map(m => `   • ${m.name}  ${m.phone}`).join('\n') : '';
+
+      return `📋 ${label} — ${targetDateStr}\n━━━━━━━━━━━━━━━━━━━\n\n` +
+        `➕ Joined: ${joined.length} (₹${joinRevenue})${names(joined)}\n` +
+        `${formatSplit(joinRevenue, config, '   ')}\n\n` +
+        `📞 Called: ${called.length}${names(called)}\n\n` +
+        `✅ Moved to app: ${moved.length}${names(moved)}\n\n` +
+        `━━━━━━━━━━━━━━━━━━━\n` +
+        `📌 To call now: ${dueNow.length}  |  To chase: ${followUp.length}\n` +
+        `See the list: pending`;
+    }
+
     // Detect renewals via lastRenewed (set ONLY by the "renewed" command / auto-renew), NOT
     // lastUpdated — lastUpdated is bumped by every write (incl. kickall's status→REMOVED), which
     // would otherwise make a previously-renewed member who was removed today wrongly appear as
@@ -295,6 +318,26 @@ export function createReportHandlers(store, config, botStartTime, log) {
     const now = new Date();
     const mm = String(now.getMonth() + 1).padStart(2, '0');
     const yyyy = String(now.getFullYear());
+    const monthLabel = now.toLocaleString('en-IN', { month: 'long' });
+
+    // Tracker profile: revenue is joining fees only. These operators collect no renewals
+    // at all — members are moved onto the app after their first month — so a renewals
+    // line would always read zero and a forecast built on renewals would be a lie.
+    if (isTracker(config)) {
+      const joins = all.filter(m =>
+        m.joinDate && m.joinDate.length >= 10
+        && isPaidJoinRow(m)
+        && m.joinDate.slice(3, 5) === mm && m.joinDate.slice(6, 10) === yyyy);
+      const total = joins.length * config.joining.fee;
+      const moved = all.filter(m => m.status === 'MOVED').length;
+
+      return `💰 Revenue — ${monthLabel} ${yyyy}\n\n` +
+        `Total: ₹${total}\n` +
+        `${formatSplit(total, config, '')}\n\n` +
+        `➕ New joins: ${joins.length} @ ₹${config.joining.fee}\n` +
+        `   (joins only — this bot collects no renewals)\n\n` +
+        `✅ Moved to app, all time: ${moved}`;
+    }
 
     // Renewals: only count entries where the "renewed" command was actually run this month.
     // Uses lastRenewed (set exclusively by handleRenewed) so kicks/skips/other ops don't pollute the count.
@@ -374,7 +417,59 @@ export function createReportHandlers(store, config, botStartTime, log) {
     return `⏭️ SKIPPED MEMBERS (${skipped.length}):\n\n${lines}\n\nTo unskip: unskip [phone]`;
   }
 
+  // Tracker bots get their own help: listing renewal commands that would be refused is
+  // worse than not listing them.
+  function trackerHelp() {
+    const days = config.tracker?.callAfterDays ?? 30;
+    const chase = config.tracker?.followUpDays ?? 3;
+    return `📋 BOT COMMANDS — tracker
+
+🔄 THE FLOW
+  add → (${days} days pass) → pending → called → moved
+  NEW  →  CALLED  →  MOVED (removed from groups)
+
+👤 ADD A NEW PERSON
+• add [Name] [phone]  →  sends group links + welcome, records as NEW
+• addsilent [Name] [phone]  →  sheet only, no links sent
+• sendlinks [phone]  →  re-send the links
+• approve / approveall  →  approve pending join requests
+• rejectall
+• rejoin [phone]  →  add an old member back
+• groupcheck [phone]  →  which groups are they in?
+
+📞 THE CALL FUNNEL
+• pending  →  who to call now (month up) + who to chase again
+• called [phone]  →  you pitched the app. Stays in the group
+• moved [phone]  →  they're on the app. Marks MOVED + removes from ALL groups
+• calls  →  funnel counts + conversion %
+
+🔍 LOOKUPS
+• find [phone or name]  /  status [phone]
+• removed  /  skipped
+
+📊 REPORTS  (nothing is ever sent to you on a timer)
+• digest  →  today at a glance
+• summary / summary 1  →  joins, calls, moves for a day
+• revenue  →  joining fees this month + split
+• weekly / monthly / growth / trend
+• stats / groups / ping
+
+🔍 GROUP AUDITS
+• notinsheet  →  in a group but missing from the sheet
+• leftmembers  →  in the sheet but not in any group
+• stillin  →  MOVED/REMOVED but still in a group
+
+🧹 CLEANUP
+• kick [phone]  →  remove from all groups
+• kickghosts / kickghosts confirm / stop kickghosts
+
+⏱️ Timing: a person appears in "pending" ${days} days after joining.
+Called but not moved reappears after ${chase} days.
+This bot has NO scheduled jobs — it only acts when you send a command.`;
+  }
+
   function handleHelp() {
+    if (isTracker(config)) return trackerHelp();
     return `📋 BOT COMMANDS
 
 👤 MEMBERS

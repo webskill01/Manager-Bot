@@ -2,7 +2,10 @@ import { google } from 'googleapis';
 import { formatDateTime, normalizePhone, normalizeDateCell } from './globalConfig.js';
 
 const SHEET_NAME = 'MEMBERS';
-const DATA_RANGE = `${SHEET_NAME}!A2:O`;
+// A..P. Column P (callDate) was added for the tracker profile; it reads as '' on every
+// existing sheet, so full-profile bots are unaffected and need no migration.
+const DATA_RANGE = `${SHEET_NAME}!A2:P`;
+const COL_RANGE = 'A:P';
 
 function rowToMember(row, rowIndex) {
   return {
@@ -28,6 +31,8 @@ function rowToMember(row, rowIndex) {
     refCreditDate: normalizeDateCell(row[12]),
     refLog: row[13] || '',
     delayUntil: normalizeDateCell(row[14]),
+    // Tracker profile only: the date the operator called this member to pitch the app.
+    callDate: normalizeDateCell(row[15]),
   };
 }
 
@@ -48,6 +53,7 @@ function memberToRow(member) {
     member.refCreditDate || '',
     member.refLog || '',
     member.delayUntil || '',
+    member.callDate || '',
   ];
 }
 
@@ -80,7 +86,7 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
   async function appendRow(member) {
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${SHEET_NAME}!A:O`,
+      range: `${SHEET_NAME}!${COL_RANGE}`,
       valueInputOption: 'RAW',
       // INSERT_ROWS (not the API default OVERWRITE): always insert a brand-new row.
       // With OVERWRITE the API re-detects the "table" on every call and, when that
@@ -92,7 +98,7 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
   }
 
   async function updateRow(rowIndex, member) {
-    const range = `${SHEET_NAME}!A${rowIndex}:O${rowIndex}`;
+    const range = `${SHEET_NAME}!A${rowIndex}:P${rowIndex}`;
     await sheets.spreadsheets.values.update({
       spreadsheetId,
       range,
@@ -112,7 +118,7 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
     if (members.length === 0) return;
     await sheets.spreadsheets.values.append({
       spreadsheetId,
-      range: `${SHEET_NAME}!A:O`,
+      range: `${SHEET_NAME}!${COL_RANGE}`,
       valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: members.map(memberToRow) },

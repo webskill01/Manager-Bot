@@ -1,10 +1,12 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, normalizePhone as normPhone, getReferralsInBillingPeriod, todayStr, sleep } from './globalConfig.js';
+import { daysFromToday, normalizePhone as normPhone, getReferralsInBillingPeriod, todayStr, sleep, isTracker } from './globalConfig.js';
 import { createMemberHandlers } from './handlers/memberHandlers.js';
 import { createRenewalHandlers } from './handlers/renewalHandlers.js';
 import { createLookupHandlers } from './handlers/lookupHandlers.js';
 import { createReportHandlers } from './handlers/reportHandlers.js';
+import { createTrackerHandlers } from './handlers/trackerHandlers.js';
+import { isConfigured, usesCloudApi, createCloudApiSender } from './cloudApiSender.js';
 
 let activeOverdueList = [];
 
@@ -16,7 +18,7 @@ const SLOW_COMMANDS = new Set([
   'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
   'kick', 'rejoin', 'sendlinks', 'links', 'groupcheck', 'remind', 'renewed',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
-  'remindall', 'delayall', 'catchup',
+  'remindall', 'delayall', 'catchup', 'cloudapi',
 ]);
 
 export function isSlowCommand(text) {
@@ -54,6 +56,25 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   const renewalH = createRenewalHandlers(store, config, log);
   const lookupH = createLookupHandlers(store, config, log);
   const reportH = createReportHandlers(store, config, botStartTime, log);
+  const trackerH = createTrackerHandlers(store, groupManager, config, log);
+  const tracker = isTracker(config);
+
+  // Renewal-era commands a tracker bot must never run — its operators don't collect
+  // renewals at all, so silently doing nothing would be worse than saying so.
+  const RENEWAL_ONLY = new Set([
+    'renewed', 'remind', 'remindall', 'due', 'overdue', 'refs', 'ref',
+    'warnall', 'kickall', 'removal', 'catchup', 'forecast', 'collection',
+    'norenew', 'toprefs', 'loyal', 'churn', 'upcoming',
+  ]);
+
+  function trackerOnly(cmd) {
+    return `❌ "${cmd}" is a tracker-profile command. This bot runs the full renewal profile.`;
+  }
+
+  function fullOnly(cmd) {
+    return `❌ "${cmd}" isn't available on this bot — it tracks new joins and app moves, not renewals.\n` +
+      `Try: pending · called [phone] · moved [phone] · calls · add · summary · revenue`;
+  }
 
   function isOverdueAction(text) {
     return /^([RSW]\d+\s*)+$/i.test(text.trim());
@@ -371,6 +392,8 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     const cmd = parts[0].toLowerCase();
     const args = parts.slice(1);
 
+    if (tracker && RENEWAL_ONLY.has(cmd)) return fullOnly(cmd);
+
     // Pattern: "[phone] ref [refPhone]" — handles both compact and spaced formats:
     // "9876543210 ref 9876543211"  or  "+91 98765 43210 ref +91 98765 43211"
     const refPos = parts.findIndex(p => p.toLowerCase() === 'ref');
@@ -408,6 +431,14 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'rejoin':     return memberH.handleRejoin(mergePhoneFromStart(args));
         case 'groupcheck': return memberH.handleGroupCheck(mergePhoneFromStart(args));
 
+        // Tracker profile has no renewals, so `pending` means the CALL list instead of
+        // the overdue-payment list. Every other renewal command is refused outright
+        // rather than silently doing nothing.
+        case 'pending':    return tracker ? trackerH.handlePending() : renewalH.handlePending();
+        case 'called':     return tracker ? trackerH.handleCalled(mergePhoneFromStart(args)) : trackerOnly('called');
+        case 'moved':      return tracker ? trackerH.handleMoved(mergePhoneFromStart(args)) : trackerOnly('moved');
+        case 'calls':      return tracker ? trackerH.handleCalls() : trackerOnly('calls');
+
         case 'renewed':    return renewalH.handleRenewed(mergePhoneFromStart(args));
         case 'due':        return renewalH.handleDue(args);
         case 'overdue': {
@@ -418,8 +449,6 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
             .sort((a, b) => b.daysOverdue - a.daysOverdue);
           return result;
         }
-        case 'pending':    return renewalH.handlePending();
-
         case 'refs':       return memberH.handleRefs(mergePhoneFromStart(args));
 
         case 'find':       return lookupH.handleFind(args);
@@ -494,6 +523,29 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'removal':    return removalEngine.handleRemoval();
         case 'warnall':    return removalEngine.warnall();
         case 'kickall':    return removalEngine.kickall();
+
+        // Verify the official API end-to-end before flipping reminderChannel on the
+        // whole bot — a template rejection or a bad token should surface here, not at
+        // 10 AM against real members.
+        case 'cloudapi': {
+          if (!isConfigured(config)) {
+            return '❌ Cloud API not configured. Add to config.json:\n' +
+              '"reminderChannel": "cloudapi",\n' +
+              '"cloudApi": { "phoneNumberId": "...", "token": "...", "templateName": "...", "languageCode": "en" }';
+          }
+          const active = usesCloudApi(config);
+          if (!/^test$/i.test(args[0] || '')) {
+            return `☁️ Cloud API configured.\nChannel: ${active ? 'cloudapi (ACTIVE)' : 'group/dm (configured but NOT active)'}\n` +
+              `Template: ${config.cloudApi.templateName}\n\nSend a real test: cloudapi test [phone]`;
+          }
+          const phone = normPhone(mergePhoneFromStart(args.slice(1))[0] || '');
+          if (phone.length !== 10) return '❌ Format: cloudapi test [phone]';
+          const sender = createCloudApiSender(config, log);
+          const res = await sender.sendTemplate({ phone, bodyParams: ['Test', '1', todayStr()] });
+          return res.ok
+            ? `✅ Cloud API test sent to ${phone}.\nMessage id: ${res.messageId}\nChannel is ${active ? 'ACTIVE' : 'configured but NOT active — set reminderChannel to "cloudapi"'}.`
+            : `❌ Cloud API test failed: ${res.error}${res.code ? ` [code ${res.code}]` : ''}`;
+        }
 
         case 'catchup': {
           if (!catchupEngine) return '❌ catchup not available on this bot.';
