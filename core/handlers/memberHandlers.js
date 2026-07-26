@@ -450,24 +450,21 @@ export function createMemberHandlers(store, groupManager, config, log) {
         `To apply: delayall ${days} confirm`;
     }
 
-    let ok = 0;
-    const failed = [];
-    for (const m of cohort) {
-      try {
-        await store.update(m.phone, { delayUntil }, { skipRefresh: true });
-        ok++;
-      } catch (err) {
-        failed.push(m.phone);
-        log.warn(`⚠️  delayall failed for ${m.phone}: ${err.message}`);
-      }
+    // One batched write. Looping per member hits the Sheets 60-writes-per-minute cap and
+    // silently leaves the tail undelayed.
+    let result;
+    try {
+      result = await store.updateMany(cohort.map(m => m.phone), { delayUntil });
+    } catch (err) {
+      log.error(`❌ delayall failed: ${err.message}`);
+      return `❌ Delay failed — NOBODY was delayed: ${err.message}\n\nNothing changed. Safe to retry.`;
     }
-    await store.refresh();
 
-    log.info(`⏸️  delayall — ${ok}/${cohort.length} member(s) delayed until ${delayUntil}`);
-    return `⏸️ Delayed ${ok} member(s) until ${delayUntil} (${days}d).\n` +
+    log.info(`⏸️  delayall — ${result.updated}/${cohort.length} member(s) delayed until ${delayUntil}`);
+    return `⏸️ Delayed ${result.updated} member(s) until ${delayUntil} (${days}d).\n` +
       `Billing dates unchanged — everyone still bills on their original day.\n` +
       `Hidden from final reminders and the removal list until then.` +
-      (failed.length ? `\n\n⚠️ Failed for ${failed.length}: ${failed.join(', ')}` : '');
+      (result.missing.length ? `\n\n⚠️ Not found in sheet (${result.missing.length}): ${result.missing.join(', ')}` : '');
   }
 
   async function handleUnskip(args) {

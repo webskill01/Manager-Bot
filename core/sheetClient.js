@@ -125,5 +125,28 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
     });
   }
 
-  return { getAll, appendRow, updateRow, clearData, batchAppend };
+  // Update many rows in ONE API call. Sheets allows 60 write requests per minute per
+  // user; a bulk op looping updateRow blows through that at ~60 members and the rest
+  // silently fail (delayall/catchup hit exactly this with 98). batchUpdate collapses the
+  // whole set into a single request regardless of size.
+  async function batchUpdateRows(members) {
+    if (members.length === 0) return;
+    // Chunked only to keep any single request payload sane, not for quota.
+    const CHUNK = 200;
+    for (let i = 0; i < members.length; i += CHUNK) {
+      const slice = members.slice(i, i + CHUNK);
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          valueInputOption: 'RAW',
+          data: slice.map(m => ({
+            range: `${SHEET_NAME}!A${m.rowIndex}:P${m.rowIndex}`,
+            values: [memberToRow(m)],
+          })),
+        },
+      });
+    }
+  }
+
+  return { getAll, appendRow, updateRow, clearData, batchAppend, batchUpdateRows };
 }

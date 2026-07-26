@@ -28,23 +28,39 @@ function member(over, extra = {}) {
 }
 
 // Minimal in-memory store standing in for memberStore + Google Sheets.
-function fakeStore(members) {
+function fakeStore(members, { failBulk = null } = {}) {
   let rows = members.map(m => ({ ...m }));
-  const writes = [];
+  const writes = [];          // individual update() calls
+  const bulkCalls = [];       // updateMany() calls — should be exactly one per bulk op
   let refreshes = 0;
   return {
     writes,
+    bulkCalls,
     get refreshes() { return refreshes; },
     getAll: () => rows.map(m => ({ ...m })),
     getActive: () => rows.filter(m => m.status === 'ACTIVE').map(m => ({ ...m })),
     findByPhone: p => rows.find(m => m.phone === p) || null,
     async refresh() { refreshes++; },
-    async update(phone, updates, opts = {}) {
+    async update(phone, updates) {
       const row = rows.find(m => m.phone === phone);
       if (!row) throw new Error(`Member not found: ${phone}`);
       Object.assign(row, updates);
-      writes.push({ phone, updates, skipRefresh: !!opts.skipRefresh });
-      return opts.skipRefresh ? null : { ...row };
+      writes.push({ phone, updates });
+      return { ...row };
+    },
+    async updateMany(phones, updates) {
+      bulkCalls.push({ phones: [...phones], updates });
+      if (failBulk) throw new Error(failBulk);
+      const missing = [];
+      let updated = 0;
+      for (const phone of phones) {
+        const row = rows.find(m => m.phone === phone);
+        if (!row) { missing.push(phone); continue; }
+        Object.assign(row, updates);
+        updated++;
+      }
+      refreshes++;
+      return { updated, missing };
     },
   };
 }
@@ -121,12 +137,11 @@ test('delayall confirm: sets delayUntil on every overdue member and never touche
   const out = await h.handleDelayAll(['7', 'confirm']);
 
   assert.match(out, /Delayed 2 member\(s\)/);
-  assert.equal(store.writes.length, 2);
-  for (const w of store.writes) {
-    assert.deepEqual(Object.keys(w.updates), ['delayUntil'], 'delayUntil is the ONLY field written');
-    assert.equal(w.updates.delayUntil, dayOffset(7));
-    assert.ok(w.skipRefresh, 'bulk writes must skip the per-row refresh');
-  }
+  assert.equal(store.writes.length, 0, 'no per-member writes — Sheets caps those at 60/min');
+  assert.equal(store.bulkCalls.length, 1, 'exactly ONE batched write for the whole cohort');
+  assert.deepEqual(Object.keys(store.bulkCalls[0].updates), ['delayUntil'], 'delayUntil is the ONLY field written');
+  assert.equal(store.bulkCalls[0].updates.delayUntil, dayOffset(7));
+  assert.equal(store.bulkCalls[0].phones.length, 2);
   assert.deepEqual(store.getAll().map(m => m.billingDate), originalBilling, 'billing dates unchanged');
 });
 
@@ -139,7 +154,7 @@ test('delayall: members due today or in the future are left alone', async () => 
   const h = createMemberHandlers(store, {}, { botDir: tmpBotDir() }, log);
 
   await h.handleDelayAll(['7', 'confirm']);
-  assert.deepEqual(store.writes.map(w => w.phone), ['9000000004']);
+  assert.deepEqual(store.bulkCalls[0].phones, ['9000000004']);
 });
 
 test('delayall: rejects bad input and reports an empty cohort', async () => {
@@ -192,11 +207,10 @@ test('catchup start: applies grace, freezes the cohort, and sends stage 1 with t
   assert.match(reply, /Now {2}→ payment reminder/, 'no start hour = fires immediately');
 
   // Grace applied to both, billing untouched.
-  assert.equal(store.writes.length, 2);
-  for (const w of store.writes) {
-    assert.deepEqual(Object.keys(w.updates), ['delayUntil']);
-    assert.equal(w.updates.delayUntil, dayOffset(e.GRACE_DAYS));
-  }
+  assert.equal(store.bulkCalls.length, 1, 'grace applied in ONE batched write');
+  assert.equal(store.bulkCalls[0].phones.length, 2);
+  assert.deepEqual(Object.keys(store.bulkCalls[0].updates), ['delayUntil']);
+  assert.equal(store.bulkCalls[0].updates.delayUntil, dayOffset(e.GRACE_DAYS));
 
   // start() fires stage 0 in the background — let the microtask queue drain.
   await drain();
@@ -349,10 +363,9 @@ test('catchup with a start hour applies grace immediately but sends nothing yet'
   await drain();
 
   assert.equal(sent.length, 0, 'nothing sent at arm time');
-  assert.equal(store.writes.length, 2, 'grace applied to both immediately');
-  for (const w of store.writes) {
-    assert.deepEqual(Object.keys(w.updates), ['delayUntil']);
-  }
+  assert.equal(store.bulkCalls.length, 1, 'grace applied to both immediately, in one write');
+  assert.equal(store.bulkCalls[0].phones.length, 2);
+  assert.deepEqual(Object.keys(store.bulkCalls[0].updates), ['delayUntil']);
   assert.match(reply, /ALREADY hidden from the daily overdue message/);
   assert.ok(!/ {2}Now {2}→/.test(reply), 'reply names the scheduled hour, not "Now"');
 
@@ -531,4 +544,61 @@ test('catchup: a stage with the socket down does not consume the stage', async (
   assert.equal(state.stage, 1, 'still on stage 2 — will retry, not skip');
 
   e.stop();
+});
+
+// ── Sheets write-quota regression (2026-07-27, hit in production) ────────────
+// Bulk ops looped store.update, one Sheets write per member. Sheets caps writes at
+// 60/minute/user, so a 98-member catchup silently failed for everyone past the cap —
+// and still armed the cycle, leaving those members exposed to the next morning's
+// overdue message and removal list.
+
+test('bulk grace is ONE batched write regardless of cohort size', async () => {
+  const botDir = tmpBotDir();
+  const rows = Array.from({ length: 98 }, (_, i) => ({
+    name: `B${i}`, phone: `94${String(i).padStart(8, '0')}`,
+    billingDate: dayOffset(-(1 + (i % 7))), status: 'ACTIVE',
+  }));
+  const store = fakeStore(rows);
+  const sock = { user: {}, groupMetadata: async () => ({ participants: [] }), sendMessage: async () => {} };
+  const e = createCatchupEngine(baseConfig(botDir), log, () => sock, store);
+
+  await e.start(7, 9);   // deferred so no messages go out during the test
+
+  assert.equal(store.writes.length, 0, 'zero per-member writes — that is what blew the quota');
+  assert.equal(store.bulkCalls.length, 1, 'one call for all 98, not 98 calls');
+  assert.equal(store.bulkCalls[0].phones.length, 98, 'every member in the single batch');
+
+  e.stop();
+});
+
+test('catchup refuses to arm when the grace write fails — nothing half-protected', async () => {
+  const botDir = tmpBotDir();
+  const store = fakeStore([member(3), member(6)], { failBulk: 'Quota exceeded for quota metric Write requests' });
+  const sent = [];
+  const sock = {
+    user: {},
+    groupMetadata: async () => ({ participants: [] }),
+    sendMessage: async (jid, msg) => { sent.push(msg); },
+  };
+  const e = createCatchupEngine(baseConfig(botDir), log, () => sock, store);
+
+  const out = await e.start(8);
+  await drain();
+
+  assert.match(out, /Catch-up NOT started/, 'reports failure instead of claiming success');
+  assert.match(out, /Quota exceeded/, 'surfaces the real reason');
+  assert.match(out, /Safe to retry/);
+  assert.equal(sent.length, 0, 'no group messages sent');
+  assert.equal(fs.existsSync(path.join(botDir, 'catchup-state.json')), false,
+    'no state file — the cycle is not armed at all');
+});
+
+test('delayall reports a failed write instead of a bogus success count', async () => {
+  const store = fakeStore([member(3), member(6)], { failBulk: 'Quota exceeded' });
+  const h = createMemberHandlers(store, {}, { botDir: tmpBotDir() }, log);
+
+  const out = await h.handleDelayAll(['7', 'confirm']);
+  assert.match(out, /NOBODY was delayed/);
+  assert.match(out, /Quota exceeded/);
+  assert.match(out, /Nothing changed/);
 });

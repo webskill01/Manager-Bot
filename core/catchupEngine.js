@@ -199,14 +199,24 @@ export function createCatchupEngine(config, log, getSock, store) {
     until.setDate(until.getDate() + GRACE_DAYS);
     const delayUntil = formatDate(until);
 
-    let delayed = 0;
-    for (const m of cohort) {
-      try {
-        await store.update(m.phone, { delayUntil }, { skipRefresh: true });
-        delayed++;
-      } catch (err) { log.warn(`⚠️  Catchup delay failed for ${m.phone}: ${err.message}`); }
+    // ONE batched write. Looping per member hits the Sheets 60-writes-per-minute cap:
+    // with 98 members everyone past the cap stayed undelayed while the cycle still armed
+    // and claimed success, leaving them exposed to the next morning's overdue message and
+    // removal list. If the write fails now, nothing is armed at all.
+    let delayed;
+    try {
+      const res = await store.updateMany(cohort.map(m => m.phone), { delayUntil });
+      delayed = res.updated;
+    } catch (err) {
+      log.error(`❌ Catchup aborted — could not apply grace: ${err.message}`);
+      return `❌ Catch-up NOT started — could not apply the delay:\n${err.message}\n\n` +
+        `Nothing was changed and no messages were sent. Safe to retry.`;
     }
-    await store.refresh();
+    if (delayed < cohort.length) {
+      log.error(`❌ Catchup aborted — grace applied to only ${delayed}/${cohort.length}`);
+      return `❌ Catch-up NOT started — grace only applied to ${delayed} of ${cohort.length}.\n` +
+        `Refusing to run with members unprotected. Safe to retry.`;
+    }
 
     const deferred = startHour !== null;
     const state = {

@@ -62,9 +62,27 @@ export function createMemberStore(sheetClient, botName) {
     return findByPhone(phone);
   }
 
+  // Apply the SAME field updates to many members in one Sheets call. Use this for every
+  // bulk op (delayall, catchup grace): looping `update` issues one write request per
+  // member and Sheets caps writes at 60/minute per user, so a 98-member run silently
+  // failed for everyone past the cap. Throws if the write fails — callers must not
+  // report success on a partial apply.
+  async function updateMany(phones, updates) {
+    const rows = [];
+    const missing = [];
+    for (const phone of phones) {
+      const member = findByPhone(phone);
+      if (!member) { missing.push(phone); continue; }
+      rows.push({ ...member, ...updates, lastUpdated: new Date().toISOString() });
+    }
+    if (rows.length > 0) await sheetClient.batchUpdateRows(rows);
+    await refresh();
+    return { updated: rows.length, missing };
+  }
+
   async function initialize() {
     await refresh();
   }
 
-  return { initialize, refresh, findByPhone, findByName, getAll, getActive, add, update };
+  return { initialize, refresh, findByPhone, findByName, getAll, getActive, add, update, updateMany };
 }
