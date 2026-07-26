@@ -102,9 +102,19 @@ export async function startBot(config, log, authDir) {
   const trialEngine = createTrialRemovalEngine(config, log, getSock, getBroadcastJids, adminLids);
 
   log.info('📊 Connecting to Google Sheets...');
-  const sheetClient = await createSheetClient(config.serviceAccountPath, config.sheetId);
+  const sheetClient = await createSheetClient(config.serviceAccountPath, config.sheetId, log);
   const store = createMemberStore(sheetClient, config.botName);
-  await store.initialize();
+  // The first read retries transient failures internally (see sheetClient.withRetry).
+  // If it still fails, say so loudly and exit non-zero rather than dying with a bare
+  // unhandled rejection — pm2 restarts either way, but a silent death at "Connecting to
+  // Google Sheets..." is indistinguishable from a hang in the logs.
+  try {
+    await store.initialize();
+  } catch (err) {
+    log.error(`❌ Google Sheets unreachable — ${err.message}`);
+    log.error('   Checked: service-account.json, SHEET_ID, sheet shared with the service account, network/quota.');
+    throw err;
+  }
   log.info(`✅ Sheet loaded: ${store.getAll().length} members in cache`);
 
   const removalEngine = createRemovalEngine(config, log, getSock, store, getBroadcastJids);

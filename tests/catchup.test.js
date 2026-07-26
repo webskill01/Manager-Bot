@@ -602,3 +602,24 @@ test('delayall reports a failed write instead of a bogus success count', async (
   assert.match(out, /Quota exceeded/);
   assert.match(out, /Nothing changed/);
 });
+
+// ── Sheets transient-error classification ────────────────────────────────────
+// A quota 429 must retry (it clears within a minute); a 403/404 must NOT (retrying a
+// permission or wrong-id error just delays the real message and burns more quota).
+test('isTransient: retries rate limits and network blips, not credential errors', async () => {
+  const { __isTransientForTests } = await import('../core/sheetClient.js');
+  const t = __isTransientForTests;
+
+  assert.equal(t({ status: 429, message: 'Quota exceeded for quota metric' }), true);
+  assert.equal(t({ message: "Quota exceeded for quota metric 'Write requests'" }), true);
+  assert.equal(t({ status: 500, message: 'Internal error' }), true);
+  assert.equal(t({ status: 503, message: 'Backend Error' }), true);
+  assert.equal(t({ code: 'ECONNRESET', message: 'socket hang up' }), true);
+  assert.equal(t({ code: 'EAI_AGAIN', message: 'getaddrinfo' }), true);
+
+  assert.equal(t({ status: 403, message: 'The caller does not have permission' }), false);
+  assert.equal(t({ status: 404, message: 'Requested entity was not found' }), false);
+  assert.equal(t({ status: 400, message: 'Unable to parse range' }), false);
+  assert.equal(t({ message: 'invalid_grant' }), false);
+  assert.equal(t({}), false);
+});

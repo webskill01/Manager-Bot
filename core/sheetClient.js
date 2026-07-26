@@ -57,7 +57,24 @@ function memberToRow(member) {
   ];
 }
 
-export async function createSheetClient(serviceAccountPath, spreadsheetId) {
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Sheets rate limits are per-minute (60 reads and 60 writes per user), so a burst — a
+// bulk op, or a pm2 restart loop re-reading the sheet — gets 429s that clear on their own
+// within a minute. Retrying with backoff turns a crash into a pause. Non-transient errors
+// (bad credentials, wrong sheet id, malformed range) are thrown immediately: retrying
+// those just delays the real error.
+function isTransient(err) {
+  const status = err?.status ?? err?.code ?? err?.response?.status;
+  if (status === 429 || (Number(status) >= 500 && Number(status) < 600)) return true;
+  if (['ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED'].includes(err?.code)) return true;
+  return /quota|rate limit|backend error|timeout|socket hang up/i.test(err?.message || '');
+}
+
+// Exported for tests only — the retry policy is the thing worth pinning down.
+export { isTransient as __isTransientForTests };
+
+export async function createSheetClient(serviceAccountPath, spreadsheetId, log = null) {
   const auth = new google.auth.GoogleAuth({
     keyFile: serviceAccountPath,
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
@@ -65,8 +82,23 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
   const authClient = await auth.getClient();
   const sheets = google.sheets({ version: 'v4', auth: authClient });
 
+  const RETRY_DELAYS = [2000, 5000, 15000, 40000, 60000];
+
+  async function withRetry(label, fn) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        if (!isTransient(err) || attempt >= RETRY_DELAYS.length) throw err;
+        const wait = RETRY_DELAYS[attempt];
+        log?.warn?.(`⚠️  Sheets ${label} failed (${err.message.split('\n')[0]}) — retry ${attempt + 1}/${RETRY_DELAYS.length} in ${wait / 1000}s`);
+        await sleep(wait);
+      }
+    }
+  }
+
   async function getAll() {
-    const res = await sheets.spreadsheets.values.get({
+    const res = await withRetry('read', () => sheets.spreadsheets.values.get({
       spreadsheetId,
       range: DATA_RANGE,
       // UNFORMATTED_VALUE: return the raw cell value, not the display string.
@@ -78,13 +110,13 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
       // numeric value intact; phone/date columns the bot writes are RAW text and pass
       // through unchanged.
       valueRenderOption: 'UNFORMATTED_VALUE',
-    });
+    }));
     const rows = res.data.values || [];
     return rows.map((row, i) => rowToMember(row, i + 2));
   }
 
   async function appendRow(member) {
-    await sheets.spreadsheets.values.append({
+    await withRetry('append', () => sheets.spreadsheets.values.append({
       spreadsheetId,
       range: `${SHEET_NAME}!${COL_RANGE}`,
       valueInputOption: 'RAW',
@@ -94,17 +126,17 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
       // lands on top of the previous one, silently deleting the member just added.
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [memberToRow(member)] },
-    });
+    }));
   }
 
   async function updateRow(rowIndex, member) {
     const range = `${SHEET_NAME}!A${rowIndex}:P${rowIndex}`;
-    await sheets.spreadsheets.values.update({
+    await withRetry('update', () => sheets.spreadsheets.values.update({
       spreadsheetId,
       range,
       valueInputOption: 'RAW',
       requestBody: { values: [memberToRow(member)] },
-    });
+    }));
   }
 
   async function clearData() {
@@ -135,7 +167,7 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
     const CHUNK = 200;
     for (let i = 0; i < members.length; i += CHUNK) {
       const slice = members.slice(i, i + CHUNK);
-      await sheets.spreadsheets.values.batchUpdate({
+      await withRetry('batchUpdate', () => sheets.spreadsheets.values.batchUpdate({
         spreadsheetId,
         requestBody: {
           valueInputOption: 'RAW',
@@ -144,7 +176,7 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId) {
             values: [memberToRow(m)],
           })),
         },
-      });
+      }));
     }
   }
 
