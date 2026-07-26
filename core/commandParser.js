@@ -551,13 +551,26 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           if (!catchupEngine) return '❌ catchup not available on this bot.';
           if (/^status$/i.test(args[0] || '')) return catchupEngine.status();
           if (!/^\d{1,2}$/.test(args[0] || '')) {
-            return '❌ Format: catchup [days] [confirm]  — days = how long the bot was down\n' +
-              '   e.g. catchup 8          (preview)\n' +
-              '        catchup 8 confirm  (start)\n' +
-              '        catchup status     (progress)';
+            return '❌ Format: catchup [days] [confirm] [hour]  — days = how long the bot was down\n' +
+              '   catchup 8            preview, sends nothing\n' +
+              '   catchup 8 confirm    start now — first message goes out immediately\n' +
+              '   catchup 8 confirm 9  grace applies NOW, first message at 9 AM\n' +
+              '   catchup status       progress\n' +
+              '   stop catchup         cancel';
           }
           const windowDays = Math.min(Math.max(parseInt(args[0], 10), 1), 60);
-          if (/^confirm$/i.test(args[1] || '')) return catchupEngine.start(windowDays);
+          if (/^confirm$/i.test(args[1] || '')) {
+            // Optional hour (0–23): defer the first group message to a civil time while
+            // applying the grace immediately.
+            let startHour = null;
+            if (args[2] !== undefined) {
+              if (!/^\d{1,2}$/.test(args[2]) || parseInt(args[2], 10) > 23) {
+                return '❌ Hour must be 0–23 (24-hour clock). e.g. catchup 8 confirm 9';
+              }
+              startHour = parseInt(args[2], 10);
+            }
+            return catchupEngine.start(windowDays, startHour);
+          }
           return catchupEngine.preview(windowDays);
         }
 

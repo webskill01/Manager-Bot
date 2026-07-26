@@ -115,7 +115,16 @@ export function createCatchupEngine(config, log, getSock, store) {
       `To start: catchup ${windowDays} confirm`;
   }
 
-  async function start(windowDays) {
+  // Next occurrence of `hour` (0–23) local time. Today if it hasn't passed, else tomorrow.
+  function nextHourSlot(hour) {
+    const t = new Date();
+    t.setMinutes(0, 0, 0);
+    t.setHours(hour);
+    if (t.getTime() <= Date.now()) t.setDate(t.getDate() + 1);
+    return t;
+  }
+
+  async function start(windowDays, startHour = null) {
     if (!groupCfg()) {
       return '❌ catchup works in group reminder mode only — set reminder.mode to "group" and fill reminder.groupId in this bot\'s config.';
     }
@@ -127,9 +136,12 @@ export function createCatchupEngine(config, log, getSock, store) {
       return `✅ Nobody fell due in the last ${windowDays} days and is still unpaid — nothing to catch up on.`;
     }
 
-    // Grace first, messages second — if the process dies between the two, members are
-    // protected rather than exposed.
-    const until = new Date();
+    // Grace is applied NOW even when the first message is deferred: the whole point of a
+    // deferred start is that you can arm this at midnight and have the cohort already
+    // protected from the 6:30 digest and the removal list before it fires.
+    // Counted from the first message day, so the last stage still lands inside the window.
+    const firstSlot = startHour === null ? new Date() : nextHourSlot(startHour);
+    const until = new Date(firstSlot);
     until.setHours(0, 0, 0, 0);
     until.setDate(until.getDate() + GRACE_DAYS);
     const delayUntil = formatDate(until);
@@ -143,25 +155,35 @@ export function createCatchupEngine(config, log, getSock, store) {
     }
     await store.refresh();
 
+    const deferred = startHour !== null;
     const state = {
       startedAt: new Date().toISOString(),
       windowDays,
       delayUntil,
+      startHour,
       stage: 0,
       cohort: cohort.map(m => ({ name: m.name, phone: m.phone })),
       log: [],
     };
+    if (deferred) state.nextRunAt = firstSlot.toISOString();
     saveState(state);
-    log.info(`📣 Catchup started — ${cohort.length} member(s), delayed until ${delayUntil}`);
+    log.info(`📣 Catchup started — ${cohort.length} member(s), delayed until ${delayUntil}${deferred ? `, first message ${firstSlot.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}` : ''}`);
 
-    // Fire stage 0 in the background so the command reply is instant.
-    runStage().catch(err => log.error(`❌ Catchup stage 0 failed: ${err.message}`));
+    const when = fmt => firstSlot.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', ...fmt });
+    if (deferred) {
+      scheduleIn(firstSlot.getTime() - Date.now());
+    } else {
+      // Fire stage 0 in the background so the command reply is instant.
+      runStage().catch(err => log.error(`❌ Catchup stage 0 failed: ${err.message}`));
+    }
 
-    return `📣 Catch-up started for ${cohort.length} member(s).\n` +
-      `⏸️ All delayed until ${delayUntil} (billing dates unchanged).\n\n` +
-      `  Today  → ${STAGES[0].label}  (sending now)\n` +
-      `  Day 2  → ${STAGES[1].label}\n` +
-      `  Day 3  → ${STAGES[2].label}\n\n` +
+    return `📣 Catch-up armed for ${cohort.length} member(s).\n` +
+      `⏸️ All delayed until ${delayUntil} — billing dates unchanged.\n` +
+      `   They are ALREADY hidden from the daily overdue message, the final reminder\n` +
+      `   and the removal list, starting immediately.\n\n` +
+      `  ${deferred ? when({ weekday: 'short', hour: 'numeric', hour12: true }) : 'Now'}  → ${STAGES[0].label}\n` +
+      `  +1 day  → ${STAGES[1].label}\n` +
+      `  +2 days → ${STAGES[2].label}\n\n` +
       `Anyone who pays drops out automatically.\nCheck progress: catchup status`;
   }
 
@@ -228,7 +250,11 @@ export function createCatchupEngine(config, log, getSock, store) {
     state.stage += 1;
     if (state.stage >= STAGES.length) { finish(state); return; }
     // ~24h later, jittered, so three consecutive days never land at the same clock time.
-    const ms = DAY_MS + randomBetween(-90 * 60000, 90 * 60000);
+    // With a startHour the jitter is one-sided (never earlier), so a 9 AM cycle can drift
+    // to 10:30 but never back into the small hours.
+    const ms = state.startHour !== null && state.startHour !== undefined
+      ? DAY_MS + randomBetween(0, 90 * 60000)
+      : DAY_MS + randomBetween(-90 * 60000, 90 * 60000);
     // Persisted so a restart resumes at the real slot instead of firing the next stage
     // early — three group messages in one afternoon is exactly what this avoids.
     state.nextRunAt = new Date(Date.now() + ms).toISOString();

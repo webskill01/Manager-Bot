@@ -181,7 +181,8 @@ test('catchup start: applies grace, freezes the cohort, and sends stage 1 with t
   const e = createCatchupEngine(cfg, log, () => sock, store);
 
   const reply = await e.start(8);
-  assert.match(reply, /Catch-up started for 2 member/);
+  assert.match(reply, /Catch-up armed for 2 member/);
+  assert.match(reply, /Now {2}→ payment reminder/, 'no start hour = fires immediately');
 
   // Grace applied to both, billing untouched.
   assert.equal(store.writes.length, 2);
@@ -312,6 +313,58 @@ test('catchup: empty cohort is reported, nothing is written or scheduled', async
   assert.match(await e.start(8), /nothing to catch up on/);
   assert.equal(store.writes.length, 0);
   assert.equal(fs.existsSync(path.join(botDir, 'catchup-state.json')), false);
+});
+
+// A deferred start is the whole point of running this at midnight: the grace has to land
+// NOW so the 6:30 digest skips the cohort, but the group message must wait for a civil hour.
+test('catchup with a start hour applies grace immediately but sends nothing yet', async () => {
+  const botDir = tmpBotDir();
+  const store = fakeStore([member(3), member(6)]);
+  const sent = [];
+  const sock = {
+    user: {},
+    groupMetadata: async () => ({ participants: [] }),
+    sendMessage: async (jid, msg) => { sent.push(msg); },
+  };
+  const e = createCatchupEngine(baseConfig(botDir), log, () => sock, store);
+
+  const reply = await e.start(8, 9);
+  await new Promise(r => setImmediate(r));
+
+  assert.equal(sent.length, 0, 'nothing sent at arm time');
+  assert.equal(store.writes.length, 2, 'grace applied to both immediately');
+  for (const w of store.writes) {
+    assert.deepEqual(Object.keys(w.updates), ['delayUntil']);
+  }
+  assert.match(reply, /ALREADY hidden from the daily overdue message/);
+  assert.ok(!/ {2}Now {2}→/.test(reply), 'reply names the scheduled hour, not "Now"');
+
+  const state = JSON.parse(fs.readFileSync(path.join(botDir, 'catchup-state.json'), 'utf8'));
+  assert.equal(state.stage, 0, 'still on stage 1 — it has not run');
+  assert.equal(state.startHour, 9);
+  const slot = new Date(state.nextRunAt);
+  assert.equal(slot.getHours(), 9, 'scheduled for 9 AM local');
+  assert.ok(slot.getTime() > Date.now(), 'in the future');
+
+  e.stop();
+});
+
+test('catchup start hour: grace is counted from the first message day, not the arm time', async () => {
+  const botDir = tmpBotDir();
+  const store = fakeStore([member(3)]);
+  const sock = { user: {}, groupMetadata: async () => ({ participants: [] }), sendMessage: async () => {} };
+  const e = createCatchupEngine(baseConfig(botDir), log, () => sock, store);
+
+  await e.start(8, 9);
+  const state = JSON.parse(fs.readFileSync(path.join(botDir, 'catchup-state.json'), 'utf8'));
+  const firstSlot = new Date(state.nextRunAt);
+  const expected = new Date(firstSlot);
+  expected.setHours(0, 0, 0, 0);
+  expected.setDate(expected.getDate() + e.GRACE_DAYS);
+  assert.equal(state.delayUntil, formatDate(expected),
+    'the last stage must still land inside the grace window');
+
+  e.stop();
 });
 
 test('catchup: a stage with the socket down does not consume the stage', async () => {

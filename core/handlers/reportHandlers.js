@@ -522,7 +522,9 @@ This bot has NO scheduled jobs — it only acts when you send a command.`;
 
 📣 OUTAGE CATCH-UP  (group mode only)
 • catchup [days]  →  preview who was missed while the bot was down
-• catchup [days] confirm  →  send all 3 messages over 3 days, +3d grace
+• catchup [days] confirm  →  start NOW, first message goes out immediately
+• catchup [days] confirm [hour]  →  grace applies now, 1st message at that hour
+     e.g. catchup 8 confirm 9  →  protected instantly, message at 9 AM
 • catchup status  →  stage, who paid, who's left
 • stop catchup  →  cancel (grace stays)
 

@@ -557,9 +557,10 @@ export function createReminderSender(config, log) {
       log.info(`⏰ Reminder catch-up: ${pending.length} missed reminder(s) after restart (${state.sentPhones.length} already sent today)`);
       const result = await runBatch(pending, getSock, botDir, state, 'Reminder catch-up', store);
 
-      if (broadcast && result.autoRenewed?.length > 0) {
-        const lines = result.autoRenewed.map(m => `  • ${m.name}  ${m.phone}${m.rolled ? ` (+${m.rolled} ref rolled to next month)` : ''}`).join('\n');
-        try { await broadcast(`🎁 Auto-renewed (2 refs) — catch-up after restart:\n${lines}`); } catch (_) {}
+      // Logged, not broadcast — see the note in index.js. Auto-renewals show up in the
+      // `digest` command; no admin gets an unprompted DM about them.
+      if (result.autoRenewed?.length > 0) {
+        log.info(`🎁 Auto-renewed (2 refs), restart catch-up: ${result.autoRenewed.map(m => `${m.name} ${m.phone}${m.rolled ? ` +${m.rolled} rolled` : ''}`).join(', ')}`);
       }
       return result;
     } finally {

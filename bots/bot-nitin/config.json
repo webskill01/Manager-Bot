@@ -1,5 +1,6 @@
 {
   "botName": "bot-nitin",
+  "warmupHours": 0,
   "paidGroups": [
     "120363423482434246@g.us",
     "120363406216444790@g.us",
@@ -62,18 +63,40 @@
   "welcomeMessage": "Group ch duty 120+ group cho forward krde aa veer is krke advance Paytm kise nu ni Krna 🚨 \n\n Group ch free and exchange da msg allowed ni haiga ji ⚠️\n\n Group ch je kisi fraud number di duty share hove ta sanu personally usda number msg krdo 🙏",
   "trial": {
     "groupId": "120363407001665784@g.us",
-    "whitelist": ["9914623976","6284992669","9465995696","9465805369","9464177279","9464180617"],
+    "whitelist": [
+      "9914623976",
+      "6284992669",
+      "9465995696",
+      "9465805369",
+      "9464177279",
+      "9464180617"
+    ],
     "batchSize": 10,
-    "batchesPerDay": { "min": 3, "max": 5 },
+    "batchesPerDay": {
+      "min": 3,
+      "max": 5
+    },
     "messages": {
       "warningText": "🚨🚨⚠️ Important Notice Sare Members Layi ⚠️🚨🚨\n\nAjj ton sare free members group ton remove kite ja rahe ne.\n\nJede veer group ch continue rehna chaunde ne, oh apna \nName \nAddress\nId Proof share kar do\n\nMonthly charge ₹90 hovega te group 24/7 duty basis te chalega.\n\nApni details is no te share kro\n+91 94641 80617",
-      "image": { "path": "./trial-image.jpeg", "caption": "ਕੇਵਲ *90*/- ਮਹੀਨੇ ਵਿਚ 12 ਅਲੱਗ ਅਲੱਗ ਸ਼ਹਿਰਾਂ ਦੇ ਗਰੁੱਪ ਜਿਸ ਵਿਚ ਕੇਵਲ ਉਸ ਹੀ ਸ਼ਹਿਰ ਦੀ ਡਿਊਟੀ *FORWARD* ਕਰਾਂਗੇ\n\nMessage me to get added in these groups 👇🏻👇🏻\n94641-80617" },
-      "video": { "path": "./trial-video.mp4", "caption": "*800+ daily duty | No exchange No Free | 12 city wise group only 90/- per month* \n\nMessage Hi, to join\n94641-80617" }
+      "image": {
+        "path": "./trial-image.jpeg",
+        "caption": "ਕੇਵਲ *90*/- ਮਹੀਨੇ ਵਿਚ 12 ਅਲੱਗ ਅਲੱਗ ਸ਼ਹਿਰਾਂ ਦੇ ਗਰੁੱਪ ਜਿਸ ਵਿਚ ਕੇਵਲ ਉਸ ਹੀ ਸ਼ਹਿਰ ਦੀ ਡਿਊਟੀ *FORWARD* ਕਰਾਂਗੇ\n\nMessage me to get added in these groups 👇🏻👇🏻\n94641-80617"
+      },
+      "video": {
+        "path": "./trial-video.mp4",
+        "caption": "*800+ daily duty | No exchange No Free | 12 city wise group only 90/- per month* \n\nMessage Hi, to join\n94641-80617"
+      }
     },
     "completionMessage": "✅ Trial removal cycle complete."
   },
-  "allowedNumbers": ["6283380110", "9914623976"],
-  "auditExclude": ["9464177279", "9464180617"],
+  "allowedNumbers": [
+    "6283380110",
+    "9914623976"
+  ],
+  "auditExclude": [
+    "9464177279",
+    "9464180617"
+  ],
   "schedule": {
     "morningDigest": "0 6 * * *",
     "reminderSend": "30 6 * * *",
@@ -87,8 +110,6 @@
     "groupReminder": "Sat Sri Akal ji 🙏🏻 Aaj {date} nu ehna members da ik mahina pura ho gya — upar dite QR te 90 pay karke dss deyo ji 🙏🏻:",
     "groupOverdue": "🚨 Inna veera di renew di aaj last date aaji — jaldi to jaldi renew karke dss deyo ji 🙏🏻:",
     "groupAutoRenewed": "Inna members ne 2 bande add karaye ne — ehna da is mahine da renewal FREE aaji",
-
-    
     "reminder": "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\niss mahine lyi iste 90 pay krdo ji 🙏🏻",
     "referralReminder": "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\nTusi ik banda add kraya si, iss lyi iste sirf ₹45/- pay krdo ji 🙏🏻",
     "overdue": "Sat Sri Akal {name} paaji 🙏🏻\n🚨🚨 Aaj last date aaji renew krke dss deyo. 🙏🏻",

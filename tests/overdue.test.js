@@ -42,32 +42,34 @@ function daysAgo(n) {
   return formatDate(d);
 }
 
-test('overdue check is idempotent — re-running never double-messages members or the owner', async () => {
+test('overdue check is idempotent, and the owner is never DM\'d a removal list', async () => {
   const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ovr-'));
   const store = makeStore([
     // Exactly 6 days overdue (removal day - 1) → gets the FINAL reminder.
     { name: 'A', phone: '9000000001', status: 'ACTIVE', billingDate: daysAgo(6), renewals: 0 },
     // 5 days overdue → gets a day-5 (autoReminderDays) reminder.
     { name: 'B', phone: '9000000002', status: 'ACTIVE', billingDate: daysAgo(5), renewals: 0 },
-    // 7 days overdue → removal day: consolidated owner list only, no member DM.
+    // 7 days overdue → removal day. Used to trigger a daily owner DM; since 2026-07-27 it
+    // is log-only and pulled with the `removal` command.
     { name: 'C', phone: '9000000003', status: 'ACTIVE', billingDate: daysAgo(7), renewals: 0 },
   ]);
   const { sock, sent } = makeSock();
   const broadcastJids = ['owner@s.whatsapp.net'];
   const engine = createOverdueEngine(makeConfig(botDir), log);
 
-  // First run: A final reminder + B day-6 reminder + 1 consolidated list to the owner = 3 sends.
+  // First run: A final reminder + B day-5 reminder. Nothing to the owner.
   await engine.runOverdueCheck(store, () => sock, broadcastJids);
-  assert.equal(sent.length, 3, 'first run sends both member reminders and one owner list');
+  assert.equal(sent.length, 2, 'two member reminders, no owner list');
+  assert.equal(sent.filter(s => s.jid === 'owner@s.whatsapp.net').length, 0,
+    'the owner must never receive an unprompted DM');
 
   // Second run (e.g. a reconnect catch-up later the same day) must send nothing new.
   await engine.runOverdueCheck(store, () => sock, broadcastJids);
-  assert.equal(sent.length, 3, 'second run is a no-op — state.json dedupes everything');
+  assert.equal(sent.length, 2, 'second run is a no-op — state.json dedupes everything');
 
   // State file should record the day handled.
   const state = JSON.parse(fs.readFileSync(path.join(botDir, 'overdue-state.json'), 'utf8'));
   assert.equal(state.done, true);
-  assert.equal(state.listSent, true);
   assert.equal(state.sentPhones.length, 2);
 
   fs.rmSync(botDir, { recursive: true, force: true });

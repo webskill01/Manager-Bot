@@ -208,42 +208,22 @@ export function createOverdueEngine(config, log) {
         }
       }
 
-      // Send consolidated list to all broadcast JIDs — once per day. listSent guards against a
-      // reconnect catch-up re-spamming the owner with the same list.
-      if (day7plus.length > 0 && !state.listSent) {
-        const listLines = day7plus
-          .map((m, i) => `[${i + 1}] ${m.name} • ${m.phone} • ${m.daysOverdue} days overdue`)
-          .join('\n');
-
-        const msg = config.messages.overdueConsolidated
-          .replace('{count}', day7plus.length)
-          .replace('{list}', listLines);
-
-        const jids = Array.isArray(broadcastJids) ? broadcastJids : [broadcastJids];
-        let listDelivered = false;
-        for (const jid of jids) {
-          try {
-            await sock.sendMessage(jid, { text: msg });
-            listDelivered = true;
-            log.info(`📋 Overdue list sent to ${jid} — ${day7plus.length} members`);
-          } catch (err) {
-            log.warn(`❌ Failed to send overdue list to ${jid}: ${err.message}`);
-          }
-        }
-        if (listDelivered) {
-          state.listSent = true;
-          saveState(state);
-        }
+      // The consolidated removal list used to be DM'd to every admin here, once a day.
+      // Removed 2026-07-27 along with the morning/evening digests: an unprompted daily DM
+      // to admins is the same traffic pattern that got a fresh number banned, and the
+      // list was never urgent — it's a work queue, not an alert. Pull it on demand with
+      // the `removal` command (same 7+ day list) or `overdue` (which also arms the
+      // R1/S2/W3 batch actions). Logged so it's still visible in pm2 logs.
+      if (day7plus.length > 0) {
+        log.info(`📋 ${day7plus.length} member(s) at day-${removalDay}+ — run "removal" to see the list`);
       }
 
-      // Mark the day handled ONLY if everything actually went out — every targeted member is
-      // now recorded and the owner list (if any) was sent. A partial run (a send threw, socket
-      // dropped mid-batch) leaves done=false so the next reconnect catch-up retries the rest.
-      // Group mode never DMs the day-5 milestone set, so only finalDay counts toward done.
+      // Mark the day handled ONLY if every targeted member is now recorded. A partial run
+      // (a send threw, socket dropped mid-batch) leaves done=false so the next reconnect
+      // catch-up retries the rest. Group mode never DMs the day-5 milestone set, so only
+      // finalDay counts toward done.
       const mustDm = groupMode ? finalDay : [...finalDay, ...day6];
-      const allMembersDone = mustDm.every(m => state.sentPhones.includes(m.phone));
-      const listDone = day7plus.length === 0 || state.listSent;
-      state.done = allMembersDone && listDone;
+      state.done = mustDm.every(m => state.sentPhones.includes(m.phone));
       saveState(state);
     } finally {
       _running = false;
