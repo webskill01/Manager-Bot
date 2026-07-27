@@ -35,10 +35,6 @@
     "finalReminderDays": 6,
     "consolidatedListDays": 7
   },
-  "reminder": {
-    "mode": "group",
-    "groupId": "120363424287416053@g.us"
-  },
   "rateLimits": {
     "memberToMemberGapMinMs": 7000,
     "memberToMemberGapMaxMs": 10000,
@@ -53,9 +49,9 @@
     "circuitBreakerCooldownMs": 60000
   },
   "groupLinks": [
-    "1. SINGH TRAVELS (PAID) ( ONLY DELHI // GURGAON // NOIDA - PICK-DROP):\n https://chat.whatsapp.com/EJFSvUD6aSO9S5LgjryUBa?s=cl&p=a&ilr=4",
-    "2. SINGH TRAVELS (PAID) (Chandigarh//mohali//zirakpur):\n https://chat.whatsapp.com/Ki6BbskwHGNF56sjkL1Nzo?s=cl&p=a&ilr=4",
-    "3. SINGH TRAVELS (PAID) (MIX DUTY):\n https://chat.whatsapp.com/LAmPHj9PQ8289YJnXgdce1?s=cl&p=a&ilr=4"
+    "1. SINGH TRAVELS (PAID) ( ONLY DELHI // GURGAON // NOIDA - PICK-DROP):\n https://chat.whatsapp.com/CfQD1yDXh9286SfULIm0vX?s=cl&p=a&ilr=4",
+    "2. SINGH TRAVELS (PAID) (Chandigarh//mohali//zirakpur):\n https://chat.whatsapp.com/LGYSy7XFPHx58Q7sZCTYKx?s=cl&p=a&ilr=4",
+    "3. SINGH TRAVELS (PAID) (MIX DUTY):\n https://chat.whatsapp.com/J9m6Y7jKTNvCbKPJjZdQmM?s=cl&p=a&ilr=4"
   ],
   "welcomeMessage": "🚨 Group ch share hon waliyan duties kai groups cho forward hundiyan ne, is karke kise nu vi advance payment na kro.\n\n⚠️ Free te Exchange de messages allowed nahi han.\n\n🙏 Je kise fraud number di duty vekho ta number private msg kar deo.",
   "trial": {
@@ -97,9 +93,6 @@
     "jitterMaxMinutes": 20
   },
   "messages": {
-    "groupReminder": "Hlo veer 🙏\nAjj {date} — Singh Travels paid group di renewal date aa gyi hai 🚨\nupar dite QR te, repay karke dass deo ji:",
-    "groupOverdue": "🚨 Singh Travels — inna members di renew di date nikal chuki hai, jaldi repay kardo ji:",
-    "groupAutoRenewed": "Singh Travels — inna veera ne 2 members add karaye, inna da eh mahina FREE",
     "reminder": "Hlo veer\nAjj tuhadi singh travels monthly paid groups di last date hai 🚨🚨\n\nRepay krdeo",
     "referralReminder": "Hlo veer\nAjj tuhadi singh travels monthly paid groups di last date hai 🚨🚨\n\nRepay krdeo",
     "overdue": "Hlo veer\ntuhadi monthly paid group di date nikal gyi hai 🚨 🚨 \nrepay krdo",

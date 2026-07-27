@@ -34,10 +34,6 @@
     "finalReminderDays": 4,
     "consolidatedListDays": 5
   },
-  "reminder": {
-    "mode": "group",
-    "groupId": ""
-  },
   "rateLimits": {
     "memberToMemberGapMinMs": 7000,
     "memberToMemberGapMaxMs": 10000,
@@ -97,9 +93,6 @@
     "jitterMaxMinutes": 20
   },
   "messages": {
-    "groupReminder": "🕉️*HAR HAR MAHADEV*🕉️\n\nAaj {date} — in members ka Mahadev Travels paid group ka monthly plan complete ho gya hai. Upar diye QR par ₹99 renew karke screenshot bhej dein:",
-    "groupOverdue": "🚨 In members ki renewal date nikal chuki hai — kripya jald se jald renew karein: taaki aapko bina break ke duties milti rahe \n\nPayment ke baad ek screenshot share kar dena \n\nThank you bhai",
-    "groupAutoRenewed": "In members ne 2 log add karaye — inka is mahine ka renewal FREE",
     "reminder": "🕉️*HAR HAR MAHADEV*🕉️\n\nApka Mahadev Travels paid group ka monthly plan complete ho gya hai\n\nkindly ₹99 ka payment renew kar dena, taaki aapko bina break ke duties milti rahe \n\nPayment ke baad ek screenshot share kar dena \n\nThank you bhai",
     "referralReminder": "🕉️*HAR HAR MAHADEV*🕉️\n\nApka Mahadev Travels paid group ka monthly plan complete ho gya hai\n\nkindly ₹99 ka payment renew kar dena, taaki aapko bina break ke duties milti rahe \n\nPayment ke baad ek screenshot share kar dena \n\nThank you bhai",
     "overdue": "Hlo Sir Aaj last date hai repay krne ki. \n\n Upar diye QR par pay krke screenshot bhej do",
