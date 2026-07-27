@@ -468,6 +468,7 @@ never removes anyone — you do that yourself with "kick [phone]".
           not called yet.  ("calls" does the same thing)
 
 Nobody is ever removed by these. When you want a seat back: kick [phone]
+Once kicked, they vanish from "pending" and "log" for good.
 
 🔍 LOOKUPS
 • find [phone or name]  /  status [phone]
@@ -475,7 +476,8 @@ Nobody is ever removed by these. When you want a seat back: kick [phone]
 
 📊 REPORTS  (nothing is ever sent to you on a timer)
 • digest  →  today at a glance
-• summary / summary 1  →  joins and calls for a day
+• summary / summary 1  →  the day's money: joins, revenue, split
+     (call activity is NOT here — that's "log")
 • revenue  →  joining fees this month + split
 • weekly / monthly / growth / trend
 • stats / groups / ping

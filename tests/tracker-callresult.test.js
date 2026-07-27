@@ -71,6 +71,27 @@ test('pending keeps only pitches with no answer logged — either answer resolve
   assert.doesNotMatch(msg, /9000000002/, 'not-interested is an answer — resolved');
 });
 
+test('REMOVED people never appear in pending or the log, whatever was logged about them', async () => {
+  const old = '01-01-2026';
+  const store = fakeStore([
+    { name: 'GoneKeen', phone: '9000000001', status: 'REMOVED', joinDate: old, callDate: old, callResult: 'interested' },
+    { name: 'GoneNo', phone: '9000000002', status: 'REMOVED', joinDate: old, callDate: old, callResult: 'not-interested' },
+    { name: 'GoneSilent', phone: '9000000003', status: 'REMOVED', joinDate: old, callDate: old, callResult: '' },
+    { name: 'GoneUncalled', phone: '9000000004', status: 'REMOVED', joinDate: old },
+    { name: 'Here', phone: '9000000005', status: 'NEW', joinDate: old },
+  ]);
+  const h = createTrackerHandlers(store, groupManager, cfg, log);
+
+  const pending = await h.handlePending();
+  const logOut = (await h.handleLog()).join('\n');
+  for (const gone of ['9000000001', '9000000002', '9000000003', '9000000004']) {
+    assert.ok(!pending.includes(gone), `${gone} must not be in pending`);
+    assert.ok(!logOut.includes(gone), `${gone} must not be in the log`);
+  }
+  assert.match(pending, /9000000005/);
+  assert.match(logOut, /In groups: 1/, 'counts exclude removed people');
+});
+
 test('log reports both outcome buckets by name', async () => {
   const old = '01-01-2026';
   const store = fakeStore([

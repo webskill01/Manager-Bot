@@ -1,6 +1,29 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import fs from 'fs';
+import { COLUMNS } from '../core/sheetClient.js';
+
+// Rows are read and written positionally, so this list IS the data contract. A column
+// omitted from a real sheet shifts every field after it and nothing throws — which is
+// exactly what happened to a live sheet that was missing DELAY_UNTIL.
+test('COLUMNS is the canonical A→Q order and matches rowToMember exactly', () => {
+  assert.deepEqual(COLUMNS, [
+    'NAME', 'PHONE', 'JOIN_DATE', 'BILLING_DATE', 'STATUS', 'RENEWALS', 'PAID_LAST',
+    'REFERENCE', 'SKIP_REASON', 'ADDED_BY', 'LAST_UPDATED', 'LAST_RENEWED',
+    'REF_CREDIT_DATE', 'REF_LOG', 'DELAY_UNTIL', 'CALL_DATE', 'CALL_RESULT',
+  ]);
+  assert.equal(COLUMNS.length, 17, 'A through Q');
+  assert.equal(COLUMNS.indexOf('DELAY_UNTIL'), 14, 'O');
+  assert.equal(COLUMNS.indexOf('CALL_DATE'), 15, 'P');
+  assert.equal(COLUMNS.indexOf('CALL_RESULT'), 16, 'Q');
+});
+
+test('check-sheets validates the header against COLUMNS', () => {
+  const src = fs.readFileSync(new URL('../scripts/check-sheets.js', import.meta.url), 'utf8');
+  assert.match(src, /import \{ COLUMNS \}/, 'must use the one source of truth');
+  assert.match(src, /MEMBERS!A1:Q/, 'must read the header row and span to Q');
+  assert.match(src, /COLUMN MISMATCH/, 'must report a mismatch loudly');
+});
 
 // sheetClient builds rows positionally; the mapping is the contract worth pinning.
 test('sheetClient spans A2:Q and maps callResult to column Q (index 16)', () => {

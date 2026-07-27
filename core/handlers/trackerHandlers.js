@@ -42,7 +42,8 @@ export function createTrackerHandlers(store, groupManager, config, log) {
   // called, then people who were called but whose answer was never recorded.
   async function handlePending() {
     await store.refresh();
-    const all = store.getAll();
+    // Removed people are never called again — they aren't in the groups any more.
+    const all = store.getAll().filter(m => m.status !== 'REMOVED');
 
     const due = all.filter(m => isCallDue(m, callAfterDays))
       .sort((a, b) => (daysInGroup(b) ?? 0) - (daysInGroup(a) ?? 0));
@@ -128,7 +129,11 @@ export function createTrackerHandlers(store, groupManager, config, log) {
   // and not-interested lists get long, and one WhatsApp message caps near 4096 chars.
   async function handleLog() {
     await store.refresh();
-    const all = store.getAll();
+    // Anyone removed from the groups is out of the record entirely. The uncalled buckets
+    // filter on status so they were already safe, but the interested / not-interested
+    // buckets key off callResult alone — without this, someone called months ago and
+    // since kicked would sit in the log forever as a live prospect.
+    const all = store.getAll().filter(m => m.status !== 'REMOVED');
 
     const interested = all.filter(m => m.callResult === 'interested');
     const notInterested = all.filter(m => m.callResult === 'not-interested');
@@ -143,7 +148,7 @@ export function createTrackerHandlers(store, groupManager, config, log) {
     const lines = [
       `📋 CALL LOG — ${config.botName}`,
       `━━━━━━━━━━━━━━━━━━━`,
-      `Called: ${called}   ·   Not called yet: ${notCalled.length}   ·   Total: ${all.length}`,
+      `Called: ${called}   ·   Not called yet: ${notCalled.length}   ·   In groups: ${all.length}`,
       answered > 0 ? `Of ${answered} who answered, ${interested.length} were interested (${rate}%)` : '',
     ].filter(Boolean);
 

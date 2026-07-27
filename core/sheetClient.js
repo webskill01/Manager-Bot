@@ -7,6 +7,17 @@ const SHEET_NAME = 'MEMBERS';
 const DATA_RANGE = `${SHEET_NAME}!A2:Q`;
 const COL_RANGE = 'A:Q';
 
+// The canonical column order, A→Q. Rows are read and written POSITIONALLY — the header
+// text in the sheet is cosmetic, only the position matters. Inserting or omitting a column
+// mid-sheet silently shifts every field after it (a date landing in DELAY_UNTIL hides that
+// member from reminders; "interested" landing in CALL_DATE parses to garbage), and nothing
+// errors. `scripts/check-sheets.js` validates a real sheet against this list.
+export const COLUMNS = [
+  'NAME', 'PHONE', 'JOIN_DATE', 'BILLING_DATE', 'STATUS', 'RENEWALS', 'PAID_LAST',
+  'REFERENCE', 'SKIP_REASON', 'ADDED_BY', 'LAST_UPDATED', 'LAST_RENEWED',
+  'REF_CREDIT_DATE', 'REF_LOG', 'DELAY_UNTIL', 'CALL_DATE', 'CALL_RESULT',
+];
+
 function rowToMember(row, rowIndex) {
   return {
     rowIndex,

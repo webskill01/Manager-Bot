@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
+import { COLUMNS } from '../core/sheetClient.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const botName = process.argv[2];
@@ -68,12 +69,40 @@ try {
   const sheets = google.sheets({ version: 'v4', auth: authClient });
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
-    range: 'MEMBERS!A2:P',
+    range: 'MEMBERS!A1:Q',
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
-  const rows = res.data.values || [];
-  console.log(`   ✅ Read OK — ${rows.length} rows in ${Date.now() - started}ms\n`);
-  process.exit(0);
+  const [header = [], ...rows] = res.data.values || [];
+  console.log(`   ✅ Read OK — ${rows.length} rows in ${Date.now() - started}ms`);
+
+  // Columns are positional. A missing one shifts every field after it and NOTHING errors —
+  // this check is the only thing standing between that and silently corrupt data.
+  const letter = i => String.fromCharCode(65 + i);
+  const norm = s => String(s ?? '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  const problems = [];
+  for (let i = 0; i < COLUMNS.length; i++) {
+    const got = norm(header[i]);
+    if (got !== COLUMNS[i]) {
+      problems.push(`   ${letter(i)}: expected ${COLUMNS[i].padEnd(16)} found ${got || '(empty)'}`);
+    }
+  }
+
+  if (problems.length === 0) {
+    console.log(`   ✅ Columns OK — all ${COLUMNS.length} headers A→Q match\n`);
+    process.exit(0);
+  }
+
+  console.error(`\n❌ COLUMN MISMATCH — ${problems.length} of ${COLUMNS.length} columns are wrong\n`);
+  console.error(problems.join('\n'));
+  console.error(`\n   Header has ${header.length} column(s), expected ${COLUMNS.length}.`);
+  console.error('\n   → Rows are read POSITIONALLY. A missing column shifts every field after');
+  console.error('     it, with no error: a date in DELAY_UNTIL hides that member from');
+  console.error('     reminders, and text in CALL_DATE parses to garbage.');
+  console.error('\n   Expected order A→Q:');
+  console.error('     ' + COLUMNS.map((c, i) => `${letter(i)}=${c}`).join('  '));
+  console.error('\n   Fix by INSERTING the missing column in place — do not append it at the');
+  console.error('   end, and do not rename around it.\n');
+  process.exit(1);
 } catch (err) {
   const status = err?.status ?? err?.code ?? err?.response?.status;
   console.error(`\n❌ Failed after ${Date.now() - started}ms`);
