@@ -42,6 +42,7 @@ import { createRemovalEngine } from './removalEngine.js';
 import { createGhostRemovalEngine } from './ghostRemovalEngine.js';
 import { createCatchupEngine } from './catchupEngine.js';
 import { isTracker } from './globalConfig.js';
+import { usesCloudApi } from './cloudApiSender.js';
 import { markLinkedAt, getLinkedAt, inWarmup } from './warmup.js';
 
 const BOT_START_TIME = Date.now();
@@ -418,7 +419,13 @@ export async function startBot(config, log, authDir) {
             if (isTracker(config)) {
               log.info('📋 Tracker profile — no scheduled jobs registered (command-driven only)');
             } else scheduler.start({
+              // Every scheduled job is a no-op until reminders run through the official
+              // Cloud API. Reminders are sent BY HAND from the admin number in the
+              // meantime (see the `sendlist` command) — a cron falling back to Baileys
+              // DMs is the exact traffic that got numbers banned, so it must not happen
+              // by accident. Flipping reminderChannel to "cloudapi" wakes all three.
               reminderSend: async () => {
+                if (!usesCloudApi(config)) return log.info('⏰ Batch 1 skipped — manual reminder mode (use `sendlist`)');
                 if (skipWarmup('reminder batch 1')) return;
                 const result = await reminderSender.sendReminders(store, getSock, config.botDir);
                 if (result.autoRenewed?.length > 0) {
@@ -426,6 +433,7 @@ export async function startBot(config, log, authDir) {
                 }
               },
               reminderSend2: async () => {
+                if (!usesCloudApi(config)) return log.info('⏰ Batch 2 skipped — manual reminder mode (use `sendlist`)');
                 if (skipWarmup('reminder batch 2')) return;
                 const result = await reminderSender.sendRemindersSecondBatch(store, getSock, config.botDir);
                 if (result.autoRenewed?.length > 0) {
@@ -433,6 +441,7 @@ export async function startBot(config, log, authDir) {
                 }
               },
               overdueCheck: async () => {
+                if (!usesCloudApi(config)) return log.info('⏰ Overdue check skipped — manual reminder mode (use `sendlist`)');
                 if (skipWarmup('overdue check')) return;
                 await overdueEngine.runOverdueCheck(store, getSock, getBroadcastJids());
               },
