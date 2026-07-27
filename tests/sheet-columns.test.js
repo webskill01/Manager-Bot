@@ -22,7 +22,12 @@ test('check-sheets validates the header against COLUMNS', () => {
   const src = fs.readFileSync(new URL('../scripts/check-sheets.js', import.meta.url), 'utf8');
   assert.match(src, /import \{ COLUMNS \}/, 'must use the one source of truth');
   assert.match(src, /MEMBERS!A1:Q/, 'must read the header row and span to Q');
-  assert.match(src, /COLUMN MISMATCH/, 'must report a mismatch loudly');
+  // A misspelled header is cosmetic; a column in the wrong slot corrupts data. The
+  // checker must not report them at the same severity.
+  assert.match(src, /STRUCTURAL problem/, 'reports structural damage loudly');
+  assert.match(src, /cosmetic issue/, 'reports typos separately');
+  assert.match(src, /SHIFTED/, 'detects a known column in the wrong position');
+  assert.match(src, /FOREIGN COLUMN/, 'detects an operator column inside the bot range');
 });
 
 // sheetClient builds rows positionally; the mapping is the contract worth pinning.
