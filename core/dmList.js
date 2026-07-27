@@ -1,11 +1,10 @@
 import {
   daysFromToday, todayStr, friendlyDate, isDelayActive, renewedOn,
-  getReferralsInBillingPeriod,
+  getReferralsInBillingPeriod, chunkByChars, MAX_CHARS_PER_MSG,
 } from './globalConfig.js';
 
-// WhatsApp caps a single message around 4096 chars. Stay well under it: a dmlist line
-// is a long url and the operator scrolls this on a phone.
-export const MAX_CHARS_PER_MSG = 3000;
+// Re-exported for tests and for callers that already import them from here.
+export { chunkByChars, MAX_CHARS_PER_MSG };
 
 // Which wording a member gets when the operator has not forced one. Mirrors the cron's
 // own escalation (day-5 nudge, day-6 final) so steady-state behaviour is unchanged.
@@ -66,26 +65,6 @@ export function buildDmList({ members, config, days = 0, force = null, now = tod
 
   rows.sort((a, b) => b.overdueDays - a.overdueDays);
   return { rows, stageForced: !!force };
-}
-
-// Split rendered lines so no single WhatsApp message exceeds `limit`. A line longer than
-// the limit still gets its own chunk rather than being dropped.
-export function chunkByChars(lines, limit = MAX_CHARS_PER_MSG) {
-  const chunks = [];
-  let cur = [];
-  let len = 0;
-  for (const line of lines) {
-    const add = line.length + (cur.length ? 1 : 0);
-    if (cur.length && len + add > limit) {
-      chunks.push(cur);
-      cur = [];
-      len = 0;
-    }
-    cur.push(line);
-    len += cur.length === 1 ? line.length : add;
-  }
-  if (cur.length) chunks.push(cur);
-  return chunks;
 }
 
 export function renderDmList({ rows, days, stageForced }) {

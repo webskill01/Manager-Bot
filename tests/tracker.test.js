@@ -70,8 +70,8 @@ test('isCallDue: exactly at the boundary counts, a day short does not', () => {
   assert.equal(isCallDue(at31, 30), true);
 });
 
-test('isCallDue: only NEW members are ever due — CALLED and MOVED are out of the queue', () => {
-  for (const status of ['CALLED', 'MOVED', 'REMOVED', 'ACTIVE']) {
+test('isCallDue: only NEW members are ever due — anyone already called is out of the queue', () => {
+  for (const status of ['CALLED', 'REMOVED', 'ACTIVE']) {
     assert.equal(isCallDue({ status, joinDate: dayOffset(-60) }, 30), false, `${status} not due`);
   }
 });
@@ -82,12 +82,14 @@ test('isCallDue: a configurable window is respected, junk dates are safe', () =>
   assert.equal(isCallDue(null, 30), false);
 });
 
-test('needsFollowUp: CALLED resurfaces after the chase window, MOVED never does', () => {
+test('needsFollowUp: only an UNANSWERED call resurfaces after the chase window', () => {
   assert.equal(needsFollowUp({ status: 'CALLED', callDate: dayOffset(-3) }, 3), true);
-  assert.equal(needsFollowUp({ status: 'CALLED', callDate: dayOffset(-2) }, 3), false);
-  assert.equal(needsFollowUp({ status: 'MOVED', callDate: dayOffset(-30) }, 3), false);
+  assert.equal(needsFollowUp({ status: 'CALLED', callDate: dayOffset(-2) }, 3), false, 'too soon');
   assert.equal(needsFollowUp({ status: 'NEW', callDate: '' }, 3), false);
   assert.equal(needsFollowUp({ status: 'CALLED', callDate: '' }, 3), true, 'called but undated is always worth chasing');
+  // Once an answer is logged the pitch is resolved — it never comes back either way.
+  assert.equal(needsFollowUp({ status: 'CALLED', callDate: dayOffset(-30), callResult: 'interested' }, 3), false);
+  assert.equal(needsFollowUp({ status: 'CALLED', callDate: dayOffset(-30), callResult: 'not-interested' }, 3), false);
 });
 
 test('isTracker only matches the tracker profile', () => {
@@ -97,16 +99,17 @@ test('isTracker only matches the tracker profile', () => {
   assert.equal(isTracker(null), false);
 });
 
-// ── pending / called / moved / calls ─────────────────────────────────────────
+// ── pending / called / log ───────────────────────────────────────────────────
 
-test('pending splits the month-up list from the chase list, oldest first', async () => {
+test('pending splits the month-up list from the no-answer list, oldest first', async () => {
   const store = fakeStore([
     { name: 'Old', phone: '9000000001', status: 'NEW', joinDate: dayOffset(-45) },
     { name: 'Due', phone: '9000000002', status: 'NEW', joinDate: dayOffset(-31) },
     { name: 'Young', phone: '9000000003', status: 'NEW', joinDate: dayOffset(-5) },
     { name: 'Chase', phone: '9000000004', status: 'CALLED', joinDate: dayOffset(-40), callDate: dayOffset(-5) },
     { name: 'Fresh', phone: '9000000005', status: 'CALLED', joinDate: dayOffset(-33), callDate: dayOffset(-1) },
-    { name: 'Done', phone: '9000000006', status: 'MOVED', joinDate: dayOffset(-60), callDate: dayOffset(-20) },
+    { name: 'Keen', phone: '9000000006', status: 'CALLED', joinDate: dayOffset(-60), callDate: dayOffset(-20), callResult: 'interested' },
+    { name: 'Nope', phone: '9000000007', status: 'CALLED', joinDate: dayOffset(-60), callDate: dayOffset(-20), callResult: 'not-interested' },
   ]);
   const t = createTrackerHandlers(store, fakeGroupManager(), trackerConfig(tmp()), log);
   const out = await t.handlePending();
@@ -114,10 +117,11 @@ test('pending splits the month-up list from the chase list, oldest first', async
   assert.match(out, /MONTH UP — pitch the app \(2\)/);
   assert.ok(out.indexOf('Old') < out.indexOf('Due'), 'longest-waiting first');
   assert.ok(!out.includes('Young'), 'not yet a month');
-  assert.match(out, /CALLED BUT NOT MOVED — chase again \(1\)/);
-  assert.ok(out.includes('Chase'), 'past the chase window');
+  assert.match(out, /CALLED, no answer recorded — try again \(1\)/);
+  assert.ok(out.includes('Chase'), 'past the chase window, still no answer');
   assert.ok(!out.includes('Fresh'), 'called yesterday, too soon');
-  assert.ok(!out.includes('Done'), 'already moved');
+  assert.ok(!out.includes('Keen'), 'answer logged — resolved');
+  assert.ok(!out.includes('Nope'), 'answer logged — resolved');
 });
 
 test('pending on an empty queue names who is up next', async () => {
@@ -128,16 +132,16 @@ test('pending on an empty queue names who is up next', async () => {
   assert.match(out, /Next up: Soon in 2 day\(s\)/);
 });
 
-test('called marks CALLED with today stamped, and leaves them in the group', async () => {
+test('called logs the call and date, and never touches a group', async () => {
   const store = fakeStore([{ name: 'A', phone: '9000000001', status: 'NEW', joinDate: dayOffset(-31) }]);
   const gm = fakeGroupManager();
   const t = createTrackerHandlers(store, gm, trackerConfig(tmp()), log);
 
   const out = await t.handleCalled(['9000000001']);
   assert.deepEqual(store.writes[0].updates, { status: 'CALLED', callDate: dayOffset(0) });
-  assert.equal(gm.calls.length, 0, 'called must NOT remove anyone from a group');
-  assert.match(out, /marked CALLED/);
-  assert.match(out, /Still in the group/);
+  assert.equal(gm.calls.length, 0, 'the bot must NEVER remove anyone');
+  assert.match(out, /No answer recorded/);
+  assert.match(out, /Reappears in "pending" after 3 day\(s\)/);
 });
 
 test('called again on the same person re-stamps the date and says so', async () => {
@@ -147,68 +151,94 @@ test('called again on the same person re-stamps the date and says so', async () 
   const t = createTrackerHandlers(store, fakeGroupManager(), trackerConfig(tmp()), log);
   const out = await t.handleCalled(['9000000001']);
   assert.equal(store.writes[0].updates.callDate, dayOffset(0));
-  assert.match(out, /called again/);
+  assert.match(out, /called .* \(again\)/);
 });
 
-test('moved removes from every group and marks MOVED', async () => {
+test('logging an outcome never removes anyone from a group', async () => {
   const store = fakeStore([
-    { name: 'A', phone: '9000000001', status: 'CALLED', joinDate: dayOffset(-40), callDate: dayOffset(-5) },
+    { name: 'A', phone: '9000000001', status: 'NEW', joinDate: dayOffset(-31) },
+    { name: 'B', phone: '9000000002', status: 'NEW', joinDate: dayOffset(-31) },
   ]);
   const gm = fakeGroupManager();
   const t = createTrackerHandlers(store, gm, trackerConfig(tmp()), log);
 
-  const out = await t.handleMoved(['9000000001']);
-  assert.deepEqual(gm.calls, ['9000000001'], 'removed from groups');
-  assert.equal(store.writes[0].updates.status, 'MOVED');
-  assert.equal(store.writes[0].updates.callDate, dayOffset(-5), 'original call date preserved');
-  assert.match(out, /Removed from 2\/2 group/);
+  const yes = await t.handleCalled(['9000000001', 'interested']);
+  const no = await t.handleCalled(['9000000002', 'not', 'interested']);
+  assert.equal(gm.calls.length, 0, 'no group op on either outcome');
+  assert.equal(store.writes[0].updates.callResult, 'interested');
+  assert.equal(store.writes[1].updates.callResult, 'not-interested');
+  assert.match(yes, /kick 9000000001/, 'tells the operator removal is THEIR job');
+  assert.match(no, /kick 9000000002/);
 });
 
-test('moved on someone never called still works and stamps a call date', async () => {
-  const store = fakeStore([{ name: 'A', phone: '9000000001', status: 'NEW', joinDate: dayOffset(-31) }]);
+test('an outcome can be corrected later, in either direction', async () => {
+  const store = fakeStore([
+    { name: 'A', phone: '9000000001', status: 'CALLED', joinDate: dayOffset(-40), callResult: 'not-interested' },
+  ]);
   const t = createTrackerHandlers(store, fakeGroupManager(), trackerConfig(tmp()), log);
-  await t.handleMoved(['9000000001']);
-  assert.equal(store.writes[0].updates.callDate, dayOffset(0));
+  await t.handleCalled(['9000000001', 'interested']);
+  assert.equal(store.writes[0].updates.callResult, 'interested');
 });
 
-test('moved surfaces partial group-removal failures instead of hiding them', async () => {
-  const store = fakeStore([{ name: 'A', phone: '9000000001', status: 'CALLED', joinDate: dayOffset(-40) }]);
-  const gm = fakeGroupManager({ removed: ['g1@g.us'], failed: ['g2@g.us'] });
-  const t = createTrackerHandlers(store, gm, trackerConfig(tmp()), log);
-  const out = await t.handleMoved(['9000000001']);
-  assert.match(out, /Removed from 1\/2/);
-  assert.match(out, /1 group\(s\) failed — re-run: kick 9000000001/);
-});
-
-test('called / moved reject bad input and unknown or already-moved members', async () => {
-  const store = fakeStore([{ name: 'A', phone: '9000000001', status: 'MOVED', joinDate: dayOffset(-60) }]);
+test('called rejects bad input and unknown members without writing', async () => {
+  const store = fakeStore([{ name: 'A', phone: '9000000001', status: 'NEW', joinDate: dayOffset(-60) }]);
   const t = createTrackerHandlers(store, fakeGroupManager(), trackerConfig(tmp()), log);
   assert.match(await t.handleCalled([]), /Format: called/);
   assert.match(await t.handleCalled(['123']), /Invalid number/);
-  assert.match(await t.handleMoved(['9999999999']), /No member found/);
-  assert.match(await t.handleCalled(['9000000001']), /already MOVED/);
-  assert.match(await t.handleMoved(['9000000001']), /already MOVED/);
+  assert.match(await t.handleCalled(['9999999999']), /No member found/);
+  assert.match(await t.handleCalled(['9000000001', 'maybe']), /Unknown outcome/);
   assert.equal(store.writes.length, 0);
 });
 
-test('calls reports the funnel and conversion rate', async () => {
+test('moved is gone from the tracker handlers entirely', () => {
+  const t = createTrackerHandlers(fakeStore([]), fakeGroupManager(), trackerConfig(tmp()), log);
+  assert.equal(t.handleMoved, undefined, 'the bot no longer converts or removes anyone');
+  assert.deepEqual(Object.keys(t).sort(), ['handleCalled', 'handleLog', 'handlePending']);
+});
+
+test('log buckets everyone: interested, not interested, no answer, not called', async () => {
   const store = fakeStore([
     { name: 'N1', phone: '9000000001', status: 'NEW', joinDate: dayOffset(-31) },
     { name: 'N2', phone: '9000000002', status: 'NEW', joinDate: dayOffset(-2) },
     { name: 'C1', phone: '9000000003', status: 'CALLED', joinDate: dayOffset(-40), callDate: dayOffset(-6) },
-    { name: 'M1', phone: '9000000004', status: 'MOVED', joinDate: dayOffset(-50), callDate: dayOffset(-20) },
-    { name: 'M2', phone: '9000000005', status: 'MOVED', joinDate: dayOffset(-55), callDate: dayOffset(-25) },
-    { name: 'R1', phone: '9000000006', status: 'REMOVED', joinDate: dayOffset(-70) },
+    { name: 'Y1', phone: '9000000004', status: 'CALLED', joinDate: dayOffset(-50), callDate: dayOffset(-20), callResult: 'interested' },
+    { name: 'Y2', phone: '9000000005', status: 'CALLED', joinDate: dayOffset(-55), callDate: dayOffset(-25), callResult: 'interested' },
+    { name: 'X1', phone: '9000000006', status: 'CALLED', joinDate: dayOffset(-70), callDate: dayOffset(-30), callResult: 'not-interested' },
   ]);
   const t = createTrackerHandlers(store, fakeGroupManager(), trackerConfig(tmp()), log);
-  const out = await t.handleCalls();
+  const parts = await t.handleLog();
+  assert.ok(Array.isArray(parts), 'log returns message parts');
+  const out = parts.join('\n');
 
-  assert.match(out, /NEW \(in group, not called\):  2/);
-  assert.match(out, /month up, call now:       1/);
-  assert.match(out, /CALLED \(pitched, not moved\): 1/);
-  assert.match(out, /MOVED \(on the app\):          2/);
-  assert.match(out, /REMOVED \(dropped\):           1/);
-  assert.match(out, /Conversion: 2\/3 pitched → app \(67%\)/);
+  assert.match(out, /Called: 4/);
+  assert.match(out, /Not called yet: 2/);
+  assert.match(out, /✅ INTERESTED \(2\)/);
+  assert.match(out, /❌ NOT INTERESTED \(1\)/);
+  assert.match(out, /📞 CALLED, no answer recorded \(1\)/);
+  assert.match(out, /⏳ NOT CALLED YET \(2\) — 1 due now/);
+  assert.match(out, /Of 3 who answered, 2 were interested \(67%\)/);
+  // Everybody must appear somewhere — this is a log, not a summary.
+  for (const p of ['9000000001', '9000000002', '9000000003', '9000000004', '9000000005', '9000000006']) {
+    assert.ok(out.includes(p), `${p} missing from the log`);
+  }
+  assert.ok(!/MOVED/.test(out), 'no MOVED bucket any more');
+});
+
+test('log splits into multiple messages when the record is long', async () => {
+  const many = Array.from({ length: 120 }, (_, i) => ({
+    name: `Member Number ${i}`,
+    phone: `90000${String(i).padStart(5, '0')}`,
+    status: 'CALLED',
+    joinDate: dayOffset(-40),
+    callDate: dayOffset(-10),
+    callResult: 'interested',
+  }));
+  const t = createTrackerHandlers(fakeStore(many), fakeGroupManager(), trackerConfig(tmp()), log);
+  const parts = await t.handleLog();
+  assert.ok(parts.length > 1, 'must split');
+  assert.ok(parts.every(p => p.length <= 4096), 'every part fits one WhatsApp message');
+  const joined = parts.join('\n');
+  for (const m of many) assert.ok(joined.includes(m.phone), `${m.phone} dropped`);
 });
 
 // ── profile gating ───────────────────────────────────────────────────────────
@@ -280,7 +310,7 @@ test('tracker revenue counts joining fees only and splits 60-20-20', async () =>
     { name: 'J1', phone: '9000000001', status: 'NEW', joinDate: thisMonth, paidLast: 100, billingDate: dayOffset(29) },
     { name: 'J2', phone: '9000000002', status: 'CALLED', joinDate: thisMonth, paidLast: 100, billingDate: dayOffset(29), callDate: dayOffset(0) },
     { name: 'S1', phone: '9000000003', status: 'NEW', joinDate: thisMonth, paidLast: 0, billingDate: dayOffset(29) },
-    { name: 'M1', phone: '9000000004', status: 'MOVED', joinDate: dayOffset(-200), paidLast: 100, billingDate: dayOffset(-170) },
+    { name: 'K1', phone: '9000000004', status: 'CALLED', joinDate: dayOffset(-200), paidLast: 100, billingDate: dayOffset(-170), callResult: 'interested' },
   ]);
   const r = createReportHandlers(store, trackerConfig(tmp()), Date.now(), log);
   const out = r.handleRevenue();
@@ -291,29 +321,33 @@ test('tracker revenue counts joining fees only and splits 60-20-20', async () =>
   assert.match(out, /A: ₹120/);
   assert.match(out, /B: ₹40/);
   assert.match(out, /C: ₹40/);
-  assert.match(out, /Moved to app, all time: 1/);
+  assert.match(out, /Interested in the app, all time: 1/);
+  assert.ok(!/Moved/.test(out), 'nothing claims anyone was moved');
 });
 
-test('tracker summary reports joins, calls and moves — never renewals', async () => {
+test('tracker summary reports joins and calls with the outcome split — never renewals', async () => {
   const store = fakeStore([
     { name: 'J1', phone: '9000000001', status: 'NEW', joinDate: dayOffset(0), paidLast: 100, billingDate: dayOffset(30) },
-    { name: 'C1', phone: '9000000002', status: 'CALLED', joinDate: dayOffset(-31), callDate: dayOffset(0), paidLast: 100 },
+    { name: 'C1', phone: '9000000002', status: 'CALLED', joinDate: dayOffset(-31), callDate: dayOffset(0), paidLast: 100, callResult: 'interested' },
+    { name: 'C2', phone: '9000000003', status: 'CALLED', joinDate: dayOffset(-31), callDate: dayOffset(0), paidLast: 100, callResult: 'not-interested' },
   ]);
   const r = createReportHandlers(store, trackerConfig(tmp()), Date.now(), log);
   const out = await r.handleSummary();
 
   assert.match(out, /Joined: 1 \(₹100\)/);
-  assert.match(out, /Called: 1/);
-  assert.match(out, /Moved to app: 0/);
+  assert.match(out, /Called: 2/);
+  assert.match(out, /interested: 1  \|  ❌ not interested: 1/);
+  assert.ok(!/Moved/.test(out), 'nothing claims anyone was moved');
   assert.ok(!/Renewals/.test(out), 'no renewal section');
   assert.match(out, /See the list: pending/);
+  assert.match(out, /Full record: log/);
 });
 
 test('tracker help lists the funnel and no renewal commands', () => {
   const r = createReportHandlers(fakeStore([]), trackerConfig(tmp()), Date.now(), log);
   const out = r.handleHelp();
   assert.match(out, /BOT COMMANDS — tracker/);
-  assert.match(out, /pending → called → moved|add → \(30 days pass\) → pending → called → moved/);
+  assert.match(out, /add → \(30 days pass\) → pending → call them → log what they said/);
   assert.ok(!/renewed \[phone\]/.test(out), 'no renewal commands offered');
   assert.ok(!/remindall/.test(out));
   assert.match(out, /NO scheduled jobs/);
@@ -341,11 +375,39 @@ test('full-profile help documents dmlist and drops the retired commands', () => 
   assert.ok(!/catchup/.test(out), 'catchup is gone');
 });
 
-test('tracker help documents the interested / not interested outcomes', () => {
+test('tracker help documents the three call outcomes and the log command', () => {
   const out = createReportHandlers(fakeStore([]), trackerConfig(tmp()), Date.now(), log).handleHelp();
   assert.match(out, /called \[phone\] interested/);
   assert.match(out, /called \[phone\] not interested/);
-  assert.match(out, /Drops OUT of "pending"/, 'explains what a "no" actually does');
-  assert.match(out, /changed their mind\? called \[phone\] interested/i, 'says it is reversible');
-  assert.ok(!/dmlist/.test(out), 'tracker bots collect no renewals, so no send list');
+  assert.match(out, /logs the call \+ date, no answer yet/, 'the empty outcome is documented');
+  assert.match(out, /re-run later to correct what you logged/, 'says it is correctable');
+  assert.match(out, /• log  →  the full record/);
+  // The whole point of this rework: the bot records, it does not act.
+  assert.match(out, /never removes anyone/);
+  assert.ok(!/• moved \[phone\]/.test(out), 'moved is gone from help');
+  assert.ok(!/dmlist/.test(out), 'tracker bots collect no renewals, so no dm list');
+});
+
+test('moved returns a helpful hint instead of a bare unknown-command error', async () => {
+  const parser = createCommandParser(
+    fakeStore([{ name: 'A', phone: '9000000001', status: 'NEW', joinDate: dayOffset(-40) }]),
+    fakeGroupManager(), trackerConfig(tmp()), log,
+    { user: {} }, Date.now(), {}, {}, {}, new Set(), null, null,
+  );
+  const out = await parser.parse('moved 9000000001');
+  assert.match(out, /"moved" is gone/);
+  assert.match(out, /called 9000000001 interested/, 'points at the replacement');
+  assert.match(out, /kick 9000000001/, 'says how to actually remove them');
+});
+
+test('log and calls are the same command on a tracker bot', async () => {
+  const rows = [{ name: 'A', phone: '9000000001', status: 'CALLED', joinDate: dayOffset(-40), callDate: dayOffset(-5), callResult: 'interested' }];
+  const parser = createCommandParser(
+    fakeStore(rows), fakeGroupManager(), trackerConfig(tmp()), log,
+    { user: {} }, Date.now(), {}, {}, {}, new Set(), null, null,
+  );
+  const viaLog = await parser.parse('log');
+  const viaCalls = await parser.parse('calls');
+  assert.deepEqual(viaLog, viaCalls);
+  assert.match(viaLog.join('\n'), /CALL LOG/);
 });

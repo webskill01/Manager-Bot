@@ -57,27 +57,30 @@ test('an unrecognised outcome word is rejected, nothing is written', async () =>
   assert.equal(store.findByPhone('9000000001').status, 'NEW', 'unchanged on bad input');
 });
 
-test('pending excludes not-interested members from the follow-up block', async () => {
+test('pending keeps only pitches with no answer logged — either answer resolves it', async () => {
   const old = '01-01-2026';
   const store = fakeStore([
-    { name: 'A', phone: '9000000001', status: 'CALLED', joinDate: old, callDate: old, callResult: 'interested' },
-    { name: 'B', phone: '9000000002', status: 'CALLED', joinDate: old, callDate: old, callResult: 'not-interested' },
+    { name: 'Keen', phone: '9000000001', status: 'CALLED', joinDate: old, callDate: old, callResult: 'interested' },
+    { name: 'Nope', phone: '9000000002', status: 'CALLED', joinDate: old, callDate: old, callResult: 'not-interested' },
+    { name: 'Silent', phone: '9000000003', status: 'CALLED', joinDate: old, callDate: old, callResult: '' },
   ]);
   const h = createTrackerHandlers(store, groupManager, cfg, log);
   const msg = await h.handlePending();
-  assert.match(msg, /9000000001/);
-  assert.doesNotMatch(msg, /9000000002/);
+  assert.match(msg, /9000000003/, 'no answer logged — still needs chasing');
+  assert.doesNotMatch(msg, /9000000001/, 'interested is an answer — resolved');
+  assert.doesNotMatch(msg, /9000000002/, 'not-interested is an answer — resolved');
 });
 
-test('calls funnel reports interested and not-interested counts', async () => {
+test('log reports both outcome buckets by name', async () => {
   const old = '01-01-2026';
   const store = fakeStore([
-    { name: 'A', phone: '9000000001', status: 'CALLED', joinDate: old, callDate: old, callResult: 'interested' },
-    { name: 'B', phone: '9000000002', status: 'CALLED', joinDate: old, callDate: old, callResult: 'not-interested' },
+    { name: 'Keen', phone: '9000000001', status: 'CALLED', joinDate: old, callDate: old, callResult: 'interested' },
+    { name: 'Nope', phone: '9000000002', status: 'CALLED', joinDate: old, callDate: old, callResult: 'not-interested' },
   ]);
   const h = createTrackerHandlers(store, groupManager, cfg, log);
-  const msg = await h.handleCalls();
-  assert.match(msg, /not interested/i);
-  assert.match(msg, /said interested:\s+1/);
-  assert.match(msg, /said not interested:\s+1/);
+  const msg = (await h.handleLog()).join('\n');
+  assert.match(msg, /✅ INTERESTED \(1\)/);
+  assert.match(msg, /❌ NOT INTERESTED \(1\)/);
+  assert.match(msg, /Keen/);
+  assert.match(msg, /Nope/);
 });

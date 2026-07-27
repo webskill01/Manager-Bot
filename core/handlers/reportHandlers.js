@@ -174,8 +174,9 @@ export function createReportHandlers(store, config, botStartTime, log) {
     if (isTracker(config)) {
       const on = d => d && d.slice(0, 10) === targetDateStr;
       const joined = all.filter(m => on(m.joinDate));
-      const called = all.filter(m => on(m.callDate) && ['CALLED', 'MOVED'].includes(m.status));
-      const moved = all.filter(m => m.status === 'MOVED' && isUpdatedOn(m.lastUpdated, targetDateStr));
+      const called = all.filter(m => on(m.callDate) && m.status === 'CALLED');
+      const interested = called.filter(m => m.callResult === 'interested');
+      const notInterested = called.filter(m => m.callResult === 'not-interested');
       const dueNow = all.filter(m => isCallDue(m, config.tracker?.callAfterDays ?? 30));
       const followUp = all.filter(m => needsFollowUp(m, config.tracker?.followUpDays ?? 3));
       const joinRevenue = joined.filter(isPaidJoinRow).length * config.joining.fee;
@@ -185,11 +186,11 @@ export function createReportHandlers(store, config, botStartTime, log) {
       return `📋 ${label} — ${targetDateStr}\n━━━━━━━━━━━━━━━━━━━\n\n` +
         `➕ Joined: ${joined.length} (₹${joinRevenue})${names(joined)}\n` +
         `${formatSplit(joinRevenue, config, '   ')}\n\n` +
-        `📞 Called: ${called.length}${names(called)}\n\n` +
-        `✅ Moved to app: ${moved.length}${names(moved)}\n\n` +
+        `📞 Called: ${called.length}${names(called)}\n` +
+        `   ✅ interested: ${interested.length}  |  ❌ not interested: ${notInterested.length}\n\n` +
         `━━━━━━━━━━━━━━━━━━━\n` +
-        `📌 To call now: ${dueNow.length}  |  To chase: ${followUp.length}\n` +
-        `See the list: pending`;
+        `📌 To call now: ${dueNow.length}  |  No answer yet: ${followUp.length}\n` +
+        `See the list: pending   ·   Full record: log`;
     }
 
     // Detect renewals via lastRenewed (set ONLY by the "renewed" command / auto-renew), NOT
@@ -329,14 +330,14 @@ export function createReportHandlers(store, config, botStartTime, log) {
         && isPaidJoinRow(m)
         && m.joinDate.slice(3, 5) === mm && m.joinDate.slice(6, 10) === yyyy);
       const total = joins.length * config.joining.fee;
-      const moved = all.filter(m => m.status === 'MOVED').length;
+      const interested = all.filter(m => m.callResult === 'interested').length;
 
       return `💰 Revenue — ${monthLabel} ${yyyy}\n\n` +
         `Total: ₹${total}\n` +
         `${formatSplit(total, config, '')}\n\n` +
         `➕ New joins: ${joins.length} @ ₹${config.joining.fee}\n` +
         `   (joins only — this bot collects no renewals)\n\n` +
-        `✅ Moved to app, all time: ${moved}`;
+        `✅ Interested in the app, all time: ${interested}`;
     }
 
     // Renewals: only count entries where the "renewed" command was actually run this month.
@@ -425,8 +426,11 @@ export function createReportHandlers(store, config, botStartTime, log) {
     return `📋 BOT COMMANDS — tracker
 
 🔄 THE FLOW
-  add → (${days} days pass) → pending → called → moved
-  NEW  →  CALLED  →  MOVED (removed from groups)
+  add → (${days} days pass) → pending → call them → log what they said
+  NEW  →  CALLED (interested / not interested / no answer)
+
+This bot only keeps the record. It never moves anyone onto the app and
+never removes anyone — you do that yourself with "kick [phone]".
 
 👤 ADD A NEW PERSON
 • add [Name] [phone]  →  sends group links + welcome, records as NEW
@@ -437,15 +441,17 @@ export function createReportHandlers(store, config, botStartTime, log) {
 • rejoin [phone]  →  add an old member back
 • groupcheck [phone]  →  which groups are they in?
 
-📞 THE CALL FUNNEL
-• pending  →  who to call now (month up) + who to chase again
-• called [phone]  →  you pitched the app. Stays in the group
-• called [phone] interested  →  they're keen. Stays in "pending" to chase
-• called [phone] not interested  →  they said no. Drops OUT of "pending"
-     stays in the group — use "kick [phone]" if you want the seat back
-     changed their mind? called [phone] interested puts them back
-• moved [phone]  →  they're on the app. Marks MOVED + removes from ALL groups
-• calls  →  funnel counts, interested/not-interested split, conversion %
+📞 CALLING
+• pending  →  who to call now (${days}d in group) + who gave no answer yet
+• called [phone] interested      →  logs the call + date + "interested"
+• called [phone] not interested  →  logs the call + date + "not interested"
+• called [phone]                 →  logs the call + date, no answer yet
+     reappears in "pending" after ${chase} day(s) until you log an answer
+     any of these can be re-run later to correct what you logged
+• log  →  the full record: interested / not interested / no answer /
+          not called yet.  ("calls" does the same thing)
+
+Nobody is ever removed by these. When you want a seat back: kick [phone]
 
 🔍 LOOKUPS
 • find [phone or name]  /  status [phone]
@@ -453,7 +459,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
 
 📊 REPORTS  (nothing is ever sent to you on a timer)
 • digest  →  today at a glance
-• summary / summary 1  →  joins, calls, moves for a day
+• summary / summary 1  →  joins and calls for a day
 • revenue  →  joining fees this month + split
 • weekly / monthly / growth / trend
 • stats / groups / ping
@@ -461,14 +467,14 @@ export function createReportHandlers(store, config, botStartTime, log) {
 🔍 GROUP AUDITS
 • notinsheet  →  in a group but missing from the sheet
 • leftmembers  →  in the sheet but not in any group
-• stillin  →  MOVED/REMOVED but still in a group
+• stillin  →  REMOVED in the sheet but still in a group
 
 🧹 CLEANUP
 • kick [phone]  →  remove from all groups
 • kickghosts / kickghosts confirm / stop kickghosts
 
 ⏱️ Timing: a person appears in "pending" ${days} days after joining.
-Called but not moved reappears after ${chase} days.
+Called with no answer logged reappears after ${chase} days.
 This bot has NO scheduled jobs — it only acts when you send a command.`;
   }
 

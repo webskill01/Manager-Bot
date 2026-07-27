@@ -468,8 +468,16 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         // rather than silently doing nothing.
         case 'pending':    return tracker ? trackerH.handlePending() : renewalH.handlePending();
         case 'called':     return tracker ? trackerH.handleCalled(mergePhoneFromStart(args)) : trackerOnly('called');
-        case 'moved':      return tracker ? trackerH.handleMoved(mergePhoneFromStart(args)) : trackerOnly('moved');
-        case 'calls':      return tracker ? trackerH.handleCalls() : trackerOnly('calls');
+        case 'log':
+        case 'calls':      return tracker ? trackerH.handleLog() : trackerOnly('calls');
+        // Retired: the bot never marked anyone converted well, and removing them was the
+        // operator's call anyway. Kept as an explicit hint because the muscle memory is real.
+        case 'moved':
+          if (!tracker) return trackerOnly('moved');
+          return `❌ "moved" is gone — this bot only logs the pitch, it doesn't move or remove anyone.\n\n` +
+            `Log what they said:  called ${normPhone(mergePhoneFromStart(args)[0] || '') || '[phone]'} interested\n` +
+            `Want the seat back:  kick ${normPhone(mergePhoneFromStart(args)[0] || '') || '[phone]'}\n` +
+            `See everything:      log`;
 
         case 'renewed':    return renewalH.handleRenewed(mergePhoneFromStart(args));
         case 'due':        return renewalH.handleDue(args);
