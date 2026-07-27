@@ -2,10 +2,10 @@ import { google } from 'googleapis';
 import { formatDateTime, normalizePhone, normalizeDateCell } from './globalConfig.js';
 
 const SHEET_NAME = 'MEMBERS';
-// A..P. Column P (callDate) was added for the tracker profile; it reads as '' on every
-// existing sheet, so full-profile bots are unaffected and need no migration.
-const DATA_RANGE = `${SHEET_NAME}!A2:P`;
-const COL_RANGE = 'A:P';
+// A..Q. Columns P (callDate) and Q (callResult) belong to the tracker profile; both read
+// as '' on every existing sheet, so full-profile bots are unaffected and need no migration.
+const DATA_RANGE = `${SHEET_NAME}!A2:Q`;
+const COL_RANGE = 'A:Q';
 
 function rowToMember(row, rowIndex) {
   return {
@@ -33,6 +33,8 @@ function rowToMember(row, rowIndex) {
     delayUntil: normalizeDateCell(row[14]),
     // Tracker profile only: the date the operator called this member to pitch the app.
     callDate: normalizeDateCell(row[15]),
+    // Tracker profile only: 'interested' | 'not-interested' | '' (never asked).
+    callResult: String(row[16] || '').trim().toLowerCase(),
   };
 }
 
@@ -54,6 +56,7 @@ function memberToRow(member) {
     member.refLog || '',
     member.delayUntil || '',
     member.callDate || '',
+    member.callResult || '',
   ];
 }
 
@@ -130,7 +133,7 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId, log =
   }
 
   async function updateRow(rowIndex, member) {
-    const range = `${SHEET_NAME}!A${rowIndex}:P${rowIndex}`;
+    const range = `${SHEET_NAME}!A${rowIndex}:Q${rowIndex}`;
     await withRetry('update', () => sheets.spreadsheets.values.update({
       spreadsheetId,
       range,
@@ -172,7 +175,7 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId, log =
         requestBody: {
           valueInputOption: 'RAW',
           data: slice.map(m => ({
-            range: `${SHEET_NAME}!A${m.rowIndex}:P${m.rowIndex}`,
+            range: `${SHEET_NAME}!A${m.rowIndex}:Q${m.rowIndex}`,
             values: [memberToRow(m)],
           })),
         },
