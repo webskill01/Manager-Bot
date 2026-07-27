@@ -52,7 +52,7 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, catchupEngine = null) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null) {
   const memberH = createMemberHandlers(store, groupManager, config, log);
   const renewalH = createRenewalHandlers(store, config, log);
   const lookupH = createLookupHandlers(store, config, log);
