@@ -42,7 +42,7 @@ import { createRemovalEngine } from './removalEngine.js';
 import { createGhostRemovalEngine } from './ghostRemovalEngine.js';
 // catchupEngine.js stays on disk but is deliberately NOT wired: every one of its stages
 // posts a group @mention message, which is the path being retired. Reminders are manual
-// (`sendlist`) until the Cloud API cutover. Delete the file once that has run a clean month.
+// (`dmlist`) until the Cloud API cutover. Delete the file once that has run a clean month.
 import { isTracker } from './globalConfig.js';
 import { usesCloudApi } from './cloudApiSender.js';
 import { markLinkedAt, getLinkedAt, inWarmup } from './warmup.js';
@@ -243,7 +243,7 @@ export async function startBot(config, log, authDir) {
           return;
         }
         // A handler may return an array when its output exceeds one WhatsApp message
-        // (sendlist does). Send the parts in order with a small gap so they arrive in
+        // (dmlist does). Send the parts in order with a small gap so they arrive in
         // sequence rather than racing.
         const replies = Array.isArray(reply) ? reply : [reply];
         for (const [i, part] of replies.entries()) {
@@ -432,11 +432,11 @@ export async function startBot(config, log, authDir) {
             } else scheduler.start({
               // Every scheduled job is a no-op until reminders run through the official
               // Cloud API. Reminders are sent BY HAND from the admin number in the
-              // meantime (see the `sendlist` command) — a cron falling back to Baileys
+              // meantime (see the `dmlist` command) — a cron falling back to Baileys
               // DMs is the exact traffic that got numbers banned, so it must not happen
               // by accident. Flipping reminderChannel to "cloudapi" wakes all three.
               reminderSend: async () => {
-                if (!usesCloudApi(config)) return log.info('⏰ Batch 1 skipped — manual reminder mode (use `sendlist`)');
+                if (!usesCloudApi(config)) return log.info('⏰ Batch 1 skipped — manual reminder mode (use `dmlist`)');
                 if (skipWarmup('reminder batch 1')) return;
                 const result = await reminderSender.sendReminders(store, getSock, config.botDir);
                 if (result.autoRenewed?.length > 0) {
@@ -444,7 +444,7 @@ export async function startBot(config, log, authDir) {
                 }
               },
               reminderSend2: async () => {
-                if (!usesCloudApi(config)) return log.info('⏰ Batch 2 skipped — manual reminder mode (use `sendlist`)');
+                if (!usesCloudApi(config)) return log.info('⏰ Batch 2 skipped — manual reminder mode (use `dmlist`)');
                 if (skipWarmup('reminder batch 2')) return;
                 const result = await reminderSender.sendRemindersSecondBatch(store, getSock, config.botDir);
                 if (result.autoRenewed?.length > 0) {
@@ -452,7 +452,7 @@ export async function startBot(config, log, authDir) {
                 }
               },
               overdueCheck: async () => {
-                if (!usesCloudApi(config)) return log.info('⏰ Overdue check skipped — manual reminder mode (use `sendlist`)');
+                if (!usesCloudApi(config)) return log.info('⏰ Overdue check skipped — manual reminder mode (use `dmlist`)');
                 if (skipWarmup('overdue check')) return;
                 await overdueEngine.runOverdueCheck(store, getSock, getBroadcastJids());
               },

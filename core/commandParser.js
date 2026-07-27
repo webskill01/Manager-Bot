@@ -7,7 +7,7 @@ import { createLookupHandlers } from './handlers/lookupHandlers.js';
 import { createReportHandlers } from './handlers/reportHandlers.js';
 import { createTrackerHandlers } from './handlers/trackerHandlers.js';
 import { isConfigured, usesCloudApi, createCloudApiSender } from './cloudApiSender.js';
-import { buildSendList, renderSendList } from './sendList.js';
+import { buildDmList, renderDmList } from './dmList.js';
 
 let activeOverdueList = [];
 
@@ -19,7 +19,7 @@ const SLOW_COMMANDS = new Set([
   'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
   'kick', 'rejoin', 'sendlinks', 'links', 'groupcheck', 'remind', 'renewed',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
-  'sendlist', 'delayall', 'cloudapi',
+  'dmlist', 'delayall', 'cloudapi',
 ]);
 
 export function isSlowCommand(text) {
@@ -63,7 +63,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   // Renewal-era commands a tracker bot must never run — its operators don't collect
   // renewals at all, so silently doing nothing would be worse than saying so.
   const RENEWAL_ONLY = new Set([
-    'renewed', 'remind', 'sendlist', 'due', 'overdue', 'refs', 'ref',
+    'renewed', 'remind', 'dmlist', 'due', 'overdue', 'refs', 'ref',
     'warnall', 'kickall', 'removal', 'forecast', 'collection',
     'norenew', 'toprefs', 'loyal', 'churn', 'upcoming',
   ]);
@@ -77,29 +77,29 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
       `Try: pending · called [phone] · moved [phone] · calls · add · summary · revenue`;
   }
 
-  // `sendlist [days] [msg1|msg2|msg3]` — the manual reminder path. Prints one tap-to-send
+  // `dmlist [days] [msg1|msg2|msg3]` — the manual reminder path. Prints one tap-to-send
   // wa.me link per member with the text pre-filled. Applies the 2-referral auto-renew
   // first, so nobody who owes nothing ends up on the list. Writes nothing else: the bot
   // prints, the operator sends, so it cannot know how far they got — any "stage" it
   // recorded would be a guess.
-  async function handleSendList(args) {
+  async function handleDmList(args) {
     let days = 0;
     let force = null;
     for (const a of args) {
       const w = String(a).toLowerCase();
       if (/^\d+$/.test(w)) days = Math.min(parseInt(w, 10), 60);
       else if (/^msg[123]$/.test(w)) force = w;
-      else return `❌ Unknown argument "${a}".\nUse: sendlist [days] [msg1|msg2|msg3]\n` +
-        `  sendlist          today's due\n` +
-        `  sendlist 7        anyone due in the last 7 days, still unpaid\n` +
-        `  sendlist 7 msg1   force the ₹${config.joining?.fee ?? 90} reminder for all of them`;
+      else return `❌ Unknown argument "${a}".\nUse: dmlist [days] [msg1|msg2|msg3]\n` +
+        `  dmlist          today's due\n` +
+        `  dmlist 7        anyone due in the last 7 days, still unpaid\n` +
+        `  dmlist 7 msg1   force the ₹${config.joining?.fee ?? 90} reminder for all of them`;
     }
 
-    if (!reminderSender) return '❌ sendlist not available on this bot.';
+    if (!reminderSender) return '❌ dmlist not available on this bot.';
     const renewed = await reminderSender.autoRenewDue(store, config.botDir);
     await store.refresh();
-    const { rows, stageForced } = buildSendList({ members: store.getAll(), config, days, force });
-    const parts = renderSendList({ rows, days, stageForced });
+    const { rows, stageForced } = buildDmList({ members: store.getAll(), config, days, force });
+    const parts = renderDmList({ rows, days, stageForced });
 
     if (renewed.length > 0) {
       parts[0] = `🎁 Auto-renewed (2 refs, no payment due): ` +
@@ -546,7 +546,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           }
         }
 
-        case 'sendlist':   return handleSendList(args);
+        case 'dmlist':   return handleDmList(args);
 
         case 'removal':    return removalEngine.handleRemoval();
         case 'warnall':    return removalEngine.warnall();

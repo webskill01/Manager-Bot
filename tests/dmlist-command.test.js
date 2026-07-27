@@ -10,9 +10,9 @@ import { formatDate } from '../core/globalConfig.js';
 const parserSrc = fs.readFileSync(new URL('../core/commandParser.js', import.meta.url), 'utf8');
 const indexSrc = fs.readFileSync(new URL('../core/index.js', import.meta.url), 'utf8');
 
-test('sendlist is a slow command (gets the instant ack)', () => {
-  assert.equal(isSlowCommand('sendlist'), true);
-  assert.equal(isSlowCommand('sendlist 7 msg1'), true);
+test('dmlist is a slow command (gets the instant ack)', () => {
+  assert.equal(isSlowCommand('dmlist'), true);
+  assert.equal(isSlowCommand('dmlist 7 msg1'), true);
 });
 
 test('the removed group commands are no longer slow commands', () => {
@@ -21,8 +21,8 @@ test('the removed group commands are no longer slow commands', () => {
   assert.equal(isSlowCommand('stop catchup'), false);
 });
 
-test('sendlist is renewal-only and the dead group commands are gone', () => {
-  assert.match(parserSrc, /RENEWAL_ONLY = new Set\(\[[\s\S]*?'sendlist'/, 'sendlist gated to full profile');
+test('dmlist is renewal-only and the dead group commands are gone', () => {
+  assert.match(parserSrc, /RENEWAL_ONLY = new Set\(\[[\s\S]*?'dmlist'/, 'dmlist gated to full profile');
   assert.doesNotMatch(parserSrc, /case 'remindall'/, 'remindall command removed');
   assert.doesNotMatch(parserSrc, /case 'catchup'/, 'catchup command removed');
   assert.doesNotMatch(parserSrc, /'remindall',/, 'remindall not left in any set');
@@ -48,7 +48,7 @@ test('catchupEngine is fully unwired — no stale state can resume on reconnect'
 });
 
 test('index.js sends array replies as separate messages', () => {
-  assert.match(indexSrc, /Array\.isArray\(reply\)/, 'sendlist returns an array of parts');
+  assert.match(indexSrc, /Array\.isArray\(reply\)/, 'dmlist returns an array of parts');
 });
 
 // ── End-to-end through the real command parser ────────────────────────────────
@@ -99,7 +99,7 @@ function makeParser(store, botDir) {
   );
 }
 
-test('sendlist end-to-end: real parser, real templates, tappable links', async () => {
+test('dmlist end-to-end: real parser, real templates, tappable links', async () => {
   const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-'));
   const store = fakeStore([
     { name: 'Gurpreet', phone: '9000000001', status: 'ACTIVE', billingDate: dayOffset(0) },
@@ -108,10 +108,10 @@ test('sendlist end-to-end: real parser, real templates, tappable links', async (
   ]);
   const parser = makeParser(store, botDir);
 
-  const out = await parser.parse('sendlist 7');
+  const out = await parser.parse('dmlist 7');
   const text = Array.isArray(out) ? out.join('\n') : out;
 
-  assert.match(text, /SEND LIST/);
+  assert.match(text, /DM LIST/);
   assert.match(text, /2 person\(s\)/, 'the future-dated member is excluded');
   assert.doesNotMatch(text, /9000000003/, 'nobody is chased before their month is up');
   // Most overdue first, and each gets its own stage's wording.
@@ -121,7 +121,7 @@ test('sendlist end-to-end: real parser, real templates, tappable links', async (
   assert.match(decodeURIComponent(text), /Jaswinder ji, aaj last din/, '6d overdue gets the final wording');
 });
 
-test('sendlist 7 msg1 gives the backlog one consistent first-contact message', async () => {
+test('dmlist 7 msg1 gives the backlog one consistent first-contact message', async () => {
   const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-'));
   const store = fakeStore([
     { name: 'Gurpreet', phone: '9000000001', status: 'ACTIVE', billingDate: dayOffset(0) },
@@ -129,7 +129,7 @@ test('sendlist 7 msg1 gives the backlog one consistent first-contact message', a
   ]);
   const parser = makeParser(store, botDir);
 
-  const text = (await parser.parse('sendlist 7 msg1')).join('\n');
+  const text = (await parser.parse('dmlist 7 msg1')).join('\n');
   const decoded = decodeURIComponent(text);
   assert.match(text, /Forced: msg1/);
   assert.match(decoded, /Sat Sri Akal Gurpreet ji/);
@@ -137,14 +137,14 @@ test('sendlist 7 msg1 gives the backlog one consistent first-contact message', a
   assert.doesNotMatch(decoded, /aaj last din/);
 });
 
-test('sendlist rejects a bad argument instead of silently defaulting', async () => {
+test('dmlist rejects a bad argument instead of silently defaulting', async () => {
   const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-'));
   const parser = makeParser(fakeStore([]), botDir);
-  const out = await parser.parse('sendlist banana');
+  const out = await parser.parse('dmlist banana');
   assert.match(out, /Unknown argument "banana"/);
 });
 
-test('sendlist auto-renews 2-ref members and never lists them', async () => {
+test('dmlist auto-renews 2-ref members and never lists them', async () => {
   const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-'));
   const store = fakeStore([
     { name: 'Boss', phone: '9000000009', status: 'ACTIVE', billingDate: dayOffset(0), renewals: 0, paidLast: 90 },
@@ -153,7 +153,7 @@ test('sendlist auto-renews 2-ref members and never lists them', async () => {
   ]);
   const parser = makeParser(store, botDir);
 
-  const text = (await parser.parse('sendlist')).join('\n');
+  const text = (await parser.parse('dmlist')).join('\n');
   assert.match(text, /Auto-renewed \(2 refs, no payment due\): Boss/);
   assert.doesNotMatch(text, /wa\.me\/919000000009/, 'nobody who owes nothing is chased');
   assert.equal(store.findByPhone('9000000009').paidLast, 0);

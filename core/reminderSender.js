@@ -262,7 +262,7 @@ export function createReminderSender(config, log) {
   }
 
   // Apply the 2-referral free renewal to everyone due today, and return who was renewed.
-  // Split out of computeDigestSets so the manual `sendlist` path gets the same silent
+  // Split out of computeDigestSets so the manual `dmlist` path gets the same silent
   // auto-renew the cron used to do — otherwise a member who owes nothing would be
   // chased for money. Returns [] and touches nothing when nobody qualifies.
   async function autoRenewDue(store, botDir) {

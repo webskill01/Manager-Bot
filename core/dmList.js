@@ -3,7 +3,7 @@ import {
   getReferralsInBillingPeriod,
 } from './globalConfig.js';
 
-// WhatsApp caps a single message around 4096 chars. Stay well under it: a sendlist line
+// WhatsApp caps a single message around 4096 chars. Stay well under it: a dmlist line
 // is a long url and the operator scrolls this on a phone.
 export const MAX_CHARS_PER_MSG = 3000;
 
@@ -31,7 +31,7 @@ function templateFor(stage, config, { referral }) {
 // escalating purely by billing date would hand a 6-day-overdue member the final notice
 // as their first ever contact — which is how you collect spam reports. Digging out of a
 // backlog is three runs on three days: msg1, then msg2, then msg3.
-export function buildSendList({ members, config, days = 0, force = null, now = todayStr() }) {
+export function buildDmList({ members, config, days = 0, force = null, now = todayStr() }) {
   const fee = config.joining?.fee ?? 90;
   const all = members;
   const rows = [];
@@ -88,12 +88,12 @@ export function chunkByChars(lines, limit = MAX_CHARS_PER_MSG) {
   return chunks;
 }
 
-export function renderSendList({ rows, days, stageForced }) {
+export function renderDmList({ rows, days, stageForced }) {
   if (rows.length === 0) {
     return [`✅ Nobody to remind${days > 0 ? ` in the last ${days} day(s)` : ' today'}.`];
   }
   const stages = [...new Set(rows.map(r => r.stage))].sort();
-  const header = `📤 SEND LIST — ${friendlyDate()} · ${rows.length} person(s)` +
+  const header = `📤 DM LIST — ${friendlyDate()} · ${rows.length} person(s)` +
     `${days > 0 ? ` · last ${days} day(s)` : ' · due today'}` +
     `\n${stageForced ? `Forced: ${stages[0]}` : `Auto: ${stages.join(' + ')}`}` +
     `\nTap a link → message is pre-typed → hit send.\n━━━━━━━━━━━━━━━━━━━`;

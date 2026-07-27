@@ -523,18 +523,18 @@ This bot has NO scheduled jobs — it only acts when you send a command.`;
 • stillin  →  REMOVED in sheet but still in a group
 
 📤 SENDING REMINDERS  (you send them, the bot never does)
-• sendlist  →  today's due, one tap-to-send link each
-• sendlist [days]  →  anyone due in the last N days, still unpaid
-• sendlist [days] msg1|msg2|msg3  →  force ONE wording for the whole list
+• dmlist  →  today's due, one tap-to-send link each
+• dmlist [days]  →  anyone due in the last N days, still unpaid
+• dmlist [days] msg1|msg2|msg3  →  force ONE wording for the whole list
 
   Tap a link → the message is already typed → hit send. Attach the QR
   yourself on the ₹${config.renewal.fullAmount} round.
 
   Digging out of a backlog? Do NOT let it auto-escalate — someone 6 days
   behind would get the final notice as their first ever message:
-     Day 1:  sendlist 7 msg1     everyone gets the plain ₹${config.renewal.fullAmount} reminder
-     Day 2:  sendlist 7 msg2     whoever still hasn't paid
-     Day 3:  sendlist 7 msg3     the final notice
+     Day 1:  dmlist 7 msg1     everyone gets the plain ₹${config.renewal.fullAmount} reminder
+     Day 2:  dmlist 7 msg2     whoever still hasn't paid
+     Day 3:  dmlist 7 msg3     the final notice
   Each run re-reads the sheet, so payers drop off by themselves.
 
   Nothing goes out on a timer any more. The 6:30/7:30/10:00 jobs stay

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { pickStage, buildSendList, chunkByChars, renderSendList } from '../core/sendList.js';
+import { pickStage, buildDmList, chunkByChars, renderDmList } from '../core/dmList.js';
 import { todayStr } from '../core/globalConfig.js';
 
 const cfg = {
@@ -33,7 +33,7 @@ test('window is backwards-only — nobody due in the future appears', () => {
     { name: 'Today', phone: '9000000001', status: 'ACTIVE', billingDate: todayStr() },
     { name: 'Future', phone: '9000000002', status: 'ACTIVE', billingDate: daysAgo(-3) },
   ];
-  const { rows } = buildSendList({ members, config: cfg, days: 7 });
+  const { rows } = buildDmList({ members, config: cfg, days: 7 });
   assert.equal(rows.length, 1);
   assert.equal(rows[0].phone, '9000000001');
 });
@@ -43,8 +43,8 @@ test('days window includes backlog and excludes anyone older than it', () => {
     { name: 'A', phone: '9000000001', status: 'ACTIVE', billingDate: daysAgo(6) },
     { name: 'B', phone: '9000000002', status: 'ACTIVE', billingDate: daysAgo(9) },
   ];
-  assert.equal(buildSendList({ members, config: cfg, days: 7 }).rows.length, 1);
-  assert.equal(buildSendList({ members, config: cfg, days: 10 }).rows.length, 2);
+  assert.equal(buildDmList({ members, config: cfg, days: 7 }).rows.length, 1);
+  assert.equal(buildDmList({ members, config: cfg, days: 10 }).rows.length, 2);
 });
 
 test('default days=0 is today only', () => {
@@ -52,13 +52,13 @@ test('default days=0 is today only', () => {
     { name: 'Today', phone: '9000000001', status: 'ACTIVE', billingDate: todayStr() },
     { name: 'Yesterday', phone: '9000000002', status: 'ACTIVE', billingDate: daysAgo(1) },
   ];
-  const { rows } = buildSendList({ members, config: cfg });
+  const { rows } = buildDmList({ members, config: cfg });
   assert.deepEqual(rows.map(r => r.phone), ['9000000001']);
 });
 
 test('auto stage gives a 6-day-overdue member the final wording', () => {
   const members = [{ name: 'A', phone: '9000000001', status: 'ACTIVE', billingDate: daysAgo(6) }];
-  const { rows } = buildSendList({ members, config: cfg, days: 7 });
+  const { rows } = buildDmList({ members, config: cfg, days: 7 });
   assert.equal(rows[0].stage, 'msg3');
   assert.match(rows[0].text, /^FINAL /);
 });
@@ -68,7 +68,7 @@ test('forced msg1 overrides the bucket for everyone', () => {
     { name: 'A', phone: '9000000001', status: 'ACTIVE', billingDate: daysAgo(6) },
     { name: 'B', phone: '9000000002', status: 'ACTIVE', billingDate: todayStr() },
   ];
-  const { rows, stageForced } = buildSendList({ members, config: cfg, days: 7, force: 'msg1' });
+  const { rows, stageForced } = buildDmList({ members, config: cfg, days: 7, force: 'msg1' });
   assert.equal(stageForced, true);
   assert.equal(rows.length, 2);
   assert.ok(rows.every(r => r.text.startsWith('DUE ')), 'all got msg1 wording');
@@ -76,7 +76,7 @@ test('forced msg1 overrides the bucket for everyone', () => {
 
 test('link is a wa.me url with 91 prefix and url-encoded text', () => {
   const members = [{ name: 'A B', phone: '9000000001', status: 'ACTIVE', billingDate: todayStr() }];
-  const { rows } = buildSendList({ members, config: cfg, days: 0 });
+  const { rows } = buildDmList({ members, config: cfg, days: 0 });
   assert.match(rows[0].link, /^https:\/\/wa\.me\/919000000001\?text=/);
   assert.ok(!rows[0].link.includes(' '), 'no raw spaces in the url');
   assert.match(decodeURIComponent(rows[0].link.split('?text=')[1]), /^DUE A B /);
@@ -85,7 +85,7 @@ test('link is a wa.me url with 91 prefix and url-encoded text', () => {
 test('newlines in a template survive url encoding intact', () => {
   const multiline = { ...cfg, messages: { ...cfg.messages, reminder: 'Hello {name}\nLine two\nLine three' } };
   const members = [{ name: 'X', phone: '9000000001', status: 'ACTIVE', billingDate: todayStr() }];
-  const { rows } = buildSendList({ members, config: multiline, days: 0 });
+  const { rows } = buildDmList({ members, config: multiline, days: 0 });
   assert.ok(!rows[0].link.includes('\n'), 'raw newline would break the link');
   assert.equal(decodeURIComponent(rows[0].link.split('?text=')[1]), 'Hello X\nLine two\nLine three');
 });
@@ -97,7 +97,7 @@ test('delayed, non-active and renewed-today members are excluded', () => {
     { name: 'Paid', phone: '9000000003', status: 'ACTIVE', billingDate: todayStr(), lastRenewed: todayStr() },
     { name: 'Real', phone: '9000000004', status: 'ACTIVE', billingDate: todayStr() },
   ];
-  const { rows } = buildSendList({ members, config: cfg, days: 0 });
+  const { rows } = buildDmList({ members, config: cfg, days: 0 });
   assert.deepEqual(rows.map(r => r.phone), ['9000000004']);
 });
 
@@ -108,7 +108,7 @@ test('one referral in the window gets the referral wording and half fee', () => 
     { name: 'Boss', phone: '9000000009', status: 'ACTIVE', billingDate: todayStr() },
     { name: 'Ref1', phone: '9000000001', status: 'ACTIVE', reference: '9000000009', refCreditDate: daysAgo(5) },
   ];
-  const { rows } = buildSendList({ members, config: cfg, days: 0 });
+  const { rows } = buildDmList({ members, config: cfg, days: 0 });
   const boss = rows.find(r => r.phone === '9000000009');
   assert.match(boss.text, /^REF /);
   assert.equal(boss.fee, 45);
@@ -116,7 +116,7 @@ test('one referral in the window gets the referral wording and half fee', () => 
 
 test('no referral means full fee and the plain reminder', () => {
   const members = [{ name: 'Solo', phone: '9000000001', status: 'ACTIVE', billingDate: todayStr() }];
-  const { rows } = buildSendList({ members, config: cfg, days: 0 });
+  const { rows } = buildDmList({ members, config: cfg, days: 0 });
   assert.equal(rows[0].fee, 90);
   assert.match(rows[0].text, /^DUE /);
 });
@@ -127,7 +127,7 @@ test('rows are sorted most-overdue first', () => {
     { name: 'Old', phone: '9000000002', status: 'ACTIVE', billingDate: daysAgo(5) },
     { name: 'Mid', phone: '9000000003', status: 'ACTIVE', billingDate: daysAgo(2) },
   ];
-  const { rows } = buildSendList({ members, config: cfg, days: 7 });
+  const { rows } = buildDmList({ members, config: cfg, days: 7 });
   assert.deepEqual(rows.map(r => r.name), ['Old', 'Mid', 'New']);
 });
 
@@ -143,21 +143,21 @@ test('chunkByChars keeps an over-long line rather than dropping it', () => {
   assert.deepEqual(chunks.flat(), ['short', 'y'.repeat(5000), 'also short']);
 });
 
-test('renderSendList says nobody when the list is empty', () => {
-  const parts = renderSendList({ rows: [], days: 7, stageForced: false });
+test('renderDmList says nobody when the list is empty', () => {
+  const parts = renderDmList({ rows: [], days: 7, stageForced: false });
   assert.equal(parts.length, 1);
   assert.match(parts[0], /Nobody to remind in the last 7 day/);
 });
 
-test('renderSendList splits a big list into numbered parts, all under the cap', () => {
+test('renderDmList splits a big list into numbered parts, all under the cap', () => {
   const members = Array.from({ length: 60 }, (_, i) => ({
     name: `Member Number ${i}`,
     phone: `90000${String(i).padStart(5, '0')}`,
     status: 'ACTIVE',
     billingDate: todayStr(),
   }));
-  const { rows, stageForced } = buildSendList({ members, config: cfg, days: 0 });
-  const parts = renderSendList({ rows, days: 0, stageForced });
+  const { rows, stageForced } = buildDmList({ members, config: cfg, days: 0 });
+  const parts = renderDmList({ rows, days: 0, stageForced });
   assert.ok(parts.length > 1, 'must split');
   assert.ok(parts.every(p => p.length <= 4096), 'every part fits one WhatsApp message');
   // Every member must appear exactly once across the parts.

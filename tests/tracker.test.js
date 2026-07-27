@@ -233,7 +233,7 @@ test('renewal commands are refused on a tracker bot with a helpful message', asy
     { user: {} }, Date.now(), {}, {}, {}, new Set(), null, null, null,
   );
 
-  for (const cmd of ['renewed 9000000001', 'remind 9000000001', 'due', 'overdue', 'refs 9000000001', 'sendlist 7', 'kickall']) {
+  for (const cmd of ['renewed 9000000001', 'remind 9000000001', 'due', 'overdue', 'refs 9000000001', 'dmlist 7', 'kickall']) {
     const out = await parser.parse(cmd);
     assert.match(out, /isn't available on this bot/, `${cmd} refused`);
     assert.match(out, /pending · called \[phone\] · moved \[phone\]/, `${cmd} suggests tracker commands`);
@@ -328,12 +328,12 @@ test('full-profile help is unchanged and still lists renewals', () => {
   assert.ok(!/BOT COMMANDS — tracker/.test(out));
 });
 
-test('full-profile help documents sendlist and drops the retired commands', () => {
+test('full-profile help documents dmlist and drops the retired commands', () => {
   const fullConfig = { ...trackerConfig(tmp()), profile: 'full' };
   const out = createReportHandlers(fakeStore([]), fullConfig, Date.now(), log).handleHelp();
 
-  assert.match(out, /sendlist \[days\] msg1\|msg2\|msg3/, 'the forced-stage form is documented');
-  assert.match(out, /Day 1:\s+sendlist 7 msg1/, 'the backlog recipe is spelled out');
+  assert.match(out, /dmlist \[days\] msg1\|msg2\|msg3/, 'the forced-stage form is documented');
+  assert.match(out, /Day 1:\s+dmlist 7 msg1/, 'the backlog recipe is spelled out');
   assert.match(out, /final notice as their first ever message/, 'says WHY forcing matters');
   assert.match(out, /Nothing goes out on a timer/, 'operator must know the crons are idle');
 
@@ -347,5 +347,5 @@ test('tracker help documents the interested / not interested outcomes', () => {
   assert.match(out, /called \[phone\] not interested/);
   assert.match(out, /Drops OUT of "pending"/, 'explains what a "no" actually does');
   assert.match(out, /changed their mind\? called \[phone\] interested/i, 'says it is reversible');
-  assert.ok(!/sendlist/.test(out), 'tracker bots collect no renewals, so no send list');
+  assert.ok(!/dmlist/.test(out), 'tracker bots collect no renewals, so no send list');
 });
