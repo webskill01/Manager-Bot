@@ -440,8 +440,12 @@ export function createReportHandlers(store, config, botStartTime, log) {
 📞 THE CALL FUNNEL
 • pending  →  who to call now (month up) + who to chase again
 • called [phone]  →  you pitched the app. Stays in the group
+• called [phone] interested  →  they're keen. Stays in "pending" to chase
+• called [phone] not interested  →  they said no. Drops OUT of "pending"
+     stays in the group — use "kick [phone]" if you want the seat back
+     changed their mind? called [phone] interested puts them back
 • moved [phone]  →  they're on the app. Marks MOVED + removes from ALL groups
-• calls  →  funnel counts + conversion %
+• calls  →  funnel counts, interested/not-interested split, conversion %
 
 🔍 LOOKUPS
 • find [phone or name]  /  status [phone]
@@ -493,8 +497,6 @@ This bot has NO scheduled jobs — it only acts when you send a command.`;
 • renewed [phone] 45  →  ₹${config.renewal.referralAmount}
 • renewed [phone] [day]  /  [day] 45
 • remind [phone]  →  send reminder + QR manually
-• remindall  →  re-fire group reminder (due tags now, overdue tags ~5 min later; group mode only)
-• remindall preview  →  see both messages without sending
 • due / due tomorrow
 • upcoming [days]  →  who's due in next N days (default 7)
 • overdue / pending
@@ -520,13 +522,23 @@ This bot has NO scheduled jobs — it only acts when you send a command.`;
 • leftmembers  →  ACTIVE in sheet but not in any group
 • stillin  →  REMOVED in sheet but still in a group
 
-📣 OUTAGE CATCH-UP  (group mode only)
-• catchup [days]  →  preview who was missed while the bot was down
-• catchup [days] confirm  →  start NOW, first message goes out immediately
-• catchup [days] confirm [hour]  →  grace applies now, 1st message at that hour
-     e.g. catchup 8 confirm 9  →  protected instantly, message at 9 AM
-• catchup status  →  stage, who paid, who's left
-• stop catchup  →  cancel (grace stays)
+📤 SENDING REMINDERS  (you send them, the bot never does)
+• sendlist  →  today's due, one tap-to-send link each
+• sendlist [days]  →  anyone due in the last N days, still unpaid
+• sendlist [days] msg1|msg2|msg3  →  force ONE wording for the whole list
+
+  Tap a link → the message is already typed → hit send. Attach the QR
+  yourself on the ₹${config.renewal.fullAmount} round.
+
+  Digging out of a backlog? Do NOT let it auto-escalate — someone 6 days
+  behind would get the final notice as their first ever message:
+     Day 1:  sendlist 7 msg1     everyone gets the plain ₹${config.renewal.fullAmount} reminder
+     Day 2:  sendlist 7 msg2     whoever still hasn't paid
+     Day 3:  sendlist 7 msg3     the final notice
+  Each run re-reads the sheet, so payers drop off by themselves.
+
+  Nothing goes out on a timer any more. The 6:30/7:30/10:00 jobs stay
+  registered but do nothing until reminders move to the official API.
 
 🧹 GROUP CLEANUP
 • kickghosts  →  preview bulk removal of not-in-sheet numbers

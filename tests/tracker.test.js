@@ -327,3 +327,25 @@ test('full-profile help is unchanged and still lists renewals', () => {
   assert.match(out, /renewed \[phone\]/);
   assert.ok(!/BOT COMMANDS — tracker/.test(out));
 });
+
+test('full-profile help documents sendlist and drops the retired commands', () => {
+  const fullConfig = { ...trackerConfig(tmp()), profile: 'full' };
+  const out = createReportHandlers(fakeStore([]), fullConfig, Date.now(), log).handleHelp();
+
+  assert.match(out, /sendlist \[days\] msg1\|msg2\|msg3/, 'the forced-stage form is documented');
+  assert.match(out, /Day 1:\s+sendlist 7 msg1/, 'the backlog recipe is spelled out');
+  assert.match(out, /final notice as their first ever message/, 'says WHY forcing matters');
+  assert.match(out, /Nothing goes out on a timer/, 'operator must know the crons are idle');
+
+  assert.ok(!/remindall/.test(out), 'remindall is gone');
+  assert.ok(!/catchup/.test(out), 'catchup is gone');
+});
+
+test('tracker help documents the interested / not interested outcomes', () => {
+  const out = createReportHandlers(fakeStore([]), trackerConfig(tmp()), Date.now(), log).handleHelp();
+  assert.match(out, /called \[phone\] interested/);
+  assert.match(out, /called \[phone\] not interested/);
+  assert.match(out, /Drops OUT of "pending"/, 'explains what a "no" actually does');
+  assert.match(out, /changed their mind\? called \[phone\] interested/i, 'says it is reversible');
+  assert.ok(!/sendlist/.test(out), 'tracker bots collect no renewals, so no send list');
+});
