@@ -7,6 +7,7 @@ import { createLookupHandlers } from './handlers/lookupHandlers.js';
 import { createReportHandlers } from './handlers/reportHandlers.js';
 import { createTrackerHandlers } from './handlers/trackerHandlers.js';
 import { isConfigured, usesCloudApi, createCloudApiSender } from './cloudApiSender.js';
+import { buildSendList, renderSendList } from './sendList.js';
 
 let activeOverdueList = [];
 
@@ -18,7 +19,7 @@ const SLOW_COMMANDS = new Set([
   'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
   'kick', 'rejoin', 'sendlinks', 'links', 'groupcheck', 'remind', 'renewed',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
-  'remindall', 'delayall', 'catchup', 'cloudapi',
+  'sendlist', 'delayall', 'cloudapi',
 ]);
 
 export function isSlowCommand(text) {
@@ -30,7 +31,7 @@ export function isSlowCommand(text) {
   const cmd = parts[0].toLowerCase();
   if (SLOW_COMMANDS.has(cmd)) return true;
   if (cmd === 'start' && /^removal$/i.test(parts[1] || '')) return true;
-  if (cmd === 'stop' && /^(removal|kickall|kickghosts|catchup)$/i.test(parts[1] || '')) return true;
+  if (cmd === 'stop' && /^(removal|kickall|kickghosts)$/i.test(parts[1] || '')) return true;
   return false;
 }
 
@@ -62,8 +63,8 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   // Renewal-era commands a tracker bot must never run — its operators don't collect
   // renewals at all, so silently doing nothing would be worse than saying so.
   const RENEWAL_ONLY = new Set([
-    'renewed', 'remind', 'remindall', 'due', 'overdue', 'refs', 'ref',
-    'warnall', 'kickall', 'removal', 'catchup', 'forecast', 'collection',
+    'renewed', 'remind', 'sendlist', 'due', 'overdue', 'refs', 'ref',
+    'warnall', 'kickall', 'removal', 'forecast', 'collection',
     'norenew', 'toprefs', 'loyal', 'churn', 'upcoming',
   ]);
 
@@ -74,6 +75,37 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   function fullOnly(cmd) {
     return `❌ "${cmd}" isn't available on this bot — it tracks new joins and app moves, not renewals.\n` +
       `Try: pending · called [phone] · moved [phone] · calls · add · summary · revenue`;
+  }
+
+  // `sendlist [days] [msg1|msg2|msg3]` — the manual reminder path. Prints one tap-to-send
+  // wa.me link per member with the text pre-filled. Applies the 2-referral auto-renew
+  // first, so nobody who owes nothing ends up on the list. Writes nothing else: the bot
+  // prints, the operator sends, so it cannot know how far they got — any "stage" it
+  // recorded would be a guess.
+  async function handleSendList(args) {
+    let days = 0;
+    let force = null;
+    for (const a of args) {
+      const w = String(a).toLowerCase();
+      if (/^\d+$/.test(w)) days = Math.min(parseInt(w, 10), 60);
+      else if (/^msg[123]$/.test(w)) force = w;
+      else return `❌ Unknown argument "${a}".\nUse: sendlist [days] [msg1|msg2|msg3]\n` +
+        `  sendlist          today's due\n` +
+        `  sendlist 7        anyone due in the last 7 days, still unpaid\n` +
+        `  sendlist 7 msg1   force the ₹${config.joining?.fee ?? 90} reminder for all of them`;
+    }
+
+    if (!reminderSender) return '❌ sendlist not available on this bot.';
+    const renewed = await reminderSender.autoRenewDue(store, config.botDir);
+    await store.refresh();
+    const { rows, stageForced } = buildSendList({ members: store.getAll(), config, days, force });
+    const parts = renderSendList({ rows, days, stageForced });
+
+    if (renewed.length > 0) {
+      parts[0] = `🎁 Auto-renewed (2 refs, no payment due): ` +
+        `${renewed.map(m => m.name).join(', ')}\n\n` + parts[0];
+    }
+    return parts;
   }
 
   function isOverdueAction(text) {
@@ -514,11 +546,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           }
         }
 
-        case 'remindall': {
-          if (!reminderSender) return '❌ remindall not available on this bot.';
-          const preview = /^preview$/i.test(args[0] || '');
-          return reminderSender.remindAll(store, getSock || (() => sock), config.botDir, { preview });
-        }
+        case 'sendlist':   return handleSendList(args);
 
         case 'removal':    return removalEngine.handleRemoval();
         case 'warnall':    return removalEngine.warnall();
@@ -547,33 +575,6 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
             : `❌ Cloud API test failed: ${res.error}${res.code ? ` [code ${res.code}]` : ''}`;
         }
 
-        case 'catchup': {
-          if (!catchupEngine) return '❌ catchup not available on this bot.';
-          if (/^status$/i.test(args[0] || '')) return catchupEngine.status();
-          if (!/^\d{1,2}$/.test(args[0] || '')) {
-            return '❌ Format: catchup [days] [confirm] [hour]  — days = how long the bot was down\n' +
-              '   catchup 8            preview, sends nothing\n' +
-              '   catchup 8 confirm    start now — first message goes out immediately\n' +
-              '   catchup 8 confirm 9  grace applies NOW, first message at 9 AM\n' +
-              '   catchup status       progress\n' +
-              '   stop catchup         cancel';
-          }
-          const windowDays = Math.min(Math.max(parseInt(args[0], 10), 1), 60);
-          if (/^confirm$/i.test(args[1] || '')) {
-            // Optional hour (0–23): defer the first group message to a civil time while
-            // applying the grace immediately.
-            let startHour = null;
-            if (args[2] !== undefined) {
-              if (!/^\d{1,2}$/.test(args[2]) || parseInt(args[2], 10) > 23) {
-                return '❌ Hour must be 0–23 (24-hour clock). e.g. catchup 8 confirm 9';
-              }
-              startHour = parseInt(args[2], 10);
-            }
-            return catchupEngine.start(windowDays, startHour);
-          }
-          return catchupEngine.preview(windowDays);
-        }
-
         case 'start':
           if (args[0]?.toLowerCase() === 'removal') return trialEngine.start();
           return `❓ Unknown command. Did you mean "start removal"?`;
@@ -581,8 +582,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           if (args[0]?.toLowerCase() === 'removal') return trialEngine.stopCommand();
           if (args[0]?.toLowerCase() === 'kickall') return removalEngine.stopKickall();
           if (args[0]?.toLowerCase() === 'kickghosts') return ghostEngine.stop();
-          if (args[0]?.toLowerCase() === 'catchup') return catchupEngine ? catchupEngine.stop() : '❌ catchup not available on this bot.';
-          return `❓ Unknown command. Did you mean "stop removal", "stop kickall", "stop kickghosts", or "stop catchup"?`;
+          return `❓ Unknown command. Did you mean "stop removal", "stop kickall", or "stop kickghosts"?`;
 
         default:
           return `❓ Unknown command: "${cmd}". Send 'help' for full list.`;

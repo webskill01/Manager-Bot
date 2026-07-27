@@ -233,11 +233,13 @@ test('renewal commands are refused on a tracker bot with a helpful message', asy
     { user: {} }, Date.now(), {}, {}, {}, new Set(), null, null, null,
   );
 
-  for (const cmd of ['renewed 9000000001', 'remind 9000000001', 'due', 'overdue', 'refs 9000000001', 'catchup 8', 'kickall']) {
+  for (const cmd of ['renewed 9000000001', 'remind 9000000001', 'due', 'overdue', 'refs 9000000001', 'sendlist 7', 'kickall']) {
     const out = await parser.parse(cmd);
     assert.match(out, /isn't available on this bot/, `${cmd} refused`);
     assert.match(out, /pending · called \[phone\] · moved \[phone\]/, `${cmd} suggests tracker commands`);
   }
+  // catchup was retired with the group-mention path — it is now simply unknown everywhere.
+  assert.match(await parser.parse('catchup 8'), /Unknown command/);
   assert.equal(store.writes.length, 0);
 });
 
