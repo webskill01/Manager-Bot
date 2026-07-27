@@ -301,7 +301,7 @@ export function surplusCreditDate(newBillingDate) {
 //       { "label": "Partner", "percent": 25 }
 //   ] }
 // Bots WITHOUT a split block keep the legacy 50-50 two-way behavior ("Per person: ₹X"),
-// so bot-nitin and bot-2 are unaffected.
+// so bot-nitin and bot-manny are unaffected.
 
 // Returns the configured shares array, or null when none is defined (→ legacy 50-50 path).
 export function getSplitShares(config) {
@@ -339,7 +339,7 @@ export function computeSplit(total, config) {
 }
 
 // Renders the split for summaries/reports.
-// - No split block  → legacy single line "Per person: ₹X"          (bot-nitin, bot-2)
+// - No split block  → legacy single line "Per person: ₹X"          (bot-nitin, bot-manny)
 // - Split block set → one line per share "Label: ₹X"               (e.g. bot-abhi, 50-25-25)
 export function formatSplit(total, config, indent = '   ') {
   if (!getSplitShares(config)) {

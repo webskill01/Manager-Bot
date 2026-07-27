@@ -1,4 +1,4 @@
-# bot-2 — Setup Checklist
+# bot-manny — Setup Checklist
 
 This folder is scaffolded but **not yet runnable**. Fill in the placeholders below, then start it.
 
@@ -26,7 +26,7 @@ This folder is scaffolded but **not yet runnable**. Fill in the placeholders bel
 
 ## 5. Start + scan
 ```bash
-pm2 start ecosystem.config.cjs --only bot-2     # or: pm2 reload ecosystem.config.cjs
+pm2 start ecosystem.config.cjs --only bot-manny     # or: pm2 reload ecosystem.config.cjs
 ```
 Open the shareable scan page and hand the link to whoever owns the phone:
 ```
@@ -38,6 +38,6 @@ They scan the QR (WhatsApp → Linked devices → Link a device). The page shows
 After the first scan, send the bot a DM. It will message the owner an "unknown LID".
 Copy that value into `config.json` → `allowedLids`, then:
 ```bash
-pm2 reload ecosystem.config.cjs --only bot-2
+pm2 reload ecosystem.config.cjs --only bot-manny
 ```
 Now the owner's commands are authorised.
