@@ -169,27 +169,44 @@ export function createReportHandlers(store, config, botStartTime, log) {
       String(targetDateObj.getFullYear()),
     ].join('-'); // "DD-MM-YYYY"
 
-    // Tracker profile: the day's summary is joins, calls and app moves — there are no
-    // renewals, reminders or overdue members to report on.
+    // Tracker profile: the same daily money view as a full bot, minus the renewal machinery —
+    // these operators collect a joining fee and nothing else. Call activity is deliberately
+    // NOT here; `log` owns that, so the daily summary stays a money report.
     if (isTracker(config)) {
       const on = d => d && d.slice(0, 10) === targetDateStr;
-      const joined = all.filter(m => on(m.joinDate));
-      const called = all.filter(m => on(m.callDate) && ['CALLED', 'MOVED'].includes(m.status));
-      const moved = all.filter(m => m.status === 'MOVED' && isUpdatedOn(m.lastUpdated, targetDateStr));
-      const dueNow = all.filter(m => isCallDue(m, config.tracker?.callAfterDays ?? 30));
-      const followUp = all.filter(m => needsFollowUp(m, config.tracker?.followUpDays ?? 3));
-      const joinRevenue = joined.filter(isPaidJoinRow).length * config.joining.fee;
-      const label = daysAgo === 0 ? 'Today' : daysAgo === 1 ? 'Yesterday' : `${daysAgo} days ago`;
-      const names = list => list.length ? '\n' + list.map(m => `   • ${m.name}  ${m.phone}`).join('\n') : '';
+      const joinedToday = all.filter(m => on(m.joinDate));
+      const joinRevenue = joinedToday.filter(isPaidJoinRow).length * config.joining.fee;
+      const removedOnDay = all.filter(m => m.status === 'REMOVED' && isUpdatedOn(m.lastUpdated, targetDateStr));
+      const skippedOnDay = all.filter(m => m.status === 'SKIPPED' && isUpdatedOn(m.lastUpdated, targetDateStr));
+      const inGroups = all.filter(m => !['REMOVED', 'SKIPPED'].includes(m.status)).length;
+      const label = daysAgo === 0 ? 'Today'
+        : daysAgo === 1 ? `${targetDateStr} (yesterday)`
+        : `${targetDateStr} (${daysAgo} days ago)`;
 
-      return `📋 ${label} — ${targetDateStr}\n━━━━━━━━━━━━━━━━━━━\n\n` +
-        `➕ Joined: ${joined.length} (₹${joinRevenue})${names(joined)}\n` +
-        `${formatSplit(joinRevenue, config, '   ')}\n\n` +
-        `📞 Called: ${called.length}${names(called)}\n\n` +
-        `✅ Moved to app: ${moved.length}${names(moved)}\n\n` +
-        `━━━━━━━━━━━━━━━━━━━\n` +
-        `📌 To call now: ${dueNow.length}  |  To chase: ${followUp.length}\n` +
-        `See the list: pending`;
+      let msg = `📊 Daily Summary — ${label}\n\n`;
+
+      if (joinedToday.length > 0) {
+        msg += `➕ New Members: ${joinedToday.length} (₹${joinRevenue})\n`;
+        msg += joinedToday.map(m => `   • ${m.name} • ${m.phone}`).join('\n') + '\n\n';
+      } else {
+        msg += `➕ New Members: 0\n\n`;
+      }
+
+      msg += `💰 Today's Revenue: ₹${joinRevenue}\n`;
+      if (joinRevenue > 0) msg += `${formatSplit(joinRevenue, config)}\n`;
+      msg += '\n';
+
+      msg += `❌ Removals: ${removedOnDay.length}\n`;
+      if (removedOnDay.length > 0) {
+        msg += removedOnDay.map(m => `   • ${m.name} • ${m.phone}`).join('\n') + '\n';
+      }
+      msg += `⏭️ Skipped: ${skippedOnDay.length}\n`;
+      if (skippedOnDay.length > 0) {
+        msg += skippedOnDay.map(m => `   • ${m.name} • ${m.phone}${m.skipReason ? ` (${m.skipReason})` : ''}`).join('\n') + '\n';
+      }
+      msg += `👥 Total in groups: ${inGroups}`;
+
+      return msg;
     }
 
     // Detect renewals via lastRenewed (set ONLY by the "renewed" command / auto-renew), NOT
@@ -329,14 +346,14 @@ export function createReportHandlers(store, config, botStartTime, log) {
         && isPaidJoinRow(m)
         && m.joinDate.slice(3, 5) === mm && m.joinDate.slice(6, 10) === yyyy);
       const total = joins.length * config.joining.fee;
-      const moved = all.filter(m => m.status === 'MOVED').length;
+      const interested = all.filter(m => m.callResult === 'interested').length;
 
       return `💰 Revenue — ${monthLabel} ${yyyy}\n\n` +
         `Total: ₹${total}\n` +
         `${formatSplit(total, config, '')}\n\n` +
         `➕ New joins: ${joins.length} @ ₹${config.joining.fee}\n` +
         `   (joins only — this bot collects no renewals)\n\n` +
-        `✅ Moved to app, all time: ${moved}`;
+        `✅ Interested in the app, all time: ${interested}`;
     }
 
     // Renewals: only count entries where the "renewed" command was actually run this month.
@@ -425,8 +442,11 @@ export function createReportHandlers(store, config, botStartTime, log) {
     return `📋 BOT COMMANDS — tracker
 
 🔄 THE FLOW
-  add → (${days} days pass) → pending → called → moved
-  NEW  →  CALLED  →  MOVED (removed from groups)
+  add → (${days} days pass) → pending → call them → log what they said
+  NEW  →  CALLED (interested / not interested / no answer)
+
+This bot only keeps the record. It never moves anyone onto the app and
+never removes anyone — you do that yourself with "kick [phone]".
 
 👤 ADD A NEW PERSON
 • add [Name] [phone]  →  sends group links + welcome, records as NEW
@@ -437,11 +457,18 @@ export function createReportHandlers(store, config, botStartTime, log) {
 • rejoin [phone]  →  add an old member back
 • groupcheck [phone]  →  which groups are they in?
 
-📞 THE CALL FUNNEL
-• pending  →  who to call now (month up) + who to chase again
-• called [phone]  →  you pitched the app. Stays in the group
-• moved [phone]  →  they're on the app. Marks MOVED + removes from ALL groups
-• calls  →  funnel counts + conversion %
+📞 CALLING
+• pending  →  who to call now (${days}d in group) + who gave no answer yet
+• called [phone] interested      →  logs the call + date + "interested"
+• called [phone] not interested  →  logs the call + date + "not interested"
+• called [phone]                 →  logs the call + date, no answer yet
+     reappears in "pending" after ${chase} day(s) until you log an answer
+     any of these can be re-run later to correct what you logged
+• log  →  the full record: interested / not interested / no answer /
+          not called yet.  ("calls" does the same thing)
+
+Nobody is ever removed by these. When you want a seat back: kick [phone]
+Once kicked, they vanish from "pending" and "log" for good.
 
 🔍 LOOKUPS
 • find [phone or name]  /  status [phone]
@@ -449,7 +476,8 @@ export function createReportHandlers(store, config, botStartTime, log) {
 
 📊 REPORTS  (nothing is ever sent to you on a timer)
 • digest  →  today at a glance
-• summary / summary 1  →  joins, calls, moves for a day
+• summary / summary 1  →  the day's money: joins, revenue, split
+     (call activity is NOT here — that's "log")
 • revenue  →  joining fees this month + split
 • weekly / monthly / growth / trend
 • stats / groups / ping
@@ -457,14 +485,14 @@ export function createReportHandlers(store, config, botStartTime, log) {
 🔍 GROUP AUDITS
 • notinsheet  →  in a group but missing from the sheet
 • leftmembers  →  in the sheet but not in any group
-• stillin  →  MOVED/REMOVED but still in a group
+• stillin  →  REMOVED in the sheet but still in a group
 
 🧹 CLEANUP
 • kick [phone]  →  remove from all groups
 • kickghosts / kickghosts confirm / stop kickghosts
 
 ⏱️ Timing: a person appears in "pending" ${days} days after joining.
-Called but not moved reappears after ${chase} days.
+Called with no answer logged reappears after ${chase} days.
 This bot has NO scheduled jobs — it only acts when you send a command.`;
   }
 
@@ -493,8 +521,6 @@ This bot has NO scheduled jobs — it only acts when you send a command.`;
 • renewed [phone] 45  →  ₹${config.renewal.referralAmount}
 • renewed [phone] [day]  /  [day] 45
 • remind [phone]  →  send reminder + QR manually
-• remindall  →  re-fire group reminder (due tags now, overdue tags ~5 min later; group mode only)
-• remindall preview  →  see both messages without sending
 • due / due tomorrow
 • upcoming [days]  →  who's due in next N days (default 7)
 • overdue / pending
@@ -520,13 +546,23 @@ This bot has NO scheduled jobs — it only acts when you send a command.`;
 • leftmembers  →  ACTIVE in sheet but not in any group
 • stillin  →  REMOVED in sheet but still in a group
 
-📣 OUTAGE CATCH-UP  (group mode only)
-• catchup [days]  →  preview who was missed while the bot was down
-• catchup [days] confirm  →  start NOW, first message goes out immediately
-• catchup [days] confirm [hour]  →  grace applies now, 1st message at that hour
-     e.g. catchup 8 confirm 9  →  protected instantly, message at 9 AM
-• catchup status  →  stage, who paid, who's left
-• stop catchup  →  cancel (grace stays)
+📤 SENDING REMINDERS  (you send them, the bot never does)
+• dmlist  →  today's due, one tap-to-send link each
+• dmlist [days]  →  anyone due in the last N days, still unpaid
+• dmlist [days] msg1|msg2|msg3  →  force ONE wording for the whole list
+
+  Tap a link → the message is already typed → hit send. Attach the QR
+  yourself on the ₹${config.renewal.fullAmount} round.
+
+  Digging out of a backlog? Do NOT let it auto-escalate — someone 6 days
+  behind would get the final notice as their first ever message:
+     Day 1:  dmlist 7 msg1     everyone gets the plain ₹${config.renewal.fullAmount} reminder
+     Day 2:  dmlist 7 msg2     whoever still hasn't paid
+     Day 3:  dmlist 7 msg3     the final notice
+  Each run re-reads the sheet, so payers drop off by themselves.
+
+  Nothing goes out on a timer any more. The 6:30/7:30/10:00 jobs stay
+  registered but do nothing until reminders move to the official API.
 
 🧹 GROUP CLEANUP
 • kickghosts  →  preview bulk removal of not-in-sheet numbers

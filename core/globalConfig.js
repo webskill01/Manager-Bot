@@ -66,20 +66,55 @@ export function isTracker(config) {
 // NEW → CALLED → MOVED. DUE_CALL is never stored: a member is due for their app pitch
 // once they've been in the group `callAfterDays` (default 30) and is still NEW. Deriving
 // it means there is no daily job to keep a stored flag honest.
-export const TRACKER_STATUSES = ['NEW', 'CALLED', 'MOVED'];
+// The bot only ever records that a pitch happened and what the person said. It never
+// marks anyone as converted and never removes anyone: moving someone onto the app is
+// a human act the operator does outside the bot, and they kick the person themselves.
+export const TRACKER_STATUSES = ['NEW', 'CALLED'];
+
+// WhatsApp caps one message near 4096 chars. Split rendered lines so no single message
+// exceeds `limit`; a line longer than the limit still gets its own chunk rather than
+// being dropped.
+export const MAX_CHARS_PER_MSG = 3000;
+
+export function chunkByChars(lines, limit = MAX_CHARS_PER_MSG) {
+  const chunks = [];
+  let cur = [];
+  let len = 0;
+  for (const line of lines) {
+    const add = line.length + (cur.length ? 1 : 0);
+    if (cur.length && len + add > limit) {
+      chunks.push(cur);
+      cur = [];
+      len = 0;
+    }
+    cur.push(line);
+    len += cur.length === 1 ? line.length : add;
+  }
+  if (cur.length) chunks.push(cur);
+  return chunks;
+}
+
+// Not yet pitched. NEW is what `add` writes on a tracker bot, but every row that predates
+// the tracker profile — migrated members, and anyone added while the bot still ran the full
+// renewal profile — carries ACTIVE. Both mean "in the group, never called", so both belong
+// in the call queue. Without this, an operator's entire existing member list is invisible to
+// `pending` and no sheet migration would be obvious enough to catch it.
+export const UNCALLED_STATUSES = ['NEW', 'ACTIVE'];
 
 export function isCallDue(member, callAfterDays = 30, now = new Date()) {
-  if (!member || member.status !== 'NEW') return false;
+  if (!member || !UNCALLED_STATUSES.includes(member.status)) return false;
   const joined = parseDate(member.joinDate);
   if (!joined) return false;
   const days = Math.round((now.setHours(0, 0, 0, 0) - joined.setHours(0, 0, 0, 0)) / 86400000);
   return days >= callAfterDays;
 }
 
-// A member who was called but never moved onto the app is the leak in the funnel —
-// they're still in the group, still not converted. Resurfaces after `followUpDays`.
+// Called, but nothing came back — no answer, didn't pick up, said "later". That is an
+// UNRESOLVED pitch, so it resurfaces after `followUpDays`. Once the operator records
+// interested or not-interested the pitch is answered and the person drops out for good.
 export function needsFollowUp(member, followUpDays = 3, now = new Date()) {
   if (!member || member.status !== 'CALLED') return false;
+  if (member.callResult) return false;   // answered — nothing left to chase
   const called = parseDate(member.callDate);
   if (!called) return true;   // called but undated → always worth chasing
   const days = Math.round((now.setHours(0, 0, 0, 0) - called.setHours(0, 0, 0, 0)) / 86400000);
@@ -301,7 +336,7 @@ export function surplusCreditDate(newBillingDate) {
 //       { "label": "Partner", "percent": 25 }
 //   ] }
 // Bots WITHOUT a split block keep the legacy 50-50 two-way behavior ("Per person: ₹X"),
-// so bot-nitin and bot-2 are unaffected.
+// so bot-nitin and bot-manny are unaffected.
 
 // Returns the configured shares array, or null when none is defined (→ legacy 50-50 path).
 export function getSplitShares(config) {
@@ -339,7 +374,7 @@ export function computeSplit(total, config) {
 }
 
 // Renders the split for summaries/reports.
-// - No split block  → legacy single line "Per person: ₹X"          (bot-nitin, bot-2)
+// - No split block  → legacy single line "Per person: ₹X"          (bot-nitin, bot-manny)
 // - Split block set → one line per share "Label: ₹X"               (e.g. bot-abhi, 50-25-25)
 export function formatSplit(total, config, indent = '   ') {
   if (!getSplitShares(config)) {

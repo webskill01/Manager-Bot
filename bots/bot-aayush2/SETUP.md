@@ -1,9 +1,9 @@
 # bot-aayush2 — Setup Checklist
 
 This folder is scaffolded but **not yet runnable**. It is a standard member-management bot
-(same engine as bot-nitin / bot-2 / bot-abhi). Fill in the placeholders below, then start it.
+(same engine as bot-nitin / bot-manny / bot-abhi). Fill in the placeholders below, then start it.
 
-> **STATS_PORT = 3006** (must be unique — nitin=3010, bot-2=3003, abhi=3004, sachin2=3005, aayush2=3006).
+> **STATS_PORT = 3006** (must be unique — nitin=3010, bot-manny=3003, abhi=3004, sachin2=3005, aayush2=3006).
 
 ## 1. Google Sheet
 - Create a new Google Sheet with a tab named **`MEMBERS`**.

@@ -40,8 +40,11 @@ import { createOverdueEngine } from './overdueEngine.js';
 import { createTrialRemovalEngine } from './trialRemovalEngine.js';
 import { createRemovalEngine } from './removalEngine.js';
 import { createGhostRemovalEngine } from './ghostRemovalEngine.js';
-import { createCatchupEngine } from './catchupEngine.js';
+// catchupEngine.js stays on disk but is deliberately NOT wired: every one of its stages
+// posts a group @mention message, which is the path being retired. Reminders are manual
+// (`dmlist`) until the Cloud API cutover. Delete the file once that has run a clean month.
 import { isTracker } from './globalConfig.js';
+import { usesCloudApi } from './cloudApiSender.js';
 import { markLinkedAt, getLinkedAt, inWarmup } from './warmup.js';
 
 const BOT_START_TIME = Date.now();
@@ -119,7 +122,6 @@ export async function startBot(config, log, authDir) {
 
   const removalEngine = createRemovalEngine(config, log, getSock, store, getBroadcastJids);
   const ghostEngine = createGhostRemovalEngine(config, log, getSock, store, getBroadcastJids);
-  const catchupEngine = createCatchupEngine(config, log, getSock, store);
 
   function destroySocket(reason) {
     if (!sock) return;
@@ -240,8 +242,15 @@ export async function startBot(config, log, authDir) {
           log.warn(`⚠️  Session ended while processing "${text.substring(0, 40)}" — reply dropped`);
           return;
         }
-        await sock.sendMessage(replyJid, { text: reply });
-        log.info(`📤 Reply sent to ${replyJid} (${reply.length} chars)`);
+        // A handler may return an array when its output exceeds one WhatsApp message
+        // (dmlist does). Send the parts in order with a small gap so they arrive in
+        // sequence rather than racing.
+        const replies = Array.isArray(reply) ? reply : [reply];
+        for (const [i, part] of replies.entries()) {
+          if (i > 0) await new Promise(res => setTimeout(res, 800));
+          await sock.sendMessage(replyJid, { text: part });
+        }
+        log.info(`📤 Reply sent to ${replyJid} (${replies.length} msg, ${replies.join('').length} chars)`);
       } catch (err) {
         log.error(`❌ Send failed: ${err.message}`);
       }
@@ -297,7 +306,7 @@ export async function startBot(config, log, authDir) {
       sock.ev.on('groups.update', (updates) => { for (const u of updates || []) groupMetaCache.delete(u?.id); });
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, catchupEngine);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock);
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {
@@ -379,8 +388,10 @@ export async function startBot(config, log, authDir) {
               trialEngine.resume();
               removalEngine.resume();
               ghostEngine.resume();
-              if (!isTracker(config)) {
-                catchupEngine.resume();
+              // Same gate as the crons: resume() replays a missed reminder window, so
+              // leaving it ungated would send Baileys reminders on every reconnect and
+              // walk straight past the scheduler guard.
+              if (!isTracker(config) && usesCloudApi(config)) {
                 reminderSender.resume(store, getSock, config.botDir, broadcast);
                 overdueEngine.resume(store, getSock, getBroadcastJids);
               }
@@ -389,8 +400,9 @@ export async function startBot(config, log, authDir) {
             trialEngine.resume();
             removalEngine.resume();
             ghostEngine.resume();
-            if (!isTracker(config)) {
-              catchupEngine.resume();
+            // Gated exactly like the crons — resume() replays a missed reminder window,
+            // and an ungated replay would send Baileys reminders on every reconnect.
+            if (!isTracker(config) && usesCloudApi(config)) {
               // Catch up any reminder window the bot was offline/restarting across. Same restart-safe
               // pattern as removalEngine: persistent per-day state + per-phone dedupe, so missed
               // reminders go out on reconnect and nobody is ever messaged twice.
@@ -418,7 +430,13 @@ export async function startBot(config, log, authDir) {
             if (isTracker(config)) {
               log.info('📋 Tracker profile — no scheduled jobs registered (command-driven only)');
             } else scheduler.start({
+              // Every scheduled job is a no-op until reminders run through the official
+              // Cloud API. Reminders are sent BY HAND from the admin number in the
+              // meantime (see the `dmlist` command) — a cron falling back to Baileys
+              // DMs is the exact traffic that got numbers banned, so it must not happen
+              // by accident. Flipping reminderChannel to "cloudapi" wakes all three.
               reminderSend: async () => {
+                if (!usesCloudApi(config)) return log.info('⏰ Batch 1 skipped — manual reminder mode (use `dmlist`)');
                 if (skipWarmup('reminder batch 1')) return;
                 const result = await reminderSender.sendReminders(store, getSock, config.botDir);
                 if (result.autoRenewed?.length > 0) {
@@ -426,6 +444,7 @@ export async function startBot(config, log, authDir) {
                 }
               },
               reminderSend2: async () => {
+                if (!usesCloudApi(config)) return log.info('⏰ Batch 2 skipped — manual reminder mode (use `dmlist`)');
                 if (skipWarmup('reminder batch 2')) return;
                 const result = await reminderSender.sendRemindersSecondBatch(store, getSock, config.botDir);
                 if (result.autoRenewed?.length > 0) {
@@ -433,6 +452,7 @@ export async function startBot(config, log, authDir) {
                 }
               },
               overdueCheck: async () => {
+                if (!usesCloudApi(config)) return log.info('⏰ Overdue check skipped — manual reminder mode (use `dmlist`)');
                 if (skipWarmup('overdue check')) return;
                 await overdueEngine.runOverdueCheck(store, getSock, getBroadcastJids());
               },

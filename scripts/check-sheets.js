@@ -9,6 +9,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
+import { COLUMNS } from '../core/sheetClient.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const botName = process.argv[2];
@@ -68,12 +69,78 @@ try {
   const sheets = google.sheets({ version: 'v4', auth: authClient });
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
-    range: 'MEMBERS!A2:P',
+    range: 'MEMBERS!A1:Q',
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
-  const rows = res.data.values || [];
-  console.log(`   ✅ Read OK — ${rows.length} rows in ${Date.now() - started}ms\n`);
-  process.exit(0);
+  const [header = [], ...rows] = res.data.values || [];
+  console.log(`   ✅ Read OK — ${rows.length} rows in ${Date.now() - started}ms`);
+
+  // Columns are positional and header text is cosmetic, so a misspelled label is harmless
+  // while a column sitting in the wrong slot silently corrupts data. Reporting both as
+  // "mismatch" buries the one that matters, so classify.
+  const letter = i => String.fromCharCode(65 + i);
+  const norm = s => String(s ?? '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  const known = new Set(COLUMNS);
+
+  function editDistance(a, b) {
+    const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+    for (let j = 0; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) {
+      for (let j = 1; j <= b.length; j++) {
+        d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      }
+    }
+    return d[a.length][b.length];
+  }
+
+  const critical = [];
+  const cosmetic = [];
+  for (let i = 0; i < COLUMNS.length; i++) {
+    const want = COLUMNS[i];
+    const got = norm(header[i]);
+    if (got === want) continue;
+
+    if (!got) {
+      cosmetic.push(`   ${letter(i)}: ${want} — label missing (column is blank; just type the header in)`);
+    } else if (known.has(got)) {
+      critical.push(`   ${letter(i)}: expected ${want.padEnd(15)} found ${got}  ← SHIFTED, a real column is missing before this`);
+    } else if (editDistance(got, want) <= 2 || want.startsWith(got) || got.startsWith(want)) {
+      cosmetic.push(`   ${letter(i)}: ${want} is spelled "${got}" — typo only, data is in the right place`);
+    } else {
+      critical.push(`   ${letter(i)}: expected ${want.padEnd(15)} found ${got}  ← FOREIGN COLUMN, the bot WILL overwrite it`);
+    }
+  }
+
+  if (header.length > COLUMNS.length) {
+    console.log(`   ℹ️  ${header.length - COLUMNS.length} extra column(s) past Q — the bot never touches those, they are safe.`);
+  }
+
+  if (critical.length === 0 && cosmetic.length === 0) {
+    console.log(`   ✅ Columns OK — all ${COLUMNS.length} headers A→Q match\n`);
+    process.exit(0);
+  }
+
+  if (cosmetic.length > 0) {
+    console.log(`\n⚠️  ${cosmetic.length} cosmetic issue(s) — nothing is broken, fix when convenient:`);
+    console.log(cosmetic.join('\n'));
+  }
+
+  if (critical.length === 0) {
+    console.log(`\n✅ Structure is CORRECT — every column is in the right position.\n`);
+    process.exit(0);
+  }
+
+  console.error(`\n❌ ${critical.length} STRUCTURAL problem(s) — data is at risk:\n`);
+  console.error(critical.join('\n'));
+  console.error(`\n   Header has ${header.length} column(s), expected ${COLUMNS.length}.`);
+  console.error('\n   → Rows are read AND WRITTEN positionally across A:Q. A missing column');
+  console.error('     shifts every field after it with no error, and any foreign column in');
+  console.error('     that range is overwritten the next time the bot updates that row.');
+  console.error('\n   Expected order A→Q:');
+  console.error('     ' + COLUMNS.map((c, i) => `${letter(i)}=${c}`).join('  '));
+  console.error('\n   Fix by INSERTING the missing column in place. Keep your own extra');
+  console.error('   columns at R or beyond — the bot never reads or writes past Q.\n');
+  process.exit(1);
 } catch (err) {
   const status = err?.status ?? err?.code ?? err?.response?.status;
   console.error(`\n❌ Failed after ${Date.now() - started}ms`);

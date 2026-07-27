@@ -1,5 +1,5 @@
 {
-  "botName": "bot-2",
+  "botName": "bot-manny",
   "paidGroups": [
     "120363406478388313@g.us",
     "120363408771786592@g.us"
@@ -17,10 +17,6 @@
     "autoReminderDays": 5,
     "finalReminderDays": 6,
     "consolidatedListDays": 7
-  },
-  "reminder": {
-    "mode": "dm",
-    "groupId": ""
   },
   "rateLimits": {
     "memberToMemberGapMinMs": 7000,
@@ -78,9 +74,6 @@
     "jitterMaxMinutes": 20
   },
   "messages": {
-    "groupReminder": "Hanji Sat sri Akal ji 🙏 Aaj {date} nu inna members da Bajwa Taxi Group da month pura ho gya — upar QR te ₹100/- renew karke dass deo ji:",
-    "groupOverdue": "🚨 Bajwa Taxi — inna members di date nikal gyi hai, jaldi renew kardo ji:",
-    "groupAutoRenewed": "🎁 Bajwa Taxi — inna members ne 2 bande add karaye, inna da mahina FREE 🥳 Tusi vi 2 add karo te free renewal lao:",
     "reminder": "Hanji Sat sri Akal {name} veer ji\nAaj {date} nu thoda month pura hogya Bajwa Taxi Group da is te ₹100/- renew krdo ji 🙏",
     "referralReminder": "Hanji Sat sri Akal {name} veer ji\nAaj {date} nu thoda month pura hogya Bajwa Taxi Group\nTusi ik banda add kraya si, iss lyi iste sirf ₹50/- pay krdo ji 🙏🏻",
     "overdue": "Sat Sri Akal {name} paaji 🙏🏻\n🚨🚨 Aaj last date aaji renew krke dss deyo. 🙏🏻",

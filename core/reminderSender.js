@@ -261,6 +261,27 @@ export function createReminderSender(config, log) {
     return r;
   }
 
+  // Apply the 2-referral free renewal to everyone due today, and return who was renewed.
+  // Split out of computeDigestSets so the manual `dmlist` path gets the same silent
+  // auto-renew the cron used to do — otherwise a member who owes nothing would be
+  // chased for money. Returns [] and touches nothing when nobody qualifies.
+  async function autoRenewDue(store, botDir) {
+    const state = loadState(botDir);
+    const dueRaw = await getDueToday(store);
+    const all = store.getAll();
+    const renewed = [];
+    for (const m of dueRaw) {
+      const refList = getReferralsInBillingPeriod(m.phone, m.billingDate, all);
+      if (refList.length < 2) continue;
+      try {
+        renewed.push(await autoRenewMember(m, refList, store, botDir, state));
+      } catch (err) {
+        log.warn(`❌ Auto-renew failed [${m.name}]: ${err.message}`);
+      }
+    }
+    return renewed;
+  }
+
   // Digest inputs: due-today (2-ref members auto-renewed silently, excluded from the due
   // tags, and recorded in state.autoRenewedToday for the celebration message) and
   // 5+ days overdue (same milestone base as the overdue engine's day-5 reminder).
@@ -626,5 +647,5 @@ export function createReminderSender(config, log) {
     log.info('⏰ Reminder catch-up scheduled (2-min grace after reconnect)');
   }
 
-  return { sendReminders, sendRemindersSecondBatch, sendToMember, markReminded: markPhoneReminded, catchUp, resume, remindAll };
+  return { sendReminders, sendRemindersSecondBatch, sendToMember, markReminded: markPhoneReminded, catchUp, resume, remindAll, autoRenewDue };
 }

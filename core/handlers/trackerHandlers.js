@@ -1,11 +1,17 @@
 import {
-  normalizePhone, formatDate, todayStr, parseDate, daysFromToday,
-  isCallDue, needsFollowUp,
+  normalizePhone, todayStr, parseDate, daysFromToday,
+  isCallDue, needsFollowUp, chunkByChars, UNCALLED_STATUSES,
 } from '../globalConfig.js';
 
-// Tracker profile only. The operator gathers new joins, calls each person once they've
-// been in the group a month to move them onto the app, then removes them from the group.
-// Lifecycle: NEW → CALLED → MOVED. DUE_CALL is derived, never stored.
+// Tracker profile only. The operator gathers new joins, then calls each person once
+// they've been in the group a month to pitch the app.
+//
+// The bot ONLY keeps the log: who is due a call, that a call happened, on what date, and
+// what the person said. It does not mark anyone as converted and it never removes anyone
+// from a group — moving someone onto the app happens outside the bot, and the operator
+// kicks them by hand (`kick [phone]`) if and when they want the seat back.
+//
+// Lifecycle: NEW → CALLED, with callResult '' | 'interested' | 'not-interested'.
 export function createTrackerHandlers(store, groupManager, config, log) {
   const callAfterDays = config.tracker?.callAfterDays ?? 30;
   const followUpDays = config.tracker?.followUpDays ?? 3;
@@ -19,11 +25,25 @@ export function createTrackerHandlers(store, groupManager, config, log) {
     return Math.round((today - joined) / 86400000);
   }
 
-  // `pending` — the call list. Two blocks: people whose month is up and haven't been
-  // called, then people who were called but never actually moved onto the app.
+  // '' = called but nothing recorded yet (no answer, undecided). Anything the operator
+  // types must map to a known outcome or be rejected — silently recording "maybe" as
+  // interested would poison the log.
+  function parseOutcome(words) {
+    const raw = words.join(' ').trim().toLowerCase();
+    if (!raw) return { ok: true, value: null };            // null = leave as-is
+    if (['interested', 'yes', 'y', 'int'].includes(raw)) return { ok: true, value: 'interested' };
+    if (['not interested', 'notinterested', 'not', 'no', 'n'].includes(raw)) {
+      return { ok: true, value: 'not-interested' };
+    }
+    return { ok: false, value: null };
+  }
+
+  // `pending` — who to call. Two blocks: people whose month is up and have never been
+  // called, then people who were called but whose answer was never recorded.
   async function handlePending() {
     await store.refresh();
-    const all = store.getAll();
+    // Removed people are never called again — they aren't in the groups any more.
+    const all = store.getAll().filter(m => m.status !== 'REMOVED');
 
     const due = all.filter(m => isCallDue(m, callAfterDays))
       .sort((a, b) => (daysInGroup(b) ?? 0) - (daysInGroup(a) ?? 0));
@@ -32,7 +52,7 @@ export function createTrackerHandlers(store, groupManager, config, log) {
 
     if (due.length === 0 && followUp.length === 0) {
       const soonest = all
-        .filter(m => m.status === 'NEW' && daysInGroup(m) !== null)
+        .filter(m => UNCALLED_STATUSES.includes(m.status) && daysInGroup(m) !== null)
         .sort((a, b) => (daysInGroup(b) ?? 0) - (daysInGroup(a) ?? 0))[0];
       const hint = soonest
         ? `\nNext up: ${soonest.name} in ${callAfterDays - daysInGroup(soonest)} day(s).`
@@ -48,99 +68,120 @@ export function createTrackerHandlers(store, groupManager, config, log) {
     }
 
     if (followUp.length > 0) {
-      msg += `\n🔁 CALLED BUT NOT MOVED — chase again (${followUp.length})\n`;
+      msg += `\n🔁 CALLED, no answer recorded — try again (${followUp.length})\n`;
       msg += followUp.map((m, i) => {
         const ago = m.callDate ? `${Math.abs(daysFromToday(m.callDate))}d ago` : 'date unknown';
         return `${i + 1}. ${m.name}  ${m.phone}  (called ${ago})`;
       }).join('\n') + '\n';
     }
 
-    msg += `\nAfter calling:  called ${due[0]?.phone || followUp[0]?.phone}`;
-    msg += `\nOnce on the app: moved ${due[0]?.phone || followUp[0]?.phone}  (also removes from groups)`;
+    const example = due[0]?.phone || followUp[0]?.phone;
+    msg += `\nAfter the call, log what they said:`;
+    msg += `\n  called ${example} interested`;
+    msg += `\n  called ${example} not interested`;
+    msg += `\n  called ${example}            (no answer — reappears in ${followUpDays} day(s))`;
     return msg;
   }
 
-  // `called [phone]` — records the pitch. Member stays in the group: they haven't
-  // installed anything yet, and removing them now would lose them.
+  // `called [phone] [interested|not interested]` — records that the pitch happened, the
+  // date, and the answer. Nothing else changes: they stay in the group either way.
   async function handleCalled(args) {
-    if (args.length < 1) return '❌ Format: called [phone]';
+    if (args.length < 1) return '❌ Format: called [phone] [interested | not interested]';
     const phone = normalizePhone(args[0]);
     if (phone.length !== 10) return '❌ Invalid number. Use 10 digits: called 98551XXXXX';
 
+    const outcome = parseOutcome(args.slice(1));
+    if (!outcome.ok) {
+      return `❌ Unknown outcome "${args.slice(1).join(' ')}".\n` +
+        `Use: called ${phone} interested   —or—   called ${phone} not interested\n` +
+        `Or just: called ${phone}   (call happened, no answer yet)`;
+    }
+
     const member = store.findByPhone(phone);
     if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
-    if (member.status === 'MOVED') return `ℹ️ ${member.name} is already MOVED to the app.`;
 
     const callDate = todayStr();
     const repeat = member.status === 'CALLED';
-    await store.update(phone, { status: 'CALLED', callDate });
+    const updates = { status: 'CALLED', callDate };
+    if (outcome.value) updates.callResult = outcome.value;
+    await store.update(phone, updates);
 
-    log.info(`📞 Called ${member.name} (${phone})${repeat ? ' [repeat]' : ''}`);
-    return `📞 ${member.name} (${phone}) marked CALLED on ${callDate}.${repeat ? ' (called again)' : ''}\n` +
-      `Still in the group — send "moved ${phone}" once they're on the app.\n` +
-      `Reappears in "pending" after ${followUpDays} day(s) if not moved.`;
+    const said = outcome.value === 'interested' ? ' — INTERESTED'
+      : outcome.value === 'not-interested' ? ' — NOT interested' : '';
+    log.info(`📞 Called ${member.name} (${phone})${repeat ? ' [repeat]' : ''}${said}`);
+
+    const head = `📞 ${member.name} (${phone}) — called ${callDate}${repeat ? ' (again)' : ''}`;
+    if (outcome.value === 'interested') {
+      return `${head}\n✅ Logged as INTERESTED.\n` +
+        `They stay in the group — move them onto the app yourself, then "kick ${phone}" when you want the seat back.`;
+    }
+    if (outcome.value === 'not-interested') {
+      return `${head}\n❌ Logged as NOT interested.\n` +
+        `Dropped from "pending". Still in the group — "kick ${phone}" if you want the seat back.\n` +
+        `Changed their mind? called ${phone} interested`;
+    }
+    return `${head}\n📝 No answer recorded.\n` +
+      `Reappears in "pending" after ${followUpDays} day(s).\n` +
+      `Log it later: called ${phone} interested  /  called ${phone} not interested`;
   }
 
-  // `moved [phone]` — they're on the app. Mark MOVED and remove from every group.
-  // Sheet is written only after the group removal reports back, so a failed removal
-  // never leaves someone marked MOVED while still sitting in the group.
-  async function handleMoved(args) {
-    if (args.length < 1) return '❌ Format: moved [phone]';
-    const phone = normalizePhone(args[0]);
-    if (phone.length !== 10) return '❌ Invalid number. Use 10 digits: moved 98551XXXXX';
-
-    const member = store.findByPhone(phone);
-    if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
-    if (member.status === 'MOVED') return `ℹ️ ${member.name} is already MOVED.`;
-
-    const result = await groupManager.removeFromAllGroups(phone);
-    if (result.blocked) return result.blocked;
-    const { removed, failed } = result;
-
-    await store.update(phone, { status: 'MOVED', callDate: member.callDate || todayStr() });
-
-    log.info(`✅ Moved ${member.name} (${phone}) to the app — removed from ${removed.length} group(s)`);
-    let reply = `✅ ${member.name} (${phone}) marked MOVED — on the app now.\n` +
-      `🚫 Removed from ${removed.length}/${config.paidGroups.length} group(s).`;
-    if (failed.length > 0) reply += `\n⚠️ ${failed.length} group(s) failed — re-run: kick ${phone}`;
-    return reply;
-  }
-
-  // `calls` — the funnel. Where people are, and where they're getting stuck.
-  async function handleCalls() {
+  // `log` (also `calls`) — the whole record, by bucket. Returns an array: the interested
+  // and not-interested lists get long, and one WhatsApp message caps near 4096 chars.
+  async function handleLog() {
     await store.refresh();
-    const all = store.getAll();
-    const count = s => all.filter(m => m.status === s).length;
+    // Anyone removed from the groups is out of the record entirely. The uncalled buckets
+    // filter on status so they were already safe, but the interested / not-interested
+    // buckets key off callResult alone — without this, someone called months ago and
+    // since kicked would sit in the log forever as a live prospect.
+    const all = store.getAll().filter(m => m.status !== 'REMOVED');
 
-    const newTotal = count('NEW');
-    const called = count('CALLED');
-    const moved = count('MOVED');
-    const removed = count('REMOVED');
-    const dueNow = all.filter(m => isCallDue(m, callAfterDays)).length;
-    const followUp = all.filter(m => needsFollowUp(m, followUpDays)).length;
+    const interested = all.filter(m => m.callResult === 'interested');
+    const notInterested = all.filter(m => m.callResult === 'not-interested');
+    const noAnswer = all.filter(m => m.status === 'CALLED' && !m.callResult);
+    const notCalled = all.filter(m => UNCALLED_STATUSES.includes(m.status));
+    const dueNow = notCalled.filter(m => isCallDue(m, callAfterDays));
 
-    // This month's movement, by the date each transition was stamped.
-    const now = new Date();
-    const thisMonth = d => {
-      const parsed = parseDate(d);
-      return parsed && parsed.getMonth() === now.getMonth() && parsed.getFullYear() === now.getFullYear();
+    const called = interested.length + notInterested.length + noAnswer.length;
+    const answered = interested.length + notInterested.length;
+    const rate = answered > 0 ? Math.round((interested.length / answered) * 100) : 0;
+
+    const lines = [
+      `📋 CALL LOG — ${config.botName}`,
+      `━━━━━━━━━━━━━━━━━━━`,
+      `Called: ${called}   ·   Not called yet: ${notCalled.length}   ·   In groups: ${all.length}`,
+      answered > 0 ? `Of ${answered} who answered, ${interested.length} were interested (${rate}%)` : '',
+    ].filter(Boolean);
+
+    const block = (title, list, note) => {
+      if (list.length === 0) return [];
+      const out = [`\n${title} (${list.length})`];
+      out.push(...list
+        .sort((a, b) => (daysFromToday(a.callDate) ?? 0) - (daysFromToday(b.callDate) ?? 0))
+        .map(m => `• ${m.name}  ${m.phone}${note ? note(m) : ''}`));
+      return out;
     };
-    const joinedThisMonth = all.filter(m => thisMonth(m.joinDate)).length;
-    const calledThisMonth = all.filter(m => thisMonth(m.callDate)).length;
 
-    const reached = called + moved;
-    const conversion = reached > 0 ? Math.round((moved / reached) * 100) : 0;
+    lines.push(...block('✅ INTERESTED', interested, m => m.callDate ? `  — called ${m.callDate}` : ''));
+    lines.push(...block('❌ NOT INTERESTED', notInterested, m => m.callDate ? `  — called ${m.callDate}` : ''));
+    lines.push(...block('📞 CALLED, no answer recorded', noAnswer, m => m.callDate ? `  — called ${m.callDate}` : ''));
 
-    return `📊 CALL FUNNEL — ${config.botName}\n━━━━━━━━━━━━━━━━━━━\n\n` +
-      `🆕 NEW (in group, not called):  ${newTotal}\n` +
-      `   ↳ month up, call now:       ${dueNow}\n` +
-      `📞 CALLED (pitched, not moved): ${called}\n` +
-      `   ↳ needs a chase:            ${followUp}\n` +
-      `✅ MOVED (on the app):          ${moved}\n` +
-      `🚫 REMOVED (dropped):           ${removed}\n\n` +
-      `📈 Conversion: ${moved}/${reached} pitched → app (${conversion}%)\n\n` +
-      `📅 This month: ${joinedThisMonth} joined · ${calledThisMonth} called`;
+    if (notCalled.length > 0) {
+      lines.push(`\n⏳ NOT CALLED YET (${notCalled.length}) — ${dueNow.length} due now`);
+      lines.push(...notCalled
+        .sort((a, b) => (daysInGroup(b) ?? 0) - (daysInGroup(a) ?? 0))
+        .map(m => {
+          const d = daysInGroup(m);
+          const flag = isCallDue(m, callAfterDays) ? '  ← call now' : '';
+          return `• ${m.name}  ${m.phone}  (${d === null ? '?' : d}d in group)${flag}`;
+        }));
+    }
+
+    lines.push(`\nWho to call today: pending`);
+
+    return chunkByChars(lines).map((chunk, i, arr) =>
+      (arr.length > 1 && i > 0 ? `📋 (${i + 1}/${arr.length})\n` : '') + chunk.join('\n')
+    );
   }
 
-  return { handlePending, handleCalled, handleMoved, handleCalls };
+  return { handlePending, handleCalled, handleLog };
 }
