@@ -94,8 +94,15 @@ export function chunkByChars(lines, limit = MAX_CHARS_PER_MSG) {
   return chunks;
 }
 
+// Not yet pitched. NEW is what `add` writes on a tracker bot, but every row that predates
+// the tracker profile — migrated members, and anyone added while the bot still ran the full
+// renewal profile — carries ACTIVE. Both mean "in the group, never called", so both belong
+// in the call queue. Without this, an operator's entire existing member list is invisible to
+// `pending` and no sheet migration would be obvious enough to catch it.
+export const UNCALLED_STATUSES = ['NEW', 'ACTIVE'];
+
 export function isCallDue(member, callAfterDays = 30, now = new Date()) {
-  if (!member || member.status !== 'NEW') return false;
+  if (!member || !UNCALLED_STATUSES.includes(member.status)) return false;
   const joined = parseDate(member.joinDate);
   if (!joined) return false;
   const days = Math.round((now.setHours(0, 0, 0, 0) - joined.setHours(0, 0, 0, 0)) / 86400000);

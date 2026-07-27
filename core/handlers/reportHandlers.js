@@ -169,28 +169,44 @@ export function createReportHandlers(store, config, botStartTime, log) {
       String(targetDateObj.getFullYear()),
     ].join('-'); // "DD-MM-YYYY"
 
-    // Tracker profile: the day's summary is joins, calls and app moves — there are no
-    // renewals, reminders or overdue members to report on.
+    // Tracker profile: the same daily money view as a full bot, minus the renewal machinery —
+    // these operators collect a joining fee and nothing else. Call activity is deliberately
+    // NOT here; `log` owns that, so the daily summary stays a money report.
     if (isTracker(config)) {
       const on = d => d && d.slice(0, 10) === targetDateStr;
-      const joined = all.filter(m => on(m.joinDate));
-      const called = all.filter(m => on(m.callDate) && m.status === 'CALLED');
-      const interested = called.filter(m => m.callResult === 'interested');
-      const notInterested = called.filter(m => m.callResult === 'not-interested');
-      const dueNow = all.filter(m => isCallDue(m, config.tracker?.callAfterDays ?? 30));
-      const followUp = all.filter(m => needsFollowUp(m, config.tracker?.followUpDays ?? 3));
-      const joinRevenue = joined.filter(isPaidJoinRow).length * config.joining.fee;
-      const label = daysAgo === 0 ? 'Today' : daysAgo === 1 ? 'Yesterday' : `${daysAgo} days ago`;
-      const names = list => list.length ? '\n' + list.map(m => `   • ${m.name}  ${m.phone}`).join('\n') : '';
+      const joinedToday = all.filter(m => on(m.joinDate));
+      const joinRevenue = joinedToday.filter(isPaidJoinRow).length * config.joining.fee;
+      const removedOnDay = all.filter(m => m.status === 'REMOVED' && isUpdatedOn(m.lastUpdated, targetDateStr));
+      const skippedOnDay = all.filter(m => m.status === 'SKIPPED' && isUpdatedOn(m.lastUpdated, targetDateStr));
+      const inGroups = all.filter(m => !['REMOVED', 'SKIPPED'].includes(m.status)).length;
+      const label = daysAgo === 0 ? 'Today'
+        : daysAgo === 1 ? `${targetDateStr} (yesterday)`
+        : `${targetDateStr} (${daysAgo} days ago)`;
 
-      return `📋 ${label} — ${targetDateStr}\n━━━━━━━━━━━━━━━━━━━\n\n` +
-        `➕ Joined: ${joined.length} (₹${joinRevenue})${names(joined)}\n` +
-        `${formatSplit(joinRevenue, config, '   ')}\n\n` +
-        `📞 Called: ${called.length}${names(called)}\n` +
-        `   ✅ interested: ${interested.length}  |  ❌ not interested: ${notInterested.length}\n\n` +
-        `━━━━━━━━━━━━━━━━━━━\n` +
-        `📌 To call now: ${dueNow.length}  |  No answer yet: ${followUp.length}\n` +
-        `See the list: pending   ·   Full record: log`;
+      let msg = `📊 Daily Summary — ${label}\n\n`;
+
+      if (joinedToday.length > 0) {
+        msg += `➕ New Members: ${joinedToday.length} (₹${joinRevenue})\n`;
+        msg += joinedToday.map(m => `   • ${m.name} • ${m.phone}`).join('\n') + '\n\n';
+      } else {
+        msg += `➕ New Members: 0\n\n`;
+      }
+
+      msg += `💰 Today's Revenue: ₹${joinRevenue}\n`;
+      if (joinRevenue > 0) msg += `${formatSplit(joinRevenue, config)}\n`;
+      msg += '\n';
+
+      msg += `❌ Removals: ${removedOnDay.length}\n`;
+      if (removedOnDay.length > 0) {
+        msg += removedOnDay.map(m => `   • ${m.name} • ${m.phone}`).join('\n') + '\n';
+      }
+      msg += `⏭️ Skipped: ${skippedOnDay.length}\n`;
+      if (skippedOnDay.length > 0) {
+        msg += skippedOnDay.map(m => `   • ${m.name} • ${m.phone}${m.skipReason ? ` (${m.skipReason})` : ''}`).join('\n') + '\n';
+      }
+      msg += `👥 Total in groups: ${inGroups}`;
+
+      return msg;
     }
 
     // Detect renewals via lastRenewed (set ONLY by the "renewed" command / auto-renew), NOT

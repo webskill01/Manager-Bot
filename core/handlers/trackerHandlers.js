@@ -1,6 +1,6 @@
 import {
   normalizePhone, todayStr, parseDate, daysFromToday,
-  isCallDue, needsFollowUp, chunkByChars,
+  isCallDue, needsFollowUp, chunkByChars, UNCALLED_STATUSES,
 } from '../globalConfig.js';
 
 // Tracker profile only. The operator gathers new joins, then calls each person once
@@ -51,7 +51,7 @@ export function createTrackerHandlers(store, groupManager, config, log) {
 
     if (due.length === 0 && followUp.length === 0) {
       const soonest = all
-        .filter(m => m.status === 'NEW' && daysInGroup(m) !== null)
+        .filter(m => UNCALLED_STATUSES.includes(m.status) && daysInGroup(m) !== null)
         .sort((a, b) => (daysInGroup(b) ?? 0) - (daysInGroup(a) ?? 0))[0];
       const hint = soonest
         ? `\nNext up: ${soonest.name} in ${callAfterDays - daysInGroup(soonest)} day(s).`
@@ -133,7 +133,7 @@ export function createTrackerHandlers(store, groupManager, config, log) {
     const interested = all.filter(m => m.callResult === 'interested');
     const notInterested = all.filter(m => m.callResult === 'not-interested');
     const noAnswer = all.filter(m => m.status === 'CALLED' && !m.callResult);
-    const notCalled = all.filter(m => m.status === 'NEW');
+    const notCalled = all.filter(m => UNCALLED_STATUSES.includes(m.status));
     const dueNow = notCalled.filter(m => isCallDue(m, callAfterDays));
 
     const called = interested.length + notInterested.length + noAnswer.length;

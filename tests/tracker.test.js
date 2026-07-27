@@ -70,10 +70,19 @@ test('isCallDue: exactly at the boundary counts, a day short does not', () => {
   assert.equal(isCallDue(at31, 30), true);
 });
 
-test('isCallDue: only NEW members are ever due — anyone already called is out of the queue', () => {
-  for (const status of ['CALLED', 'REMOVED', 'ACTIVE']) {
+test('isCallDue: anyone already called or gone is out of the queue', () => {
+  for (const status of ['CALLED', 'REMOVED', 'SKIPPED']) {
     assert.equal(isCallDue({ status, joinDate: dayOffset(-60) }, 30), false, `${status} not due`);
   }
+});
+
+// Rows predating the tracker profile (migrated members, or anyone added while the bot ran
+// the full renewal profile) carry ACTIVE, not NEW. They are still uncalled people sitting
+// in the group — if ACTIVE were excluded, an operator's whole existing list would be
+// invisible to `pending` with nothing to hint at why.
+test('isCallDue: ACTIVE counts as uncalled, so pre-tracker rows still surface', () => {
+  assert.equal(isCallDue({ status: 'ACTIVE', joinDate: dayOffset(-60) }, 30), true);
+  assert.equal(isCallDue({ status: 'ACTIVE', joinDate: dayOffset(-10) }, 30), false, 'still respects the window');
 });
 
 test('isCallDue: a configurable window is respected, junk dates are safe', () => {
@@ -325,22 +334,30 @@ test('tracker revenue counts joining fees only and splits 60-20-20', async () =>
   assert.ok(!/Moved/.test(out), 'nothing claims anyone was moved');
 });
 
-test('tracker summary reports joins and calls with the outcome split — never renewals', async () => {
+test('tracker summary is a money report only — joins, revenue, split, never calls', async () => {
   const store = fakeStore([
     { name: 'J1', phone: '9000000001', status: 'NEW', joinDate: dayOffset(0), paidLast: 100, billingDate: dayOffset(30) },
+    { name: 'S1', phone: '9000000004', status: 'NEW', joinDate: dayOffset(0), paidLast: 0, billingDate: dayOffset(30) },
     { name: 'C1', phone: '9000000002', status: 'CALLED', joinDate: dayOffset(-31), callDate: dayOffset(0), paidLast: 100, callResult: 'interested' },
     { name: 'C2', phone: '9000000003', status: 'CALLED', joinDate: dayOffset(-31), callDate: dayOffset(0), paidLast: 100, callResult: 'not-interested' },
   ]);
   const r = createReportHandlers(store, trackerConfig(tmp()), Date.now(), log);
   const out = await r.handleSummary();
 
-  assert.match(out, /Joined: 1 \(₹100\)/);
-  assert.match(out, /Called: 2/);
-  assert.match(out, /interested: 1  \|  ❌ not interested: 1/);
-  assert.ok(!/Moved/.test(out), 'nothing claims anyone was moved');
+  assert.match(out, /📊 Daily Summary — Today/);
+  assert.match(out, /New Members: 2 \(₹100\)/, 'silent add is listed but earns nothing');
+  assert.match(out, /Today's Revenue: ₹100/);
+  assert.match(out, /A: ₹60/);
+  assert.match(out, /B: ₹20/);
+  assert.match(out, /C: ₹20/);
+  assert.match(out, /Removals: 0/);
+  assert.match(out, /Total in groups: 4/);
+
+  // Call activity belongs to `log`, not here.
+  assert.ok(!/Called/.test(out), 'no call block');
+  assert.ok(!/interested/i.test(out), 'no outcome split');
   assert.ok(!/Renewals/.test(out), 'no renewal section');
-  assert.match(out, /See the list: pending/);
-  assert.match(out, /Full record: log/);
+  assert.ok(!/Moved/.test(out));
 });
 
 test('tracker help lists the funnel and no renewal commands', () => {
