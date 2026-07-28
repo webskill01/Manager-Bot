@@ -12,7 +12,9 @@ const indexSrc = fs.readFileSync(new URL('../core/index.js', import.meta.url), '
 
 test('dmlist is a slow command (gets the instant ack)', () => {
   assert.equal(isSlowCommand('dmlist'), true);
-  assert.equal(isSlowCommand('dmlist 7 msg1'), true);
+  assert.equal(isSlowCommand('dmlist 27 msg1'), true);
+  assert.equal(isSlowCommand('dmlist2'), true);
+  assert.equal(isSlowCommand('dmlist3'), true);
 });
 
 test('the removed group commands are no longer slow commands', () => {
@@ -22,7 +24,10 @@ test('the removed group commands are no longer slow commands', () => {
 });
 
 test('dmlist is renewal-only and the dead group commands are gone', () => {
-  assert.match(parserSrc, /RENEWAL_ONLY = new Set\(\[[\s\S]*?'dmlist'/, 'dmlist gated to full profile');
+  const renewalOnlySrc = parserSrc.match(/RENEWAL_ONLY = new Set\(\[([\s\S]*?)\]\)/)[1];
+  for (const cmd of ['dmlist', 'dmlist2', 'dmlist3']) {
+    assert.ok(renewalOnlySrc.includes(`'${cmd}'`), `${cmd} gated to full profile`);
+  }
   assert.doesNotMatch(parserSrc, /case 'remindall'/, 'remindall command removed');
   assert.doesNotMatch(parserSrc, /case 'catchup'/, 'catchup command removed');
   assert.doesNotMatch(parserSrc, /'remindall',/, 'remindall not left in any set');
@@ -99,49 +104,90 @@ function makeParser(store, botDir) {
   );
 }
 
-test('dmlist end-to-end: real parser, real templates, tappable links', async () => {
+// The daily round is three commands. Each must return ONLY its own cohort — if `dmlist`
+// leaked the 6-day people, they would get the plain reminder again instead of the final
+// notice, and the escalation the operator is hand-running would never actually escalate.
+test('the three daily commands split the round by stage, end-to-end', async () => {
   const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-'));
-  const store = fakeStore([
+  const members = [
     { name: 'Gurpreet', phone: '9000000001', status: 'ACTIVE', billingDate: dayOffset(0) },
+    { name: 'Harjit', phone: '9000000005', status: 'ACTIVE', billingDate: dayOffset(-5) },
     { name: 'Jaswinder', phone: '9000000002', status: 'ACTIVE', billingDate: dayOffset(-6) },
+    { name: 'Balwinder', phone: '9000000004', status: 'ACTIVE', billingDate: dayOffset(-30) },
     { name: 'Future', phone: '9000000003', status: 'ACTIVE', billingDate: dayOffset(5) },
-  ]);
-  const parser = makeParser(store, botDir);
+  ];
 
-  const out = await parser.parse('dmlist 7');
-  const text = Array.isArray(out) ? out.join('\n') : out;
+  const run = async cmd => {
+    const out = await makeParser(fakeStore(members), botDir).parse(cmd);
+    return Array.isArray(out) ? out.join('\n') : out;
+  };
 
-  assert.match(text, /DM LIST/);
-  assert.match(text, /2 person\(s\)/, 'the future-dated member is excluded');
-  assert.doesNotMatch(text, /9000000003/, 'nobody is chased before their month is up');
-  // Most overdue first, and each gets its own stage's wording.
-  assert.ok(text.indexOf('Jaswinder') < text.indexOf('Gurpreet'), 'sorted most-overdue first');
-  assert.match(text, /wa\.me\/919000000001\?text=/);
-  assert.match(decodeURIComponent(text), /Sat Sri Akal Gurpreet ji/);
-  assert.match(decodeURIComponent(text), /Jaswinder ji, aaj last din/, '6d overdue gets the final wording');
+  const due = await run('dmlist');
+  assert.match(due, /· due today/);
+  assert.match(due, /1 person\(s\)/);
+  assert.match(decodeURIComponent(due), /Sat Sri Akal Gurpreet ji/);
+  assert.doesNotMatch(due, /9000000003/, 'nobody is chased before their month is up');
+  assert.doesNotMatch(due, /9000000002/, 'the 6d member belongs to dmlist3');
+
+  const nudge = await run('dmlist2');
+  assert.match(nudge, /· 5 days overdue/);
+  assert.match(nudge, /1 person\(s\)/);
+  assert.match(decodeURIComponent(nudge), /Harjit ji, date nikal gyi/);
+
+  const final = await run('dmlist3');
+  assert.match(final, /· 6\+ days overdue/);
+  assert.match(final, /2 person\(s\)/, '6d and 30d both land here');
+  assert.ok(final.indexOf('Balwinder') < final.indexOf('Jaswinder'), 'sorted most-overdue first');
+  assert.match(decodeURIComponent(final), /Jaswinder ji, aaj last din/);
+  assert.match(final, /wa\.me\/919000000002\?text=/);
 });
 
-test('dmlist 7 msg1 gives the backlog one consistent first-contact message', async () => {
+test('dmlist [date] batches by billing day and defaults everyone to msg1', async () => {
   const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-'));
-  const store = fakeStore([
-    { name: 'Gurpreet', phone: '9000000001', status: 'ACTIVE', billingDate: dayOffset(0) },
-    { name: 'Jaswinder', phone: '9000000002', status: 'ACTIVE', billingDate: dayOffset(-6) },
-  ]);
-  const parser = makeParser(store, botDir);
+  const past = new Date();
+  past.setDate(past.getDate() - 25);
+  const day = past.getDate();
+  const other = new Date();
+  other.setDate(other.getDate() - 26);
 
-  const text = (await parser.parse('dmlist 7 msg1')).join('\n');
-  const decoded = decodeURIComponent(text);
+  const store = fakeStore([
+    { name: 'Gurpreet', phone: '9000000001', status: 'ACTIVE', billingDate: formatDate(past) },
+    { name: 'Jaswinder', phone: '9000000002', status: 'ACTIVE', billingDate: formatDate(other) },
+  ]);
+  const text = (await makeParser(store, botDir).parse(`dmlist ${day}`)).join('\n');
+
+  assert.match(text, new RegExp(`· billed on the ${day}(st|nd|rd|th)`));
+  assert.match(text, /1 person\(s\)/, 'only the matching billing day');
   assert.match(text, /Forced: msg1/);
-  assert.match(decoded, /Sat Sri Akal Gurpreet ji/);
-  assert.match(decoded, /Sat Sri Akal Jaswinder ji/, '6d overdue must NOT get the final notice');
-  assert.doesNotMatch(decoded, /aaj last din/);
+  // 25 days overdue would auto-escalate to the final notice — the default must not.
+  assert.match(decodeURIComponent(text), /Sat Sri Akal Gurpreet ji/);
+  assert.doesNotMatch(decodeURIComponent(text), /aaj last din/);
 });
 
-test('dmlist rejects a bad argument instead of silently defaulting', async () => {
+test('dmlist [date] msg3 escalates the whole batch deliberately', async () => {
+  const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-'));
+  const past = new Date();
+  past.setDate(past.getDate() - 25);
+  const store = fakeStore([
+    { name: 'Gurpreet', phone: '9000000001', status: 'ACTIVE', billingDate: formatDate(past) },
+  ]);
+  const text = (await makeParser(store, botDir).parse(`dmlist ${past.getDate()} msg3`)).join('\n');
+  assert.match(text, /Forced: msg3/);
+  assert.match(decodeURIComponent(text), /Gurpreet ji, aaj last din/);
+});
+
+test('dmlist rejects bad arguments instead of silently defaulting', async () => {
   const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-'));
   const parser = makeParser(fakeStore([]), botDir);
-  const out = await parser.parse('dmlist banana');
-  assert.match(out, /Unknown argument "banana"/);
+
+  assert.match(await parser.parse('dmlist banana'), /Unknown argument "banana"/);
+  // 45 is not a day of the month. Silently clamping it would quietly send the wrong batch.
+  assert.match(await parser.parse('dmlist 45'), /Unknown argument "45"/);
+  // A date on dmlist2/3 would mean "billed on the 27th AND exactly 5d overdue" — near-always
+  // nobody, so it points at the form that actually works.
+  assert.match(await parser.parse('dmlist2 27'), /dmlist2 takes no date/);
+  assert.match(await parser.parse('dmlist2 27'), /dmlist 27 msg2/);
+  assert.match(await parser.parse('dmlist3 27'), /dmlist 27 msg3/);
 });
 
 test('dmlist auto-renews 2-ref members and never lists them', async () => {

@@ -1,5 +1,5 @@
 import {
-  daysFromToday, todayStr, friendlyDate, isDelayActive, renewedOn,
+  daysFromToday, todayStr, friendlyDate, isDelayActive, renewedOn, parseDate,
   getReferralsInBillingPeriod, chunkByChars, MAX_CHARS_PER_MSG,
 } from './globalConfig.js';
 
@@ -23,15 +23,26 @@ function templateFor(stage, config, { referral }) {
   return (referral && m.referralReminder) ? m.referralReminder : (m.reminder || 'Your renewal is due today.');
 }
 
-// Backwards-only window: billing date today or up to `days` days ago. Messaging someone
+// Two ways to pick who lands on the list. Both are backwards-only — messaging someone
 // before their month is up reads as wrong and invites a report.
 //
-// `force` ('msg1'|'msg2'|'msg3') gives everyone the same wording. That exists because
-// escalating purely by billing date would hand a 6-day-overdue member the final notice
-// as their first ever contact — which is how you collect spam reports. Digging out of a
-// backlog is three runs on three days: msg1, then msg2, then msg3.
-export function buildDmList({ members, config, days = 0, force = null, now = todayStr() }) {
+// `cohort` slices by how overdue someone is, one command per wording:
+//   'due'    exactly 0d over  → msg1   (dmlist)
+//   'nudge'  exactly Nd over  → msg2   (dmlist2, N = config.overdue.autoReminderDays)
+//   'final'  Nd or more over  → msg3   (dmlist3, N = config.overdue.finalReminderDays)
+// The stage falls out of pickStage on its own — a cohort's overdue days already map to the
+// wording it wants, so there is no cohort→stage table to keep in sync.
+//
+// `billingDay` (1–31) instead slices by day of the month, across every month: the way to
+// work a backlog down in ~15-person batches rather than one 115-person dump.
+//
+// `force` ('msg1'|'msg2'|'msg3') overrides the wording for everyone. Date batches always
+// pass one, because escalating a 25-day-overdue member purely by age would hand them the
+// final notice as their first ever contact — which is how you collect spam reports.
+export function buildDmList({ members, config, cohort = 'due', billingDay = null, force = null, now = todayStr() }) {
   const fee = config.joining?.fee ?? 90;
+  const nudge = config.overdue?.autoReminderDays ?? 5;
+  const final = config.overdue?.finalReminderDays ?? 6;
   const all = members;
   const rows = [];
 
@@ -40,7 +51,19 @@ export function buildDmList({ members, config, days = 0, force = null, now = tod
     const d = daysFromToday(m.billingDate);
     if (d === null || d > 0) continue;              // future billing — never chase early
     const overdueDays = -d;
-    if (overdueDays > days) continue;
+
+    if (billingDay !== null) {
+      // The d > 0 guard above already dropped this month's not-yet-due 27th, so what's
+      // left is every past 27th the member still owes for.
+      if (parseDate(m.billingDate)?.getDate() !== billingDay) continue;
+    } else if (cohort === 'nudge') {
+      if (overdueDays !== nudge) continue;
+    } else if (cohort === 'final') {
+      if (overdueDays < final) continue;
+    } else {
+      if (overdueDays !== 0) continue;
+    }
+
     if (isDelayActive(m)) continue;
     if (renewedOn(m, now)) continue;
 
@@ -64,16 +87,36 @@ export function buildDmList({ members, config, days = 0, force = null, now = tod
   }
 
   rows.sort((a, b) => b.overdueDays - a.overdueDays);
-  return { rows, stageForced: !!force };
+  return { rows, stageForced: !!force, cohort, billingDay };
 }
 
-export function renderDmList({ rows, days, stageForced }) {
-  if (rows.length === 0) {
-    return [`✅ Nobody to remind${days > 0 ? ` in the last ${days} day(s)` : ' today'}.`];
+// Which slice this list is, in the two places the operator reads: the header suffix and
+// the "nobody" line. Keeps the day counts coming from config rather than hardcoded 5/6.
+function describe({ cohort, billingDay, config }) {
+  if (billingDay !== null && billingDay !== undefined) {
+    const suffix = billingDay === 1 ? 'st' : billingDay === 2 ? 'nd' : billingDay === 3 ? 'rd' : 'th';
+    return {
+      label: `billed on the ${billingDay}${suffix}`,
+      empty: `✅ Nobody billed on the ${billingDay}${suffix} is due right now.`,
+    };
   }
+  if (cohort === 'nudge') {
+    const n = config?.overdue?.autoReminderDays ?? 5;
+    return { label: `${n} days overdue`, empty: `✅ Nobody is ${n} days overdue.` };
+  }
+  if (cohort === 'final') {
+    const n = config?.overdue?.finalReminderDays ?? 6;
+    return { label: `${n}+ days overdue`, empty: `✅ Nobody is ${n}+ days overdue.` };
+  }
+  return { label: 'due today', empty: '✅ Nobody is due today.' };
+}
+
+export function renderDmList({ rows, stageForced, cohort = 'due', billingDay = null, config = null }) {
+  const { label, empty } = describe({ cohort, billingDay, config });
+  if (rows.length === 0) return [empty];
+
   const stages = [...new Set(rows.map(r => r.stage))].sort();
-  const header = `📤 DM LIST — ${friendlyDate()} · ${rows.length} person(s)` +
-    `${days > 0 ? ` · last ${days} day(s)` : ' · due today'}` +
+  const header = `📤 DM LIST — ${friendlyDate()} · ${rows.length} person(s) · ${label}` +
     `\n${stageForced ? `Forced: ${stages[0]}` : `Auto: ${stages.join(' + ')}`}` +
     `\nTap a link → message is pre-typed → hit send.\n━━━━━━━━━━━━━━━━━━━`;
 

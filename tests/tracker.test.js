@@ -383,9 +383,12 @@ test('full-profile help documents dmlist and drops the retired commands', () => 
   const fullConfig = { ...trackerConfig(tmp()), profile: 'full' };
   const out = createReportHandlers(fakeStore([]), fullConfig, Date.now(), log).handleHelp();
 
-  assert.match(out, /dmlist \[days\] msg1\|msg2\|msg3/, 'the forced-stage form is documented');
-  assert.match(out, /Day 1:\s+dmlist 7 msg1/, 'the backlog recipe is spelled out');
-  assert.match(out, /final notice as their first ever message/, 'says WHY forcing matters');
+  assert.match(out, /• dmlist2\s+→\s+5 days overdue/, 'the 2nd-message command is documented');
+  assert.match(out, /• dmlist3\s+→\s+6\+ days overdue/, 'the final-notice command is documented');
+  assert.match(out, /dmlist \[1-31\] msg2\|msg3/, 'the forced-stage form is documented');
+  assert.match(out, /BILLING DATE, not a window/, 'the changed meaning of the number is called out');
+  assert.match(out, /Day 1:\s+dmlist 27\b/, 'the backlog recipe is spelled out');
+  assert.match(out, /final notice as\n?\s*their first ever message/, 'says WHY forcing matters');
   assert.match(out, /Nothing goes out on a timer/, 'operator must know the crons are idle');
 
   assert.ok(!/remindall/.test(out), 'remindall is gone');

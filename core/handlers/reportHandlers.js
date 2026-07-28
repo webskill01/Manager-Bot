@@ -547,18 +547,27 @@ This bot has NO scheduled jobs — it only acts when you send a command.`;
 • stillin  →  REMOVED in sheet but still in a group
 
 📤 SENDING REMINDERS  (you send them, the bot never does)
-• dmlist  →  today's due, one tap-to-send link each
-• dmlist [days]  →  anyone due in the last N days, still unpaid
-• dmlist [days] msg1|msg2|msg3  →  force ONE wording for the whole list
+  Your daily round — one command per message, run all three:
+• dmlist   →  due TODAY  →  1st msg, one tap-to-send link each
+• dmlist2  →  ${config.overdue?.autoReminderDays ?? 5} days overdue  →  2nd msg
+• dmlist3  →  ${config.overdue?.finalReminderDays ?? 6}+ days overdue  →  3rd msg (final notice)
 
   Tap a link → the message is already typed → hit send. Attach the QR
   yourself on the ₹${config.renewal.fullAmount} round.
 
-  Digging out of a backlog? Do NOT let it auto-escalate — someone 6 days
-  behind would get the final notice as their first ever message:
-     Day 1:  dmlist 7 msg1     everyone gets the plain ₹${config.renewal.fullAmount} reminder
-     Day 2:  dmlist 7 msg2     whoever still hasn't paid
-     Day 3:  dmlist 7 msg3     the final notice
+• dmlist [1-31]  →  everyone billed on that day of the month, still unpaid
+• dmlist [1-31] msg2|msg3  →  same batch, escalated wording
+
+  The number is a BILLING DATE, not a window: dmlist 27 is everyone whose
+  billing date is a 27th, in any month. That is how you dig out of a
+  backlog — ~15 people at a time instead of one 115-person dump.
+
+  A date batch defaults to msg1 for everyone, on purpose. Do NOT let it
+  auto-escalate: someone 25 days behind would get the final notice as
+  their first ever message. Escalate deliberately, days apart:
+     Day 1:  dmlist 27         everyone gets the plain ₹${config.renewal.fullAmount} reminder
+     Day 3:  dmlist 27 msg2    whoever still hasn't paid
+     Day 5:  dmlist 27 msg3    the final notice
   Each run re-reads the sheet, so payers drop off by themselves.
 
   Nothing goes out on a timer any more. The 6:30/7:30/10:00 jobs stay

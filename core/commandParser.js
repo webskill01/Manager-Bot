@@ -19,7 +19,7 @@ const SLOW_COMMANDS = new Set([
   'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
   'kick', 'rejoin', 'sendlinks', 'links', 'groupcheck', 'remind', 'renewed',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
-  'dmlist', 'delayall', 'cloudapi',
+  'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi',
 ]);
 
 // A Sheets 403 is a Google-side problem, not a bot problem, but its raw message ("The
@@ -78,7 +78,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   // Renewal-era commands a tracker bot must never run — its operators don't collect
   // renewals at all, so silently doing nothing would be worse than saying so.
   const RENEWAL_ONLY = new Set([
-    'renewed', 'remind', 'dmlist', 'due', 'overdue', 'refs', 'ref',
+    'renewed', 'remind', 'dmlist', 'dmlist2', 'dmlist3', 'due', 'overdue', 'refs', 'ref',
     'warnall', 'kickall', 'removal', 'forecast', 'collection',
     'norenew', 'toprefs', 'loyal', 'churn', 'upcoming',
   ]);
@@ -92,29 +92,48 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
       `Try: pending · called [phone] · moved [phone] · calls · add · summary · revenue`;
   }
 
-  // `dmlist [days] [msg1|msg2|msg3]` — the manual reminder path. Prints one tap-to-send
-  // wa.me link per member with the text pre-filled. Applies the 2-referral auto-renew
-  // first, so nobody who owes nothing ends up on the list. Writes nothing else: the bot
-  // prints, the operator sends, so it cannot know how far they got — any "stage" it
-  // recorded would be a guess.
-  async function handleDmList(args) {
-    let days = 0;
+  // The manual reminder path — prints one tap-to-send wa.me link per member with the text
+  // pre-filled. Applies the 2-referral auto-renew first, so nobody who owes nothing ends up
+  // on the list. Writes nothing else: the bot prints, the operator sends, so it cannot know
+  // how far they got — any "stage" it recorded would be a guess.
+  //
+  // One command per wording, so each round is exactly the people who need that message:
+  //   dmlist   due today   → msg1     dmlist2  5d overdue → msg2     dmlist3  6d+ → msg3
+  // The number is a DAY OF THE MONTH, not a window: `dmlist 27` is everyone billed on a 27th
+  // and still unpaid, which is how a backlog gets worked in ~15-person batches. It used to
+  // mean "the last N days" and returned 115+ people in one dump.
+  async function handleDmList(args, cohort = 'due') {
+    const cmd = cohort === 'nudge' ? 'dmlist2' : cohort === 'final' ? 'dmlist3' : 'dmlist';
+    let billingDay = null;
     let force = null;
     for (const a of args) {
       const w = String(a).toLowerCase();
-      if (/^\d+$/.test(w)) days = Math.min(parseInt(w, 10), 60);
+      if (/^\d{1,2}$/.test(w) && +w >= 1 && +w <= 31) billingDay = parseInt(w, 10);
       else if (/^msg[123]$/.test(w)) force = w;
-      else return `❌ Unknown argument "${a}".\nUse: dmlist [days] [msg1|msg2|msg3]\n` +
-        `  dmlist          today's due\n` +
-        `  dmlist 7        anyone due in the last 7 days, still unpaid\n` +
-        `  dmlist 7 msg1   force the ₹${config.joining?.fee ?? 90} reminder for all of them`;
+      else return `❌ Unknown argument "${a}".\nUse: dmlist [1-31] [msg1|msg2|msg3]\n` +
+        `  dmlist            due today\n` +
+        `  dmlist2           ${config.overdue?.autoReminderDays ?? 5} days overdue (2nd message)\n` +
+        `  dmlist3           ${config.overdue?.finalReminderDays ?? 6}+ days overdue (final notice)\n` +
+        `  dmlist 27         everyone billed on the 27th, still unpaid\n` +
+        `  dmlist 27 msg2    same batch, escalated wording`;
     }
 
-    if (!reminderSender) return '❌ dmlist not available on this bot.';
+    // A date batch is its own thing — combining it with a cohort would ask for "billed on
+    // the 27th AND exactly 5 days overdue", which is almost always nobody.
+    if (billingDay !== null && cohort !== 'due') {
+      return `❌ ${cmd} takes no date. For a specific billing day use:\n` +
+        `  dmlist ${billingDay} ${cohort === 'nudge' ? 'msg2' : 'msg3'}`;
+    }
+    // Date batches are mostly people 20–30 days past due. Auto-escalating would hand nearly
+    // all of them the final notice as their first contact of the round, so default to msg1
+    // and make the operator escalate deliberately on a later pass.
+    if (billingDay !== null && !force) force = 'msg1';
+
+    if (!reminderSender) return `❌ ${cmd} not available on this bot.`;
     const renewed = await reminderSender.autoRenewDue(store, config.botDir);
     await store.refresh();
-    const { rows, stageForced } = buildDmList({ members: store.getAll(), config, days, force });
-    const parts = renderDmList({ rows, days, stageForced });
+    const { rows, stageForced } = buildDmList({ members: store.getAll(), config, cohort, billingDay, force });
+    const parts = renderDmList({ rows, stageForced, cohort, billingDay, config });
 
     if (renewed.length > 0) {
       parts[0] = `🎁 Auto-renewed (2 refs, no payment due): ` +
@@ -575,7 +594,9 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           }
         }
 
-        case 'dmlist':   return handleDmList(args);
+        case 'dmlist':   return handleDmList(args, 'due');
+        case 'dmlist2':  return handleDmList(args, 'nudge');
+        case 'dmlist3':  return handleDmList(args, 'final');
 
         case 'removal':    return removalEngine.handleRemoval();
         case 'warnall':    return removalEngine.warnall();
