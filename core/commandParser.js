@@ -22,6 +22,21 @@ const SLOW_COMMANDS = new Set([
   'dmlist', 'delayall', 'cloudapi',
 ]);
 
+// A Sheets 403 is a Google-side problem, not a bot problem, but its raw message ("The
+// caller does not have permission") reads like the WhatsApp operator lacks rights and sends
+// people hunting through allowedNumbers. Name the two causes that actually produce it —
+// bot-abhi hit the storage one, which looks identical to a sharing mistake from the API.
+export function sheetsHint(err) {
+  const status = err?.status ?? err?.code ?? err?.response?.status;
+  if (status !== 403 && !/caller does not have permission/i.test(err?.message || '')) return '';
+  return '\n\n📊 The sheet is READ-ONLY for this bot. Two things do this:\n' +
+         '  1. The Drive account that OWNS the sheet is out of storage — open the sheet,' +
+         ' a "Storage is full" banner shows at the top. Free space or transfer ownership.\n' +
+         '  2. The sheet is shared with the service account in service-account.json' +
+         ' (client_email) as Viewer instead of Editor.\n' +
+         'Verify with: node scripts/check-sheets.js <bot>';
+}
+
 export function isSlowCommand(text) {
   const trimmed = (text || '').trim();
   if (!trimmed) return false;
@@ -440,7 +455,13 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
       }
     }
 
-    try {
+    // Every case below is `return handler(...)`, not `return await handler(...)` — the
+    // promise leaves the try block before it settles, so an async handler's rejection
+    // NEVER reaches the catch. It escaped to the messages.upsert handler instead, which
+    // only logs: the operator saw total silence (a Sheets 403 on `addnew` looked like the
+    // bot ignoring them). Awaiting the whole switch through this wrapper routes every
+    // case's failure back into the catch, so the operator always gets an answer.
+    const dispatch = async () => {
       switch (cmd) {
         case 'add':        return memberH.handleAdd(args);
         case 'addsilent':  return memberH.handleSilentAdd(args);
@@ -595,9 +616,13 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         default:
           return `❓ Unknown command: "${cmd}". Send 'help' for full list.`;
       }
+    };
+
+    try {
+      return await dispatch();
     } catch (err) {
       log.error(`❌ Handler error for cmd "${cmd}": ${err.message}`);
-      return `❌ Error processing command: ${err.message}`;
+      return `❌ Error processing command: ${err.message}${sheetsHint(err)}`;
     }
   }
 

@@ -75,6 +75,20 @@ try {
   const [header = [], ...rows] = res.data.values || [];
   console.log(`   ✅ Read OK — ${rows.length} rows in ${Date.now() - started}ms`);
 
+  // Read and write are separate permissions: a sheet shared with the service account as
+  // VIEWER reads perfectly and 403s on every write, so a read-only check passes while
+  // add/renewed/kick all fail at command time with "The caller does not have permission".
+  // Probe it with a clear() of the tab's LAST row — always past the data, so it needs
+  // write access but changes nothing. (A row past the grid would 400 as a bad range.)
+  const meta = await sheets.spreadsheets.get({ spreadsheetId: sheetId, fields: 'sheets.properties' });
+  const probeRow = meta.data.sheets.find(s => s.properties.title === 'MEMBERS')
+    ?.properties.gridProperties.rowCount ?? rows.length + 1;
+  await sheets.spreadsheets.values.clear({
+    spreadsheetId: sheetId,
+    range: `MEMBERS!A${probeRow}:Q${probeRow}`,
+  });
+  console.log('   ✅ Write OK — service account has Editor access');
+
   // Columns are positional and header text is cosmetic, so a misspelled label is harmless
   // while a column sitting in the wrong slot silently corrupts data. Reporting both as
   // "mismatch" buries the one that matters, so classify.
@@ -152,7 +166,12 @@ try {
     console.error('     Stop the bot (pm2 stop <bot>), wait 2 minutes, run this again.');
     console.error('     A pm2 restart loop keeps re-consuming the quota — stop it first.');
   } else if (status === 403) {
-    console.error(`\n   → PERMISSION. Share the sheet with ${sa.client_email} as Editor.`);
+    console.error('\n   → READ-ONLY SHEET. Reads work, every write fails. Two causes:');
+    console.error('     1. The Drive account that OWNS this sheet is OUT OF STORAGE. Open the');
+    console.error('        sheet — it shows "Storage is full. No edits can be made to this file."');
+    console.error('        Free space in that account, or transfer the sheet to one with room.');
+    console.error(`     2. The sheet is shared with ${sa.client_email}`);
+    console.error('        as Viewer instead of Editor.');
     console.error('     Also check the Sheets API is enabled for the project.');
   } else if (status === 404) {
     console.error('\n   → NOT FOUND. SHEET_ID is wrong, or the sheet was deleted.');
