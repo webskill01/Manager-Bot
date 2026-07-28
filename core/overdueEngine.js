@@ -167,7 +167,7 @@ export function createOverdueEngine(config, log) {
           const text = finalTemplate
             .replace('{name}', m.name)
             .replace('{days}', String(finalReminderDay))
-            .replace('{date}', friendlyDate());
+            .replace('{date}', friendlyDate(m.billingDate));
 
           try {
             await sock.sendMessage(jid, { text });

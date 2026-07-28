@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import { pickStage, buildDmList, chunkByChars, renderDmList } from '../core/dmList.js';
-import { todayStr } from '../core/globalConfig.js';
+import { todayStr, friendlyDate } from '../core/globalConfig.js';
 
 const cfg = {
   joining: { fee: 90 },
@@ -191,6 +191,24 @@ test('no referral means full fee and the plain reminder', () => {
   const { rows } = buildDmList({ members, config: cfg });
   assert.equal(rows[0].fee, 90);
   assert.match(rows[0].text, /^DUE /);
+});
+
+// {date} used to render today for everyone. On a backlog run that is just wrong — someone
+// billed on the 20th was being told their date was the 28th.
+test('{date} renders each member\'s own billing date, never today', () => {
+  const members = [
+    member('9000000001', daysAgo(20)),
+    member('9000000002', daysAgo(8)),
+    member('9000000003', todayStr()),
+  ];
+  const { rows } = buildDmList({ members, config: cfg, cohort: 'final', force: 'msg1' });
+  for (const r of rows) {
+    const billed = members.find(m => m.phone === r.phone).billingDate;
+    assert.equal(r.text, `DUE ${r.name} ${friendlyDate(billed)}`, `${r.phone} got the wrong date`);
+    assert.equal(decodeURIComponent(r.link.split('?text=')[1]), r.text, 'link text matches');
+  }
+  // Guard against the two backdated members coincidentally rendering today's date.
+  assert.ok(!rows.some(r => r.text.endsWith(friendlyDate())), 'nobody overdue shows today');
 });
 
 test('rows are sorted most-overdue first', () => {

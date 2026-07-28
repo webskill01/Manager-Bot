@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, normalizePhone as normPhone, getReferralsInBillingPeriod, todayStr, sleep, isTracker } from './globalConfig.js';
+import { daysFromToday, normalizePhone as normPhone, getReferralsInBillingPeriod, todayStr, friendlyDate, sleep, isTracker } from './globalConfig.js';
 import { createMemberHandlers } from './handlers/memberHandlers.js';
 import { createRenewalHandlers } from './handlers/renewalHandlers.js';
 import { createLookupHandlers } from './handlers/lookupHandlers.js';
@@ -577,7 +577,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           const type = refs === 1 ? 'referral' : 'normal';
           const template = (type === 'referral' && config.messages.referralReminder)
             ? config.messages.referralReminder : config.messages.reminder;
-          const caption = template.replace('{name}', member.name).replace('{date}', todayStr());
+          const caption = template.replace('{name}', member.name).replace('{date}', friendlyDate(member.billingDate));
           const jid = `91${member.phone}@s.whatsapp.net`;
           try {
             const qrPath = config.upiQrPath ? path.resolve(config.botDir, config.upiQrPath) : null;

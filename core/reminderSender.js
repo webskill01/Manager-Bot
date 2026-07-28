@@ -111,7 +111,9 @@ export function createReminderSender(config, log) {
     return true;
   }
 
-  async function sendToMember(getSock, phone, name, botDir, type = 'normal') {
+  // billingDate is the member's own — {date} must render THEIR renewal date, not today's.
+  // Defaults to '' so friendlyDate falls back to today for any caller that lacks it.
+  async function sendToMember(getSock, phone, name, botDir, type = 'normal', billingDate = '') {
     if (checkCircuit()) {
       log.warn(`⚡ Circuit open — skipping ${name}`);
       return false;
@@ -127,7 +129,7 @@ export function createReminderSender(config, log) {
     const template = type === 'referral' && config.messages.referralReminder
       ? config.messages.referralReminder
       : config.messages.reminder;
-    const caption = template.replace('{name}', name).replace('{date}', friendlyDate());
+    const caption = template.replace('{name}', name).replace('{date}', friendlyDate(billingDate));
 
     try {
       const qrPath = path.resolve(botDir, config.upiQrPath);
@@ -212,7 +214,7 @@ export function createReminderSender(config, log) {
         }
       } else {
         const type = refs === 1 ? 'referral' : 'normal';
-        if (await sendToMember(getSock, m.phone, m.name, botDir, type)) {
+        if (await sendToMember(getSock, m.phone, m.name, botDir, type, m.billingDate)) {
           if (refs === 1) referralSent++; else sent++;
           state.sentPhones.push(m.phone);
           saveState(botDir, state);

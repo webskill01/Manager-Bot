@@ -71,9 +71,12 @@ export function buildDmList({ members, config, cohort = 'due', billingDay = null
     const refs = getReferralsInBillingPeriod(m.phone, m.billingDate, all);
     const referral = refs.length === 1;
     const stage = force || pickStage(overdueDays, config);
+    // {date} is the member's OWN billing date, not today. On a backlog run today's date is
+    // simply wrong — telling someone billed on the 20th that their date is the 28th reads
+    // as a mistake and invites an argument about what they actually owe.
     const text = templateFor(stage, config, { referral })
       .replace('{name}', m.name)
-      .replace('{date}', friendlyDate());
+      .replace('{date}', friendlyDate(m.billingDate));
 
     rows.push({
       name: m.name,
