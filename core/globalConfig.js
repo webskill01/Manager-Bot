@@ -36,10 +36,23 @@ export function loadConfig(botDir) {
   config.telegramToken = process.env.TELEGRAM_TOKEN || '';
   config.transport = config.telegramToken ? 'telegram' : 'whatsapp';
 
-  const required = ['ownerNumber', 'sheetId', 'paidGroups'];
-  for (const field of required) {
+  // Two of these come from the bot's .env, which is gitignored and therefore never
+  // arrives via `git pull` — it must be created by hand on every machine. Naming the
+  // variable and the file turns "missing required field: ownerNumber" (which reads like
+  // a config.json problem) into something the operator can act on without guessing.
+  const required = [
+    ['ownerNumber', 'OWNER_NUMBER', '.env'],
+    ['sheetId',     'SHEET_ID',     '.env'],
+    ['paidGroups',  null,           'config.json'],
+  ];
+  for (const [field, envVar, source] of required) {
     if (!config[field] || (Array.isArray(config[field]) && config[field].length === 0)) {
-      throw new Error(`Config missing required field: ${field}`);
+      const where = envVar
+        ? `set ${envVar} in ${path.join(botDir, '.env')}\n` +
+          `  That file is gitignored — "git pull" never delivers it. Copy it from another\n` +
+          `  machine, or create it with: BOT_NAME, OWNER_NUMBER, SHEET_ID, STATS_PORT`
+        : `add "${field}" to ${path.join(botDir, 'config.json')}`;
+      throw new Error(`Config missing required field: ${field} (from ${source})\n  → ${where}`);
     }
   }
 
