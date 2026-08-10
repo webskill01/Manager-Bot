@@ -402,6 +402,11 @@ export function createReportHandlers(store, config, botStartTime, log) {
   function handlePing(sock) {
     const uptimeMs = Date.now() - botStartTime;
     const uptime = Math.floor(uptimeMs / 60000);
+    // A Telegram bot has no socket by design — reporting "❌ Disconnected" would read as
+    // a fault every single time. Name the transport instead.
+    if (config.transport === 'telegram') {
+      return `🟢 Bot ${config.botName} is alive\nUptime: ${uptime} minutes\nTransport: ✅ Telegram (no WhatsApp connection)`;
+    }
     const connected = !!sock?.user;
     return `🟢 Bot ${config.botName} is alive\nUptime: ${uptime} minutes\nWhatsApp: ${connected ? '✅ Connected' : '❌ Disconnected'}`;
   }
@@ -448,14 +453,24 @@ export function createReportHandlers(store, config, botStartTime, log) {
 This bot only keeps the record. It never moves anyone onto the app and
 never removes anyone — you do that yourself with "kick [phone]".
 
-👤 ADD A NEW PERSON
+${config.transport === 'telegram' ? `👤 ADD A NEW PERSON
+This bot has no WhatsApp connection, so the group work is yours. It writes
+the sheet and hands you a one-tap link to send from your own WhatsApp.
+• add [Name] [phone]  →  records as NEW + tap-to-send links & welcome
+• addsilent [Name] [phone]  →  sheet only, no link prepared
+• sendlinks [phone]  →  the tap-to-send link again
+• links [phone]  →  just the group invite links, to paste anywhere
+• rejoin [phone]  →  reactivate an old member in the sheet
+
+Approving join requests, group membership checks and bulk group removals
+are done in WhatsApp by hand — the bot will say so if you try them here.` : `👤 ADD A NEW PERSON
 • add [Name] [phone]  →  sends group links + welcome, records as NEW
 • addsilent [Name] [phone]  →  sheet only, no links sent
 • sendlinks [phone]  →  re-send the links
 • approve / approveall  →  approve pending join requests
 • rejectall
 • rejoin [phone]  →  add an old member back
-• groupcheck [phone]  →  which groups are they in?
+• groupcheck [phone]  →  which groups are they in?`}
 
 📞 CALLING
 • pending  →  who to call now (${days}d in group) + who gave no answer yet

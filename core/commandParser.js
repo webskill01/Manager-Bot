@@ -74,6 +74,9 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   const reportH = createReportHandlers(store, config, botStartTime, log);
   const trackerH = createTrackerHandlers(store, groupManager, config, log);
   const tracker = isTracker(config);
+  // True when this bot has no WhatsApp socket at all — the operator commands it over
+  // Telegram and every group action is theirs to perform by hand.
+  const noWhatsApp = config.transport === 'telegram';
 
   // Renewal-era commands a tracker bot must never run — its operators don't collect
   // renewals at all, so silently doing nothing would be worse than saying so.
@@ -82,6 +85,29 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     'warnall', 'kickall', 'removal', 'forecast', 'collection',
     'norenew', 'toprefs', 'loyal', 'churn', 'upcoming',
   ]);
+
+  // Commands that read or mutate LIVE WhatsApp group state. A Telegram-operated bot holds
+  // no WhatsApp connection at all, so these cannot work — and must not appear to. Left
+  // ungated they'd hit manualGroupManager and throw, surfacing as a bare "Error processing
+  // command"; refusing up front says what to do instead. Same shape as RENEWAL_ONLY above.
+  const WHATSAPP_ONLY = new Map([
+    ['approve',     'Approve join requests in WhatsApp, then log them here: add [Name] [phone]'],
+    ['approveall',  'Approve join requests in WhatsApp, then log them here: add [Name] [phone]'],
+    ['reject',      'Reject join requests in the WhatsApp group directly.'],
+    ['rejectall',   'Reject join requests in the WhatsApp group directly.'],
+    ['groupcheck',  'Open the group in WhatsApp and search the number. Sheet status: status [phone]'],
+    ['notinsheet',  'Needs a live group roster. Compare by hand, or run this on the WhatsApp bot.'],
+    ['leftmembers', 'Needs a live group roster. Compare by hand, or run this on the WhatsApp bot.'],
+    ['stillin',     'Needs a live group roster. Compare by hand, or run this on the WhatsApp bot.'],
+    ['kickghosts',  'Bulk group removal needs a WhatsApp connection. Remove them by hand.'],
+    ['diag',        'Diagnostic for the WhatsApp socket — nothing to probe on Telegram.'],
+    ['remind',      'This DMs the member a UPI QR over WhatsApp. Send it yourself, or use: dmlist'],
+  ]);
+
+  function whatsappOnly(cmd) {
+    return `❌ "${cmd}" needs a live WhatsApp connection — this bot runs on Telegram.\n\n` +
+      `👉 ${WHATSAPP_ONLY.get(cmd)}`;
+  }
 
   function trackerOnly(cmd) {
     return `❌ "${cmd}" is a tracker-profile command. This bot runs the full renewal profile.`;
@@ -166,6 +192,10 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         const reply = await memberH.handleSkip([member.phone, 'overdue-skipped']);
         results.push(`${action}: ${reply.split('\n')[0]}`);
       } else if (type === 'W') {
+        if (!sock) {
+          results.push(`${action}: ❌ Can't warn ${member.name} — no WhatsApp connection. Message them yourself.`);
+          continue;
+        }
         const msg = config.messages.overdue
           .replace('{name}', member.name)
           .replace('{days}', String(member.daysOverdue || 0));
@@ -459,6 +489,13 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     const args = parts.slice(1);
 
     if (tracker && RENEWAL_ONLY.has(cmd)) return fullOnly(cmd);
+    if (noWhatsApp && WHATSAPP_ONLY.has(cmd)) return whatsappOnly(cmd);
+    // "start removal" / "stop kickall" — the engines behind these drive group sends and
+    // group kicks over the socket, so they're refused on the same grounds as the list above.
+    if (noWhatsApp && (cmd === 'start' || cmd === 'stop') && /^(removal|kickall|kickghosts)$/i.test(args[0] || '')) {
+      return `❌ "${cmd} ${args[0].toLowerCase()}" drives WhatsApp group operations — this bot runs on Telegram.\n\n` +
+        `👉 Do the removals by hand in WhatsApp, then record each one here: kick [phone]`;
+    }
 
     // Pattern: "[phone] ref [refPhone]" — handles both compact and spaced formats:
     // "9876543210 ref 9876543211"  or  "+91 98765 43210 ref +91 98765 43211"

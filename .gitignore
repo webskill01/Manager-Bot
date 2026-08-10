@@ -45,6 +45,7 @@ PROGRESS_ARCHIVE.md
 
 # Setup guides (local reference only — contains server paths)
 NEW_BOT_SETUP.md
+TELEGRAM_MIGRATION.md
 
 # OS & editor noise
 .DS_Store

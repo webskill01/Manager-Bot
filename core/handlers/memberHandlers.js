@@ -142,7 +142,14 @@ export function createMemberHandlers(store, groupManager, config, log) {
         return `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}${refNote}\n⚠️ No groupLinks configured — add them to config.json`;
       }
 
-      const { sent, failed } = await groupManager.sendToMember(phone, messages);
+      const { sent, failed, manual } = await groupManager.sendToMember(phone, messages);
+
+      // On a Telegram bot nothing was sent and nothing could be — say so and hand over the
+      // tap-to-send link. Printing "Sent 0/4 messages" would be a quiet lie of exactly the
+      // kind this codebase refuses elsewhere (see trackerOnly/fullOnly in commandParser).
+      if (manual) {
+        return `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}${refNote}\n\n${manual}`;
+      }
 
       let reply = `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}${refNote}\n`;
       reply += `📨 Sent ${sent}/${messages.length} messages to ${phone}`;
@@ -332,7 +339,9 @@ export function createMemberHandlers(store, groupManager, config, log) {
       }
 
       log.info(`📋 New add (no links): ${name} (${phone}) — counted as new member`);
-      return `✅ ${name} (${phone}) added to sheet as a NEW member (no links sent).\n📅 Billing: ${billingDate}${refNote}\n\nNow use:\nrejoin ${phone}  →  adds directly to all groups`;
+      // `rejoin` updates the sheet and tells you to add them by hand — it has never added
+      // anyone to a group itself (see handleRejoin), so don't promise that it does.
+      return `✅ ${name} (${phone}) added to sheet as a NEW member (no links sent).\n📅 Billing: ${billingDate}${refNote}\n\nNext:\nsendlinks ${phone}  →  the group links + welcome message\nrejoin ${phone}      →  reactivate billing if they had left`;
     } finally {
       inFlightAdds.delete(phone);
     }
@@ -349,7 +358,19 @@ export function createMemberHandlers(store, groupManager, config, log) {
 
     const result = await groupManager.removeFromAllGroups(phone);
     if (result.blocked) return result.blocked;
-    const { removed, failed } = result;
+    const { removed, failed, manual } = result;
+
+    // Telegram bot: the sheet half still happens here, the group half is the operator's.
+    // Mark REMOVED first so the record is right even if they do the groups later.
+    if (manual) {
+      if (member) {
+        const wasRemoved = member.status === 'REMOVED';
+        if (!wasRemoved) await store.update(phone, { status: 'REMOVED' });
+        const note = wasRemoved ? ' (was already REMOVED)' : '';
+        return `✅ ${member.name} marked REMOVED in sheet${note}.\n\n${manual}`;
+      }
+      return `ℹ️ ${phone} is not in the sheet — nothing to update.\n\n${manual}`;
+    }
 
     if (member) {
       const wasRemoved = member.status === 'REMOVED';
@@ -489,6 +510,15 @@ export function createMemberHandlers(store, groupManager, config, log) {
     if (!member) return `❌ No member found for ${args[0]}.`;
 
     const links = await groupManager.getInviteLinksForMissing(phone);
+
+    // Without a socket there is no roster to diff against, so "missing from N groups" is
+    // unknowable — return every configured link and say plainly that it's all of them.
+    if (groupManager.manual) {
+      if (links.length === 0) return '⚠️ No groupLinks configured in config.json';
+      const all = links.map(l => `• ${l.groupName}\n  ${l.link}`).join('\n\n');
+      return `🔗 All ${links.length} group links (can't check which ones ${member.name} is already in):\n\n${all}`;
+    }
+
     if (links.length === 0) return `✅ ${member.name} is in all ${config.paidGroups.length} groups.`;
 
     const linkLines = links.map(l => `• ${l.groupName}\n  ${l.link}`).join('\n\n');
@@ -618,8 +648,14 @@ export function createMemberHandlers(store, groupManager, config, log) {
 
     if (messages.length === 0) return '⚠️ No groupLinks configured in config.json';
 
-    const { sent, failed } = await groupManager.sendToMember(phone, messages);
+    const { sent, failed, manual } = await groupManager.sendToMember(phone, messages);
     const who = member ? `${member.name} (${phone})` : phone;
+
+    if (manual) {
+      const note = member ? '' : `\nℹ️ ${phone} is not in the sheet.`;
+      return `🔗 Links + welcome for ${who}${note}\n\n${manual}`;
+    }
+
     let reply = `📨 Sent ${sent}/${messages.length} messages to ${who}`;
     if (!member) reply += `\nℹ️ ${phone} is not in the sheet — links sent anyway.`;
     if (failed > 0) reply += `\n⚠️ ${failed} failed — check if number is on WhatsApp`;

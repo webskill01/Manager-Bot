@@ -29,6 +29,13 @@ export function loadConfig(botDir) {
   config.serviceAccountPath = path.join(botDir, 'service-account.json');
   config.botDir = botDir;
 
+  // Transport is inferred from TELEGRAM_TOKEN alone — no config flag to keep in sync
+  // with the .env, and no way for the two to disagree. A bot with a token talks to its
+  // operator over Telegram and never opens a WhatsApp socket; a bot without one is
+  // unchanged Baileys. That is the whole switch.
+  config.telegramToken = process.env.TELEGRAM_TOKEN || '';
+  config.transport = config.telegramToken ? 'telegram' : 'whatsapp';
+
   const required = ['ownerNumber', 'sheetId', 'paidGroups'];
   for (const field of required) {
     if (!config[field] || (Array.isArray(config[field]) && config[field].length === 0)) {
@@ -38,6 +45,22 @@ export function loadConfig(botDir) {
 
   if (config.paidGroups.length === 0) {
     throw new Error('paidGroups must not be empty');
+  }
+
+  // Telegram identifies people by a numeric user id, not a phone number, so allowedNumbers
+  // cannot authorize anything here — a fresh bot has no way to know who its operators are.
+  //
+  // An empty list therefore means BOOTSTRAP, not "allow everyone": the bot starts, tells
+  // whoever messages it what their own id is, and refuses to run a single command until
+  // real ids are configured. That is the whole enrolment flow, with nothing to read out of
+  // a log file and no [0] placeholder to remember to remove.
+  //
+  // Handing a stranger their own Telegram id discloses nothing — they already have it, and
+  // it grants no access. The window is minutes, and it shuts by itself the moment the list
+  // is filled in.
+  if (config.transport === 'telegram') {
+    config.allowedTelegramIds = (config.allowedTelegramIds || []).map(Number).filter(Number.isFinite);
+    config.bootstrapMode = config.allowedTelegramIds.length === 0;
   }
 
   if (!fs.existsSync(config.serviceAccountPath)) {
