@@ -109,6 +109,27 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
       `👉 ${WHATSAPP_ONLY.get(cmd)}`;
   }
 
+  // ── transport: "dual" ────────────────────────────────────────────────────────
+  // bot-nitin keeps a WhatsApp socket for group ops AND takes commands over Telegram. The
+  // socket can die under it — a 403 halts reconnects but the process keeps serving Telegram,
+  // which is the entire point of running both. So "can this command work" is a question
+  // about right now, not about configuration, and it has to be asked at dispatch time.
+  const dual = config.transport === 'dual';
+  const socketDown = () => dual && !getSock?.()?.user;
+
+  const SOCKET_DOWN_BANNER =
+    '⚠️ WhatsApp is DISCONNECTED — sheet commands work, group actions do not.\n' +
+    '   Anything below about groups did not happen. Do it by hand in WhatsApp.';
+
+  // Same refusal as the Telegram-only bots, different cause: there the socket was never
+  // going to exist, here it existed and died. Naming the real reason is what stops an
+  // operator hunting through allowedNumbers for a problem that is a dead connection.
+  function socketDownOnly(cmd) {
+    return `❌ "${cmd}" needs a live WhatsApp connection, and this bot's connection is DOWN.\n\n` +
+      `👉 ${WHATSAPP_ONLY.get(cmd)}\n\n` +
+      `Check why: pm2 logs ${config.botName} — a 403 means the number is flagged and reconnects are halted.`;
+  }
+
   function trackerOnly(cmd) {
     return `❌ "${cmd}" is a tracker-profile command. This bot runs the full renewal profile.`;
   }
@@ -490,10 +511,17 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
 
     if (tracker && RENEWAL_ONLY.has(cmd)) return fullOnly(cmd);
     if (noWhatsApp && WHATSAPP_ONLY.has(cmd)) return whatsappOnly(cmd);
+    // Dual transport with the socket down. Only the WHATSAPP_ONLY set is refused outright,
+    // because those are pure group reads/writes with no sheet effect to salvage. kick, add,
+    // rejoin, sendlinks and kickall all write the sheet BEFORE (or regardless of) the group
+    // work, so they still run and still record the truth — the banner explains what didn't
+    // happen. Refusing them would cost the one thing that matters when the number is banned.
+    if (socketDown() && WHATSAPP_ONLY.has(cmd)) return socketDownOnly(cmd);
     // "start removal" / "stop kickall" — the engines behind these drive group sends and
     // group kicks over the socket, so they're refused on the same grounds as the list above.
-    if (noWhatsApp && (cmd === 'start' || cmd === 'stop') && /^(removal|kickall|kickghosts)$/i.test(args[0] || '')) {
-      return `❌ "${cmd} ${args[0].toLowerCase()}" drives WhatsApp group operations — this bot runs on Telegram.\n\n` +
+    if ((noWhatsApp || socketDown()) && (cmd === 'start' || cmd === 'stop') && /^(removal|kickall|kickghosts)$/i.test(args[0] || '')) {
+      const why = noWhatsApp ? 'this bot runs on Telegram' : "this bot's WhatsApp connection is DOWN";
+      return `❌ "${cmd} ${args[0].toLowerCase()}" drives WhatsApp group operations — ${why}.\n\n` +
         `👉 Do the removals by hand in WhatsApp, then record each one here: kick [phone]`;
     }
 
@@ -677,10 +705,21 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     };
 
     try {
-      return await dispatch();
+      const out = await dispatch();
+      // On "dual" with a dead socket every reply is half-true: the sheet write landed, the
+      // group half did not. One banner says which half, rather than auditing forty handlers
+      // for wording that assumes a live connection — `add` in particular reports "13 failed
+      // — check if number is on WhatsApp" when the real cause is this bot's own socket.
+      if (socketDown() && out) {
+        const parts = Array.isArray(out) ? [...out] : [out];
+        parts[0] = `${SOCKET_DOWN_BANNER}\n\n${parts[0]}`;
+        return Array.isArray(out) ? parts : parts[0];
+      }
+      return out;
     } catch (err) {
       log.error(`❌ Handler error for cmd "${cmd}": ${err.message}`);
-      return `❌ Error processing command: ${err.message}${sheetsHint(err)}`;
+      const banner = socketDown() ? `${SOCKET_DOWN_BANNER}\n\n` : '';
+      return `${banner}❌ Error processing command: ${err.message}${sheetsHint(err)}`;
     }
   }
 

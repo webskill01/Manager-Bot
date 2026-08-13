@@ -29,12 +29,47 @@ export function loadConfig(botDir) {
   config.serviceAccountPath = path.join(botDir, 'service-account.json');
   config.botDir = botDir;
 
-  // Transport is inferred from TELEGRAM_TOKEN alone — no config flag to keep in sync
+  // Transport is normally inferred from TELEGRAM_TOKEN alone — no flag to keep in sync
   // with the .env, and no way for the two to disagree. A bot with a token talks to its
   // operator over Telegram and never opens a WhatsApp socket; a bot without one is
-  // unchanged Baileys. That is the whole switch.
+  // unchanged Baileys. That is the whole switch for the four tracker bots.
+  //
+  // "dual" is the one case that cannot be inferred, because it is the same two inputs
+  // (token present, auth folder present) as "telegram" and only the operator knows which
+  // they meant. bot-nitin declares it in config.json: it keeps the WhatsApp socket for
+  // group ops — add/kick/approve, which the Cloud API can never do — while ALSO taking
+  // commands over Telegram, so a 403 costs the group commands and nothing else. Both
+  // channels drive one process, one sheet cache, one command parser.
   config.telegramToken = process.env.TELEGRAM_TOKEN || '';
-  config.transport = config.telegramToken ? 'telegram' : 'whatsapp';
+  const declaredTransport = (config.transport || '').toLowerCase();
+  if (declaredTransport) {
+    if (!['whatsapp', 'telegram', 'dual'].includes(declaredTransport)) {
+      throw new Error(`Invalid transport "${config.transport}" — must be "whatsapp", "telegram" or "dual"`);
+    }
+    if (!config.telegramToken && declaredTransport === 'telegram') {
+      // A Telegram-only bot without a token can do literally nothing. Refuse to start
+      // rather than sit there looking healthy while answering no one.
+      throw new Error(
+        `transport is "telegram" but TELEGRAM_TOKEN is not set\n` +
+        `  → add TELEGRAM_TOKEN=… to ${path.join(botDir, '.env')} (get one from @BotFather),\n` +
+        `    or set "transport": "whatsapp" in config.json to run Baileys only.`);
+    }
+    if (!config.telegramToken && declaredTransport === 'dual') {
+      // Dual is different: WhatsApp is the primary channel and Telegram is the backup, so a
+      // missing token costs the backup, not the bot. Refusing to boot here would take a live
+      // renewal bot down over a not-yet-created Telegram bot — the config can legitimately
+      // land in git before the token does. Degrade, and say so every start until it's fixed.
+      config.transport = 'whatsapp';
+      config.telegramMissing = true;
+    } else {
+      config.transport = declaredTransport;
+    }
+  } else {
+    config.transport = config.telegramToken ? 'telegram' : 'whatsapp';
+  }
+  // True whenever a Telegram listener should run, on either of the two transports that
+  // have one. Callers branch on this rather than string-matching two values everywhere.
+  config.usesTelegram = config.transport === 'telegram' || config.transport === 'dual';
 
   // Two of these come from the bot's .env, which is gitignored and therefore never
   // arrives via `git pull` — it must be created by hand on every machine. Naming the
@@ -71,7 +106,7 @@ export function loadConfig(botDir) {
   // Handing a stranger their own Telegram id discloses nothing — they already have it, and
   // it grants no access. The window is minutes, and it shuts by itself the moment the list
   // is filled in.
-  if (config.transport === 'telegram') {
+  if (config.usesTelegram) {
     config.allowedTelegramIds = (config.allowedTelegramIds || []).map(Number).filter(Number.isFinite);
     config.bootstrapMode = config.allowedTelegramIds.length === 0;
   }

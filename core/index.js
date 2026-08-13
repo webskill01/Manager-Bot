@@ -45,6 +45,7 @@ import { createGhostRemovalEngine } from './ghostRemovalEngine.js';
 // (`dmlist`) until the Cloud API cutover. Delete the file once that has run a clean month.
 import { isTracker } from './globalConfig.js';
 import { usesCloudApi } from './cloudApiSender.js';
+import { createTelegramListener } from './telegramTransport.js';
 import { markLinkedAt, getLinkedAt, inWarmup } from './warmup.js';
 
 const BOT_START_TIME = Date.now();
@@ -63,6 +64,11 @@ export async function startBot(config, log, authDir) {
   let qrTimestamp = null;
   let commandParser = null;
   let schedulerStarted = false;
+  // Second command channel, on `transport: "dual"` only (bot-nitin). It drives the SAME
+  // commandParser and the SAME live socket, so `kick` typed in Telegram really removes the
+  // member from every group — and when a 403 kills the socket, every sheet command still
+  // answers. null on the four tracker bots and on plain WhatsApp bots.
+  let telegram = null;
   const seenMessageIds = new Map();     // msg id → timestamp, prevents double-processing duplicates
   const DEDUP_TTL_MS = 60 * 1000;      // evict after 60s
 
@@ -154,7 +160,15 @@ export async function startBot(config, log, authDir) {
     }, delay);
   }
 
+  // Operator-facing broadcast: engine progress, watchdog alerts, reminder batch reports.
+  // Goes to Telegram FIRST when a listener is running, because that is the channel that
+  // still works when WhatsApp does not — a 403 alert delivered over the dead socket is an
+  // alert nobody ever sees. WhatsApp delivery is best-effort on top.
   async function broadcast(text) {
+    if (telegram) {
+      try { await telegram.broadcast(text); }
+      catch (err) { log.warn(`⚠️  Telegram broadcast failed: ${err.message}`); }
+    }
     const s = getSock();
     if (!s?.user) return;
     for (const jid of getBroadcastJids()) {
@@ -518,14 +532,20 @@ export async function startBot(config, log, authDir) {
       status: sock?.user ? 'healthy' : (loggedOut ? 'logged-out' : 'degraded'),
       connected: !!sock?.user,
       loggedOut,
+      // Dual transport only. The watchdog reads `loggedOut` to decide whether to shout, and
+      // that contract is unchanged — a 403 is still a real problem worth alerting on, even
+      // though Telegram keeps the bookkeeping alive.
+      telegram: telegram ? !!telegram.getMe() : undefined,
       members: store.getAll().length,
       uptime: Date.now() - BOT_START_TIME,
     }));
     // Status contract consumed by the scan page (mirrors whatsapp-multibot /status).
     app.get('/status', (_, res) => res.json({
       botName: config.botName,
+      transport: config.transport,
       connected: !!sock?.user,
       loggedOut,
+      telegram: telegram ? !!telegram.getMe() : undefined,
       qrAvailable: !loggedOut && !!latestQR && (Date.now() - (qrTimestamp || 0) < 60000),
       uptime: Date.now() - BOT_START_TIME,
     }));
@@ -559,7 +579,10 @@ export async function startBot(config, log, authDir) {
       if (!['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(ip)) {
         return res.status(403).json({ error: 'localhost only' });
       }
-      if (!sock?.user) return res.status(503).json({ error: 'not connected' });
+      // A Telegram listener can deliver with no socket at all, and "the WhatsApp number
+      // just got banned" is precisely the alert that must not be dropped for want of a
+      // WhatsApp connection. Only refuse when there is genuinely no way out.
+      if (!sock?.user && !telegram) return res.status(503).json({ error: 'not connected' });
       const text = String(req.body?.text || '').slice(0, 4000);
       if (!text) return res.status(400).json({ error: 'text required' });
       await broadcast(text);
@@ -715,6 +738,7 @@ export async function startBot(config, log, authDir) {
     isShuttingDown = true;
     if (reconnectTimer) clearTimeout(reconnectTimer);
     scheduler.stop();
+    if (telegram) telegram.stop();
     destroySocket('shutdown');
     log.info('✅ Shutdown complete');
     process.exit(0);
@@ -727,7 +751,61 @@ export async function startBot(config, log, authDir) {
   log.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   log.info(`🚀 ${config.botName} — Member Management Bot`);
   log.info(`   Groups: ${config.paidGroups.length} | LID-only command mode`);
+  log.info(`   Transport: ${config.transport}`);
   log.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  if (config.telegramMissing) {
+    log.warn('⚠️  config.json asks for "dual" but TELEGRAM_TOKEN is not set — running WhatsApp-ONLY.');
+    log.warn('   There is no backup channel: if this number gets flagged, the sheet becomes');
+    log.warn(`   unreachable until the token is added. Fix: create a bot with @BotFather, then`);
+    log.warn(`   add TELEGRAM_TOKEN=… to bots/${config.botName}/.env and: pm2 restart ${config.botName}`);
+  }
+
+  // Telegram comes up BEFORE the WhatsApp socket, on purpose: linking Baileys can take
+  // tens of seconds (or never, on a flagged number), and the whole point of the second
+  // channel is that it does not depend on the first.
+  if (config.usesTelegram) {
+    telegram = createTelegramListener({
+      token: config.telegramToken,
+      allowedIds: config.allowedTelegramIds,
+      bootstrapMode: config.bootstrapMode,
+      botName: config.botName,
+      log,
+      onCommand: async (text, reply) => {
+        // The parser is built as soon as connectToWhatsApp() constructs a socket object,
+        // which happens even on a number that will be refused — so this window is the few
+        // seconds of auth-load and version-fetch at boot, not the banned state.
+        if (!commandParser) {
+          return reply('⏳ Still starting up — the WhatsApp socket is initialising. Try again in a few seconds.');
+        }
+        try {
+          await reply(await commandParser.parse(text));
+        } catch (err) {
+          log.error(`❌ Telegram command failed: ${err.message}`);
+          await reply(`❌ ${err.message}`).catch(() => {});
+        }
+      },
+    });
+    // A bad token must NOT stop WhatsApp from coming up: group ops are the reason this bot
+    // still holds a socket at all, and they are unaffected by anything Telegram does. Same
+    // reasoning in reverse for the polling loop below.
+    try {
+      const me = await telegram.connect();
+      log.info(`✅ Telegram: @${me.username} — ${telegram.operatorCount()} operator(s)`);
+      if (config.bootstrapMode) {
+        log.warn(`🔑 SETUP MODE — message https://t.me/${me.username}, then put the id it replies with`);
+        log.warn(`   into "allowedTelegramIds" in bots/${config.botName}/config.json and restart.`);
+      }
+      telegram.start().catch(err => {
+        log.error(`❌ Telegram polling stopped — ${err.message}`);
+        log.error('   WhatsApp is unaffected. Fix the token and restart to get the backup channel back.');
+      });
+    } catch (err) {
+      log.error(`❌ Telegram listener did not start — ${err.message}`);
+      log.error('   Continuing on WhatsApp alone. There is NO backup channel until this is fixed.');
+      telegram = null;
+    }
+  }
 
   startHttpServer();
   await connectToWhatsApp();

@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   createManualGroupManager, parseGroupLink, waMeLink, NoGroupAccessError,
 } from '../core/manualGroupManager.js';
@@ -266,37 +269,106 @@ test('tracker help on a WhatsApp bot is unchanged', () => {
 
 // ── operator enrolment ────────────────────────────────────────────────────────
 
-test('an empty allowedTelegramIds means bootstrap, never "allow everyone"', async () => {
+// These build a throwaway bot dir rather than reading a real one. The previous version
+// asserted against bots/bot-abhi/config.json and broke the moment that bot was given real
+// operator ids — a config change in production must never fail the suite, and a test must
+// never rewrite a live bot's config to make its point.
+function tempBotDir(extra = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-cfg-'));
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({
+    botName: 'bot-temp',
+    paidGroups: ['g1@g.us'],
+    ...extra,
+  }));
+  fs.writeFileSync(path.join(dir, 'service-account.json'), '{}');
+  return dir;
+}
+
+// loadConfig reads OWNER_NUMBER/SHEET_ID from the environment and throws without them.
+async function withEnv(vars, fn) {
   const { loadConfig } = await import('../core/globalConfig.js');
-  const env = { ...process.env };
+  const saved = { ...process.env };
   try {
-    process.env.TELEGRAM_TOKEN = '123:FAKE';
-    const c = loadConfig('bots/bot-abhi');
+    Object.assign(process.env, { OWNER_NUMBER: '9999999999', SHEET_ID: 'sheet', ...vars });
+    return await fn(loadConfig);
+  } finally {
+    process.env = saved;
+  }
+}
+
+test('an empty allowedTelegramIds means bootstrap, never "allow everyone"', async () => {
+  await withEnv({ TELEGRAM_TOKEN: '123:FAKE' }, (loadConfig) => {
+    const c = loadConfig(tempBotDir({ allowedTelegramIds: [] }));
     assert.equal(c.transport, 'telegram');
     assert.equal(c.bootstrapMode, true, 'empty list did not enter bootstrap mode');
     assert.deepEqual(c.allowedTelegramIds, [], 'empty list must not become a wildcard');
-  } finally {
-    process.env = env;
-  }
+  });
+});
+
+test('a missing allowedTelegramIds is bootstrap too, not an open door', async () => {
+  await withEnv({ TELEGRAM_TOKEN: '123:FAKE' }, (loadConfig) => {
+    const c = loadConfig(tempBotDir());
+    assert.equal(c.bootstrapMode, true);
+    assert.deepEqual(c.allowedTelegramIds, []);
+  });
 });
 
 test('configured ids turn bootstrap off and are coerced to numbers', async () => {
-  const { loadConfig } = await import('../core/globalConfig.js');
-  const fs = await import('node:fs');
-  const p = 'bots/bot-abhi/config.json';
-  const original = fs.readFileSync(p, 'utf8');
-  const env = { ...process.env };
-  try {
+  await withEnv({ TELEGRAM_TOKEN: '123:FAKE' }, (loadConfig) => {
     // Telegram sends from.id as a number; a config written as a string must still match.
-    fs.writeFileSync(p, original.replace('"allowedTelegramIds": []', '"allowedTelegramIds": [111, "222"]'));
-    process.env.TELEGRAM_TOKEN = '123:FAKE';
-    const c = loadConfig(p.replace('/config.json', ''));
+    const c = loadConfig(tempBotDir({ allowedTelegramIds: [111, '222'] }));
     assert.equal(c.bootstrapMode, false);
     assert.deepEqual(c.allowedTelegramIds, [111, 222], 'ids were not normalised to numbers');
-  } finally {
-    fs.writeFileSync(p, original);
-    process.env = env;
-  }
+  });
+});
+
+// ── transport resolution (whatsapp / telegram / dual) ─────────────────────────
+
+test('no token means whatsapp, token alone means telegram — tracker bots unchanged', async () => {
+  await withEnv({ TELEGRAM_TOKEN: '' }, (loadConfig) => {
+    assert.equal(loadConfig(tempBotDir()).transport, 'whatsapp');
+  });
+  await withEnv({ TELEGRAM_TOKEN: '123:FAKE' }, (loadConfig) => {
+    assert.equal(loadConfig(tempBotDir()).transport, 'telegram');
+  });
+});
+
+test('an explicit transport in config.json wins over the token inference', async () => {
+  await withEnv({ TELEGRAM_TOKEN: '123:FAKE' }, (loadConfig) => {
+    const c = loadConfig(tempBotDir({ transport: 'dual', allowedTelegramIds: [7] }));
+    assert.equal(c.transport, 'dual', 'a token must not force "telegram" over a declared "dual"');
+    assert.equal(c.usesTelegram, true, 'dual must run a Telegram listener');
+    assert.equal(c.bootstrapMode, false);
+  });
+});
+
+test('telegram-only without a token refuses to start — it could serve nobody', async () => {
+  await withEnv({ TELEGRAM_TOKEN: '' }, (loadConfig) => {
+    assert.throws(() => loadConfig(tempBotDir({ transport: 'telegram' })), /TELEGRAM_TOKEN/);
+  });
+});
+
+test('dual without a token degrades to WhatsApp and flags it, rather than bricking a live bot', async () => {
+  // The config can legitimately reach git before the Telegram bot is created. Throwing here
+  // would take bot-nitin's renewal collection down over a missing backup channel.
+  await withEnv({ TELEGRAM_TOKEN: '' }, (loadConfig) => {
+    const c = loadConfig(tempBotDir({ transport: 'dual' }));
+    assert.equal(c.transport, 'whatsapp', 'a dual bot with no token must still run its primary channel');
+    assert.equal(c.usesTelegram, false, 'nothing should try to poll without a token');
+    assert.equal(c.telegramMissing, true, 'the degradation must be visible, not silent');
+  });
+});
+
+test('an unknown transport is rejected rather than silently ignored', async () => {
+  await withEnv({ TELEGRAM_TOKEN: '123:FAKE' }, (loadConfig) => {
+    assert.throws(() => loadConfig(tempBotDir({ transport: 'signal' })), /Invalid transport/);
+  });
+});
+
+test('usesTelegram is false on a plain WhatsApp bot', async () => {
+  await withEnv({ TELEGRAM_TOKEN: '' }, (loadConfig) => {
+    assert.equal(loadConfig(tempBotDir()).usesTelegram, false);
+  });
 });
 
 test('ping reports the transport instead of a permanently disconnected socket', () => {

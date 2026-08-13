@@ -1,5 +1,7 @@
 {
   "botName": "bot-nitin",
+  "transport": "dual",
+  "allowedTelegramIds": [],
   "warmupHours": 0,
   "paidGroups": [
     "120363423482434246@g.us",

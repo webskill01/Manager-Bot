@@ -5,8 +5,8 @@ import { createWatchdog } from '../scripts/watchdog.js';
 
 // Fake bot: real HTTP server serving /health from a mutable state object and
 // recording every /alert POST it receives.
-function fakeBot({ connected = true, loggedOut = false, alertBroken = false } = {}) {
-  const state = { connected, loggedOut, alertBroken };
+function fakeBot({ connected = true, loggedOut = false, alertBroken = false, telegram = undefined } = {}) {
+  const state = { connected, loggedOut, alertBroken, telegram };
   const alerts = [];
   const srv = http.createServer((req, res) => {
     if (state.alertBroken && req.url === '/alert') {
@@ -17,7 +17,10 @@ function fakeBot({ connected = true, loggedOut = false, alertBroken = false } = 
     }
     if (req.url === '/health') {
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ status: 'x', connected: state.connected, loggedOut: state.loggedOut }));
+      res.end(JSON.stringify({
+        status: 'x', connected: state.connected, loggedOut: state.loggedOut,
+        ...(state.telegram === undefined ? {} : { telegram: state.telegram }),
+      }));
     } else if (req.url === '/alert' && req.method === 'POST') {
       let body = '';
       req.on('data', (c) => (body += c));
@@ -183,5 +186,33 @@ test('no healthy sender: alerts queue and flush when a bot recovers', async () =
   } finally {
     a.srv.close();
     b.srv.close();
+  }
+});
+
+// A dual-transport bot (bot-nitin) can still deliver over Telegram with its WhatsApp socket
+// dead. That is the single most important alert in the system — "your number got flagged" —
+// and before this it queued forever whenever the flagged bot was the only one on the box.
+test('a dual bot relays its own logged-out alert over Telegram', async () => {
+  const nitin = await fakeBot({ connected: false, loggedOut: true, telegram: true });
+  try {
+    const wd = createWatchdog([{ name: 'bot-nitin', port: nitin.port }], { failThreshold: 2, log: silent });
+    await wd.tick();
+    assert.equal(wd.pending.length, 0, 'the alert should have gone out, not queued');
+    assert.equal(nitin.alerts.length, 1, 'a Telegram-capable bot was not used as a relay');
+    assert.match(nitin.alerts[0], /LOGGED OUT/);
+  } finally {
+    nitin.srv.close();
+  }
+});
+
+test('a WhatsApp-only bot with no connection still cannot relay — no false capability', async () => {
+  const solo = await fakeBot({ connected: false, loggedOut: true });
+  try {
+    const wd = createWatchdog([{ name: 'A', port: solo.port }], { failThreshold: 2, log: silent });
+    await wd.tick();
+    assert.equal(solo.alerts.length, 0, 'a dead WhatsApp-only bot must not be treated as a sender');
+    assert.ok(wd.pending.length >= 1, 'the alert must stay queued for a real sender');
+  } finally {
+    solo.srv.close();
   }
 });

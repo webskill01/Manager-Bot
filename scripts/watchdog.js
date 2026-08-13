@@ -87,10 +87,18 @@ export function createWatchdog(bots, { failThreshold = FAIL_THRESHOLD, log = con
     // /alert only accepts loopback — so candidates running on ANOTHER VPS fail
     // instantly (nothing bound on that local port) and the next one is tried.
     // Undeliverable alerts stay queued and retry next tick.
+    // A dual-transport bot can relay over Telegram with no WhatsApp connection at all, and
+    // that is precisely the case that matters: when bot-nitin's number is flagged, the alert
+    // saying so must not sit queued forever because the only bot on the box reads
+    // connected:false. /health reports `telegram: true` when its listener is live.
+    const canRelay = (name) => {
+      const h = results.get(name);
+      return !!(h?.connected || h?.telegram);
+    };
     while (pending.length) {
       const candidates = [
-        ...bots.filter(b => b.name === preferredSender && results.get(b.name)?.connected),
-        ...bots.filter(b => b.name !== preferredSender && results.get(b.name)?.connected),
+        ...bots.filter(b => b.name === preferredSender && canRelay(b.name)),
+        ...bots.filter(b => b.name !== preferredSender && canRelay(b.name)),
       ];
       let delivered = false;
       for (const sender of candidates) {
