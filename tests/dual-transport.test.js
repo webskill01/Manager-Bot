@@ -246,3 +246,46 @@ test('a WhatsApp-only bot is completely unaffected by the dual guards', async ()
   assert.match(reply, /Raju/);
   assert.ok(!reply.includes('DISCONNECTED'), `banner leaked onto a non-dual bot: ${reply}`);
 });
+
+// ── the ban scenario, end to end ──────────────────────────────────────────────
+// This is the promise the whole dual design exists to keep: with the WhatsApp number
+// flagged, the SHEET still records the truth. If these regress, a ban silently costs
+// bookkeeping and nobody notices until the numbers stop adding up.
+
+test('kick with a dead socket still marks REMOVED in the sheet', async () => {
+  const store = fakeStore([{ name: 'Gurpreet', phone: '9855112233', status: 'ACTIVE', billingDate: '01-09-2026', renewals: 2, paidLast: 90 }]);
+  const dead = {
+    async removeFromAllGroups() { return { removed: [], failed: [] }; },  // markAborted() short-circuits
+    markAborted() {},
+  };
+  const parser = createCommandParser(
+    store, { ...groupManagerStub, ...dead }, dualConfig(), log, null, Date.now(),
+    null, null, null, new Set(), null, () => null,
+  );
+  const reply = await parser.parse('kick 9855112233');
+  assert.equal(store.rows[0].status, 'REMOVED',
+    'the group removal failed and took the sheet record with it — the ban just cost bookkeeping');
+  assert.match(reply, /WhatsApp is DISCONNECTED/, 'no warning that the groups were not actually cleared');
+});
+
+test('add with a dead socket still writes the row', async () => {
+  const store = fakeStore();
+  const parser = createCommandParser(
+    store, groupManagerStub, dualConfig(), log, null, Date.now(),
+    null, null, null, new Set(), null, () => null,
+  );
+  const reply = await parser.parse('add TestUser 9812345678');
+  assert.equal(store.rows.length, 1, 'the new member was lost because the group add could not run');
+  assert.equal(store.rows[0].phone, '9812345678');
+  assert.match(reply, /WhatsApp is DISCONNECTED/);
+});
+
+test('renewed with a dead socket still records the payment', async () => {
+  const store = fakeStore([{ name: 'Jaspal', phone: '9814556677', status: 'ACTIVE', billingDate: '01-08-2026', renewals: 1, paidLast: 90 }]);
+  const parser = createCommandParser(
+    store, groupManagerStub, dualConfig(), log, null, Date.now(),
+    null, null, null, new Set(), null, () => null,
+  );
+  await parser.parse('renewed 9814556677');
+  assert.equal(store.rows[0].renewals, 2, 'a renewal collected during a ban was not recorded');
+});
