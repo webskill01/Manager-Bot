@@ -61,9 +61,21 @@ export function buildTemplatePayload({ phone, templateName, languageCode = 'en',
   };
 }
 
+// Each reminder stage is a SEPARATE approved template, because Meta approves body text, not
+// intent: "your month is up, pay ₹90" and "last day before removal" cannot share one. Config
+// carries them as cloudApi.templates.{reminder,referralReminder,overdue,finalReminder}, and
+// falls back to the single cloudApi.templateName so an existing one-template setup still works.
+export function templateFor(config, type) {
+  const c = config?.cloudApi || {};
+  return c.templates?.[type] || c.templateName || null;
+}
+
 export function isConfigured(config) {
   const c = config?.cloudApi;
-  return !!(c && c.phoneNumberId && c.token && c.templateName);
+  if (!c || !c.phoneNumberId || !c.token) return false;
+  // One usable template name is the minimum. A `templates` object with nothing in it is not
+  // configured — it would send `template: { name: null }` and eat a 132001 per member.
+  return !!(c.templateName || Object.values(c.templates || {}).some(Boolean));
 }
 
 // True when this bot should route reminders through the official API rather than
@@ -76,14 +88,21 @@ export function createCloudApiSender(config, log, { fetchImpl = globalThis.fetch
   const c = config.cloudApi || {};
   const endpoint = `https://graph.facebook.com/${c.apiVersion || GRAPH_VERSION}/${c.phoneNumberId}/messages`;
 
-  async function sendTemplate({ phone, templateName, bodyParams = [], languageCode, headerImageUrl }) {
+  // `type` selects an approved template by reminder stage ('reminder', 'referralReminder',
+  // 'overdue', 'finalReminder'); an explicit templateName still wins over it.
+  async function sendTemplate({ phone, templateName, type, bodyParams = [], languageCode, headerImageUrl }) {
     if (!isConfigured(config)) {
-      return { ok: false, error: 'cloudApi not configured (need phoneNumberId, token, templateName)' };
+      return { ok: false, error: 'cloudApi not configured (need phoneNumberId, token, and a template name)' };
+    }
+
+    const resolved = templateName || (type ? templateFor(config, type) : null) || c.templateName;
+    if (!resolved) {
+      return { ok: false, error: `no Cloud API template configured for "${type || 'default'}" — set cloudApi.templates.${type || 'reminder'}` };
     }
 
     const payload = buildTemplatePayload({
       phone,
-      templateName: templateName || c.templateName,
+      templateName: resolved,
       languageCode: languageCode || c.languageCode || 'en',
       bodyParams,
       headerImageUrl: headerImageUrl ?? c.headerImageUrl ?? null,

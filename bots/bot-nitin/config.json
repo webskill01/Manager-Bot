@@ -35,6 +35,18 @@
     "mode": "group",
     "groupId": "120363423042952422@g.us"
   },
+  "cloudApi": {
+    "phoneNumberId": "",
+    "languageCode": "en",
+    "countryCode": "91",
+    "headerImageUrl": "",
+    "templates": {
+      "reminder": "renewal_due",
+      "referralReminder": "renewal_due_referral",
+      "overdue": "renewal_overdue",
+      "finalReminder": "renewal_final"
+    }
+  },
   "rateLimits": {
     "memberToMemberGapMinMs": 7000,
     "memberToMemberGapMaxMs": 10000,

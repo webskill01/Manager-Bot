@@ -35,7 +35,7 @@ import { createMemberStore } from './memberStore.js';
 import { createGroupManager } from './groupManager.js';
 import { createCommandParser, isSlowCommand } from './commandParser.js';
 import { createScheduler } from './scheduler.js';
-import { createReminderSender } from './reminderSender.js';
+import { createReminderSender, renderSendLog } from './reminderSender.js';
 import { createOverdueEngine } from './overdueEngine.js';
 import { createTrialRemovalEngine } from './trialRemovalEngine.js';
 import { createRemovalEngine } from './removalEngine.js';
@@ -177,6 +177,28 @@ export async function startBot(config, log, authDir) {
       } catch (err) {
         log.warn(`⚠️  Broadcast failed to ${jid}: ${err.message}`);
       }
+    }
+  }
+
+  // Proof a reminder run happened. On the Cloud API nothing lands on the operator's own
+  // phone any more, so without this the only evidence is a pm2 log nobody reads at 6:30 AM.
+  // Every member sent is listed with Meta's wamid, and every failure with Meta's own reason
+  // and code — which is what separates "one number isn't on WhatsApp" (131026) from "the
+  // token is dead" (190) or "the balance ran out". The Telegram chat then IS the record:
+  // dated, permanent, and unaffected by log rotation.
+  async function reportBatch(label, result) {
+    if (!usesCloudApi(config)) return;
+    try {
+      const log_ = renderSendLog(config.botDir);
+      const head = result
+        ? `⏰ *${label}* — ${result.sent + result.referralSent} sent, ${result.failed} failed` +
+          (result.autoRenewed?.length ? `, ${result.autoRenewed.length} auto-renewed (2 refs)` : '') +
+          (result.queued ? `, ${result.queued} held for the next batch` : '')
+        : `⏰ *${label}* done`;
+      await broadcast(`${head}\n\n${log_}`);
+    } catch (err) {
+      // A failed report must never mask a successful send run.
+      log.warn(`⚠️  Batch report failed: ${err.message}`);
     }
   }
 
@@ -456,6 +478,7 @@ export async function startBot(config, log, authDir) {
                 if (result.autoRenewed?.length > 0) {
                   log.info(`🎁 Auto-renewed (2 refs), batch 1: ${result.autoRenewed.map(m => `${m.name} ${m.phone}${m.rolled ? ` +${m.rolled} rolled` : ''}`).join(', ')}`);
                 }
+                await reportBatch('Reminder batch 1', result);
               },
               reminderSend2: async () => {
                 if (!usesCloudApi(config)) return log.info('⏰ Batch 2 skipped — manual reminder mode (use `dmlist`)');
@@ -464,11 +487,13 @@ export async function startBot(config, log, authDir) {
                 if (result.autoRenewed?.length > 0) {
                   log.info(`🎁 Auto-renewed (2 refs), batch 2: ${result.autoRenewed.map(m => `${m.name} ${m.phone}${m.rolled ? ` +${m.rolled} rolled` : ''}`).join(', ')}`);
                 }
+                await reportBatch('Reminder batch 2', result);
               },
               overdueCheck: async () => {
                 if (!usesCloudApi(config)) return log.info('⏰ Overdue check skipped — manual reminder mode (use `dmlist`)');
                 if (skipWarmup('overdue check')) return;
                 await overdueEngine.runOverdueCheck(store, getSock, getBroadcastJids());
+                await reportBatch('Overdue check', null);
               },
             });
           }

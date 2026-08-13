@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate, renewedOn, pickSurplusReferrals, surplusCreditDate, cronTimePassedToday, beforeCatchUpCutoff, isDelayActive } from './globalConfig.js';
+import { usesCloudApi, createCloudApiSender } from './cloudApiSender.js';
 
 // ── Group digest builder (pure, exported for tests) ──────────────────────────
 // members: [{ name, phone, note? }] — note is an optional annotation appended to the line.
@@ -64,7 +65,7 @@ function loadState(botDir) {
       if (data.date === todayStr()) return data;
     }
   } catch {}
-  return { date: todayStr(), sentPhones: [] };
+  return { date: todayStr(), sentPhones: [], sends: [], failures: [] };
 }
 
 function saveState(botDir, state) {
@@ -72,6 +73,55 @@ function saveState(botDir, state) {
   const tmp = stateFile + '.tmp';
   fs.writeFileSync(tmp, JSON.stringify(state), 'utf8');
   fs.renameSync(tmp, stateFile);
+}
+
+// ── The send log ──────────────────────────────────────────────────────────────
+// Once reminders leave over the Cloud API, nothing arrives on the operator's own phone —
+// so the API's own answer is the only evidence a reminder was sent, and it has to be kept
+// somewhere better than pm2 logs. These two ride along in the existing day-state file:
+// no new store, no rotation to lose, atomically written per member.
+//
+// `sends` holds Meta's wamid, which is what a Phase-5 delivery webhook will match on.
+// A day-scoped record is enough — the per-batch Telegram report is the durable history.
+function recordSend(state, member, type, messageId) {
+  (state.sends ??= []).push({
+    phone: member.phone, name: member.name, type,
+    messageId: messageId || null, at: new Date().toISOString(),
+  });
+}
+
+function recordFailure(state, member, res) {
+  (state.failures ??= []).push({
+    phone: member.phone, name: member.name,
+    error: res?.error || 'unknown', code: res?.code ?? null,
+    at: new Date().toISOString(),
+  });
+}
+
+// Rendered by the `sent` command and by the per-batch report. Meta's error code is included
+// verbatim because it is the difference between "one bad number" (131026) and "your token
+// died" (190) — and the operator can only act on the second.
+export function renderSendLog(botDir) {
+  const state = loadState(botDir);
+  const sends = state.sends || [];
+  const failures = state.failures || [];
+  if (sends.length === 0 && failures.length === 0) {
+    return `📭 No reminders sent yet today (${state.date}).\n\n` +
+      `If you expected some, check: due — and whether the 6:30 AM batch ran (pm2 logs).`;
+  }
+  const lines = [`📨 *Reminders today* (${state.date}) — ${sends.length} sent, ${failures.length} failed`, ''];
+  for (const s of sends) {
+    const id = s.messageId ? `  ${s.messageId}` : '';
+    lines.push(`✅ ${s.name} ${s.phone}${s.type === 'referral' ? ' (ref ₹45)' : ''}${id}`);
+  }
+  if (failures.length > 0) {
+    lines.push('', 'Failed:');
+    for (const f of failures) {
+      lines.push(`❌ ${f.name} ${f.phone} — ${f.error}${f.code ? ` [${f.code}]` : ''}`);
+    }
+    lines.push('', 'Send these by hand: dmlist');
+  }
+  return lines.join('\n');
 }
 
 // Record `phone` in today's reminder state so neither batch will target it today.
@@ -87,7 +137,9 @@ export function markPhoneReminded(botDir, phone) {
   } catch {}
 }
 
-export function createReminderSender(config, log) {
+// fetchImpl is for tests only: it lets the Cloud API path be asserted without reaching for
+// globalThis.fetch, so a suite can prove a reminder never touches the WhatsApp socket.
+export function createReminderSender(config, log, { fetchImpl } = {}) {
   let consecutiveFailures = 0;
   let circuitOpen = false;
   let circuitOpenAt = null;
@@ -111,25 +163,66 @@ export function createReminderSender(config, log) {
     return true;
   }
 
+  // A run of failures trips the breaker whichever channel produced them: ten straight
+  // Cloud API rejections mean an expired token or an unfunded balance, and hammering Meta
+  // with 20 more is no better than hammering WhatsApp.
+  function noteSuccess() { consecutiveFailures = 0; }
+  function noteFailure(what, reason) {
+    consecutiveFailures++;
+    log.warn(`❌ Reminder failed [${what}]: ${reason}`);
+    if (consecutiveFailures >= config.rateLimits.circuitBreakerThreshold) {
+      circuitOpen = true;
+      circuitOpenAt = Date.now();
+      log.error(`⚡ Circuit breaker OPEN — ${consecutiveFailures} consecutive failures`);
+    }
+  }
+
+  let _cloudSender = null;
+  const cloudSender = () => (_cloudSender ??= createCloudApiSender(config, log, fetchImpl ? { fetchImpl } : {}));
+
   // billingDate is the member's own — {date} must render THEIR renewal date, not today's.
   // Defaults to '' so friendlyDate falls back to today for any caller that lacks it.
+  //
+  // Returns { ok, messageId?, error? }. The message id is Meta's wamid, and it is the ONLY
+  // evidence a reminder left: nothing arrives on the operator's own phone any more, so the
+  // caller records it (see runBatch → state.sends) and reports it to Telegram.
   async function sendToMember(getSock, phone, name, botDir, type = 'normal', billingDate = '') {
     if (checkCircuit()) {
       log.warn(`⚡ Circuit open — skipping ${name}`);
-      return false;
+      return { ok: false, error: 'circuit breaker open' };
+    }
+
+    const date = friendlyDate(billingDate);
+
+    // Official Cloud API. Deliberately never calls getSock(): proactive payment-demand DMs
+    // over Baileys are the single strongest ban signal there is, and Meta's own API cannot
+    // get a number banned for sending them. It also means reminders survive a 403 — the
+    // socket being dead is irrelevant on this path.
+    if (usesCloudApi(config)) {
+      const res = await cloudSender().sendTemplate({
+        phone,
+        type: type === 'referral' ? 'referralReminder' : 'reminder',
+        bodyParams: [name, date],
+      });
+      if (res.ok) {
+        noteSuccess();
+        return { ok: true, messageId: res.messageId };
+      }
+      noteFailure(name, res.error);
+      return { ok: false, error: res.error, code: res.code };
     }
 
     const sock = getSock();
     if (!sock?.user) {
       log.warn(`⚠️  Socket not ready — skipping ${name}`);
-      return false;
+      return { ok: false, error: 'WhatsApp socket not ready' };
     }
 
     const jid = `91${normalizePhone(phone)}@s.whatsapp.net`;
     const template = type === 'referral' && config.messages.referralReminder
       ? config.messages.referralReminder
       : config.messages.reminder;
-    const caption = template.replace('{name}', name).replace('{date}', friendlyDate(billingDate));
+    const caption = template.replace('{name}', name).replace('{date}', date);
 
     try {
       const qrPath = path.resolve(botDir, config.upiQrPath);
@@ -140,17 +233,11 @@ export function createReminderSender(config, log) {
         await sock.sendMessage(jid, { text: caption });
       }
       log.info(`📨 Reminder sent (${type}): ${name} (${phone})`);
-      consecutiveFailures = 0;
-      return true;
+      noteSuccess();
+      return { ok: true };
     } catch (err) {
-      consecutiveFailures++;
-      log.warn(`❌ Reminder failed [${name}]: ${err.message}`);
-      if (consecutiveFailures >= config.rateLimits.circuitBreakerThreshold) {
-        circuitOpen = true;
-        circuitOpenAt = Date.now();
-        log.error(`⚡ Circuit breaker OPEN — ${consecutiveFailures} consecutive failures`);
-      }
-      return false;
+      noteFailure(name, err.message);
+      return { ok: false, error: err.message };
     }
   }
 
@@ -214,13 +301,19 @@ export function createReminderSender(config, log) {
         }
       } else {
         const type = refs === 1 ? 'referral' : 'normal';
-        if (await sendToMember(getSock, m.phone, m.name, botDir, type, m.billingDate)) {
+        const res = await sendToMember(getSock, m.phone, m.name, botDir, type, m.billingDate);
+        if (res.ok) {
           if (refs === 1) referralSent++; else sent++;
           state.sentPhones.push(m.phone);
-          saveState(botDir, state);
+          recordSend(state, m, type, res.messageId);
         } else {
           failed++;
+          recordFailure(state, m, res);
         }
+        // Persisted per member, not per batch: a crash halfway through must leave an
+        // accurate record of who was already messaged, or the retry double-charges and
+        // double-messages them.
+        saveState(botDir, state);
       }
 
       if (i < members.length - 1) {
@@ -256,6 +349,15 @@ export function createReminderSender(config, log) {
   function groupCfg() {
     const r = config.reminder;
     if (!r || r.mode !== 'group') return null;
+    // The official Cloud API outranks group mode, and every caller of groupCfg() inherits
+    // that from here rather than each checking for itself.
+    //
+    // Group mode exists only because proactive DMs over Baileys got numbers banned: tagging
+    // people in a group was the least-bad way to nag them. The Cloud API removes the reason
+    // — it cannot get the number banned — so a private reminder is once again both better
+    // for the member and safer for us. It is also the last proactive Baileys traffic left,
+    // which is exactly what we are trying to stop emitting.
+    if (usesCloudApi(config)) return null;
     if (!r.groupId) {
       log.error('❌ reminder.mode is "group" but reminder.groupId is empty — falling back to DM mode');
       return null;

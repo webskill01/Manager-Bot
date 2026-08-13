@@ -71,6 +71,14 @@ export function loadConfig(botDir) {
   // have one. Callers branch on this rather than string-matching two values everywhere.
   config.usesTelegram = config.transport === 'telegram' || config.transport === 'dual';
 
+  // The Cloud API token belongs in the gitignored .env, never in config.json — it is a
+  // long-lived System User token with permission to message every customer. A token left
+  // in config.json goes straight into git history. Reading it here means config.json only
+  // ever carries the phoneNumberId and template names, which are not secrets.
+  if (process.env.CLOUD_API_TOKEN) {
+    config.cloudApi = { ...(config.cloudApi || {}), token: process.env.CLOUD_API_TOKEN };
+  }
+
   // Two of these come from the bot's .env, which is gitignored and therefore never
   // arrives via `git pull` — it must be created by hand on every machine. Naming the
   // variable and the file turns "missing required field: ownerNumber" (which reads like

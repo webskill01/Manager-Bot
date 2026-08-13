@@ -588,6 +588,11 @@ This bot has NO scheduled jobs — it only acts when you send a command.`;
   Nothing goes out on a timer any more. The 6:30/7:30/10:00 jobs stay
   registered but do nothing until reminders move to the official API.
 
+• sent  →  what actually went out today, with Meta's message id per member
+  Once reminders run on the official API they leave from a number you can't
+  see, so this is the receipt: a message id means Meta accepted it. Failures
+  show Meta's own reason — send those few by hand with dmlist.
+
 🧹 GROUP CLEANUP
 • kickghosts  →  preview bulk removal of not-in-sheet numbers
 • kickghosts confirm  →  start it (15–30 min/person)

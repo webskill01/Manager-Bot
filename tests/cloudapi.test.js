@@ -240,7 +240,12 @@ test('with cloudapi active the final reminder goes via Meta, and NOT to the grou
   fs.rmSync(botDir, { recursive: true, force: true });
 });
 
-test('a Cloud API failure falls back to the group message — the reminder is never lost', async () => {
+test('a Cloud API failure is recorded, NOT retried over WhatsApp', async () => {
+  // This used to fall back to the group message. It must not: the failures that actually
+  // happen are an expired token or an unfunded balance, which fail for EVERY member at once
+  // — so the "safety net" would fire a full batch of proactive payment-demand traffic from
+  // the Baileys number, the exact thing the Cloud API exists to stop, at the worst moment.
+  // The failure is logged and recorded instead; the operator sends those few by hand.
   const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'capi-'));
   const store = makeStore([
     { name: 'A', phone: '9000000001', status: 'ACTIVE', billingDate: daysAgo(6), renewals: 0 },
@@ -253,15 +258,21 @@ test('a Cloud API failure falls back to the group message — the reminder is ne
   };
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = fakeFetch([{ status: 401, body: { error: { message: 'token expired' } } }]).impl;
+  globalThis.fetch = fakeFetch([{ status: 401, body: { error: { message: 'token expired', code: 190 } } }]).impl;
   try {
     const config = { ...overdueBase(botDir), ...cloudCfg() };
     const engine = createOverdueEngine(config, log);
     await engine.runOverdueCheck(store, () => sock, ['owner@s.whatsapp.net']);
 
-    const groupMsgs = waSent.filter(s => s.jid === 'g1@g.us');
-    assert.equal(groupMsgs.length, 1, 'fell back to the group message');
-    assert.match(groupMsgs[0].msg.text, /^GROUP FINAL/);
+    assert.equal(waSent.filter(s => s.jid === 'g1@g.us').length, 0, 'fell back to a group send');
+    assert.equal(waSent.filter(s => s.jid.endsWith('@s.whatsapp.net') && s.jid.startsWith('919000000001')).length, 0,
+      'fell back to a Baileys DM — this is the ban traffic the channel exists to avoid');
+
+    const state = JSON.parse(fs.readFileSync(path.join(botDir, 'overdue-state.json'), 'utf8'));
+    assert.equal(state.failures?.length, 1, 'the failure was not recorded anywhere');
+    assert.match(state.failures[0].error, /token expired/);
+    assert.equal(state.failures[0].code, 190, "Meta's error code is what distinguishes a dead token from a bad number");
+    assert.ok(!state.sentPhones.includes('9000000001'), 'a failed send must not be marked as sent');
   } finally {
     globalThis.fetch = originalFetch;
   }

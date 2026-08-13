@@ -98,40 +98,53 @@ export function createOverdueEngine(config, log) {
       // meant "group mode" still sent proactive payment-demand DMs — the single strongest
       // ban signal — so group mode was never the DM kill-switch it appeared to be.
       // Cloud API (reminderChannel: "cloudapi") is where a private final reminder belongs:
-      // there it cannot get the number banned.
-      const groupMode = config.reminder?.mode === 'group' && !!config.reminder?.groupId;
+      // there it cannot get the number banned. Once it is on it outranks group mode for
+      // BOTH stages — group tagging exists only because private DMs were unsafe, and the
+      // official API is the thing that made them safe again.
+      const cloud = usesCloudApi(config);
+      const groupMode = !cloud && config.reminder?.mode === 'group' && !!config.reminder?.groupId;
 
       // Send FINAL reminders (day before removal).
       // Skip anyone already messaged today — makes a restart catch-up safe to re-run.
       const pendingFinal = finalDay.filter(m => !state.sentPhones.includes(m.phone));
 
-      // Official Cloud API takes priority over group mode when configured: a private
-      // last-chance reminder is better for the member, and Meta's own API cannot get the
-      // number banned for sending it. Falls through to group/DM if a send fails, so a
-      // template rejection or an expired token never silently drops the reminder.
-      if (usesCloudApi(config) && pendingFinal.length > 0) {
+      // Official Cloud API, both stages. A failure here does NOT fall back to a Baileys DM:
+      // that fallback would send the exact proactive payment-demand message this whole
+      // channel exists to stop, and it would do it precisely when something is already
+      // wrong (dead token, unfunded balance) — i.e. for EVERY member at once, not one.
+      // Failures are recorded and reported instead; the operator sends those by hand
+      // with `dmlist`, which is why that command is kept.
+      if (cloud && pendingFinal.length > 0) {
         const sender = createCloudApiSender(config, log);
-        const stillPending = [];
+        const failed = [];
         for (const m of pendingFinal) {
           const result = await sender.sendTemplate({
+            type: 'finalReminder',
             bodyParams: [m.name, String(finalReminderDay), friendlyDate()],
             phone: m.phone,
           });
           if (result.ok) {
             state.sentPhones.push(m.phone);
-            saveState(state);
+            (state.sends ??= []).push({
+              phone: m.phone, name: m.name, type: 'finalReminder',
+              messageId: result.messageId || null, at: new Date().toISOString(),
+            });
           } else {
-            stillPending.push(m);
+            failed.push(m);
+            (state.failures ??= []).push({
+              phone: m.phone, name: m.name, type: 'finalReminder',
+              error: result.error || 'unknown', code: result.code ?? null, at: new Date().toISOString(),
+            });
           }
+          saveState(state);
           await sleep(randomBetween(1000, 3000));
         }
-        if (stillPending.length > 0) {
-          log.warn(`⚠️  Cloud API failed for ${stillPending.length} final reminder(s) — falling back to ${groupMode ? 'group' : 'DM'}`);
-          pendingFinal.length = 0;
-          pendingFinal.push(...stillPending);
-        } else {
-          pendingFinal.length = 0;
+        if (failed.length > 0) {
+          log.error(`❌ Cloud API failed for ${failed.length} FINAL reminder(s): ${failed.map(m => `${m.name} ${m.phone}`).join(', ')}`);
+          log.error('   These are one day from removal and were NOT reminded. Send by hand: dmlist');
         }
+        // Nothing falls through to the group/DM blocks below on this channel.
+        pendingFinal.length = 0;
       }
 
       if (groupMode && pendingFinal.length > 0) {
@@ -185,10 +198,42 @@ export function createOverdueEngine(config, log) {
       }
 
       // Send day-5 milestone reminders directly to members (deduped per day, same as
-      // above) — DM mode only; group mode covers these via the overdue group message.
-      for (let i = 0; i < day6.length && !groupMode; i++) {
-        const m = day6[i];
-        if (state.sentPhones.includes(m.phone)) continue;
+      // above) — private-reminder modes only; group mode covers these via the overdue
+      // group message. On the Cloud API this is a template send and never touches the
+      // socket, so it keeps working after a 403; on Baileys it is the original DM.
+      const day5Pending = groupMode ? [] : day6.filter(m => !state.sentPhones.includes(m.phone));
+      const day5Sender = cloud && day5Pending.length > 0 ? createCloudApiSender(config, log) : null;
+
+      for (let i = 0; i < day5Pending.length; i++) {
+        const m = day5Pending[i];
+
+        if (cloud) {
+          const result = await day5Sender.sendTemplate({
+            type: 'overdue',
+            bodyParams: [m.name, String(config.overdue.autoReminderDays)],
+            phone: m.phone,
+          });
+          if (result.ok) {
+            state.sentPhones.push(m.phone);
+            (state.sends ??= []).push({
+              phone: m.phone, name: m.name, type: 'overdue',
+              messageId: result.messageId || null, at: new Date().toISOString(),
+            });
+            log.info(`📨 Day-${config.overdue.autoReminderDays} overdue reminder → ${m.name} (${m.phone})`);
+          } else {
+            (state.failures ??= []).push({
+              phone: m.phone, name: m.name, type: 'overdue',
+              error: result.error || 'unknown', code: result.code ?? null, at: new Date().toISOString(),
+            });
+            log.warn(`❌ Day-${config.overdue.autoReminderDays} reminder failed [${m.name}]: ${result.error}`);
+          }
+          saveState(state);
+          // Meta's own API needs none of the anti-ban pacing — a short, even gap is only
+          // there to stay well inside the per-second rate limit.
+          if (i < day5Pending.length - 1) await sleep(randomBetween(1000, 3000));
+          continue;
+        }
+
         const jid = `91${normalizePhone(m.phone)}@s.whatsapp.net`;
         const text = config.messages.overdue
           .replace('{name}', m.name)
@@ -203,7 +248,7 @@ export function createOverdueEngine(config, log) {
           log.warn(`❌ Day-${config.overdue.autoReminderDays} reminder failed [${m.name}]: ${err.message}`);
         }
 
-        if (i < day6.length - 1) {
+        if (i < day5Pending.length - 1) {
           await sleep(randomBetween(gapMin, gapMax));
         }
       }

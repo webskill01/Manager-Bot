@@ -8,6 +8,7 @@ import { createReportHandlers } from './handlers/reportHandlers.js';
 import { createTrackerHandlers } from './handlers/trackerHandlers.js';
 import { isConfigured, usesCloudApi, createCloudApiSender } from './cloudApiSender.js';
 import { buildDmList, renderDmList } from './dmList.js';
+import { renderSendLog } from './reminderSender.js';
 
 let activeOverdueList = [];
 
@@ -81,7 +82,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   // Renewal-era commands a tracker bot must never run — its operators don't collect
   // renewals at all, so silently doing nothing would be worse than saying so.
   const RENEWAL_ONLY = new Set([
-    'renewed', 'remind', 'dmlist', 'dmlist2', 'dmlist3', 'due', 'overdue', 'refs', 'ref',
+    'renewed', 'remind', 'dmlist', 'dmlist2', 'dmlist3', 'sent', 'due', 'overdue', 'refs', 'ref',
     'warnall', 'kickall', 'removal', 'forecast', 'collection',
     'norenew', 'toprefs', 'loyal', 'churn', 'upcoming',
   ]);
@@ -137,6 +138,25 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   function fullOnly(cmd) {
     return `❌ "${cmd}" isn't available on this bot — it tracks new joins and app moves, not renewals.\n` +
       `Try: pending · called [phone] · moved [phone] · calls · add · summary · revenue`;
+  }
+
+  // What actually went out today, from reminder-state.json. Meta's wamid per member is the
+  // receipt: it means the API accepted the message and will deliver it. Failures carry Meta's
+  // own reason and code, which is the difference between one bad number and a dead token.
+  //
+  // It does NOT prove the member's handset received or read it — that needs a delivery
+  // webhook, which is deliberately a later phase. Say so rather than implying more.
+  function handleSent() {
+    if (!config.botDir) return '❌ botDir is not set — cannot read the reminder log.';
+    const body = renderSendLog(config.botDir);
+    if (!usesCloudApi(config)) {
+      return `${body}\n\n` +
+        `ℹ️ Reminders are in MANUAL mode — this log only fills up once reminderChannel is "cloudapi".\n` +
+        `   Right now you send them yourself with: dmlist`;
+    }
+    return `${body}\n\n` +
+      `ℹ️ A message id means Meta accepted it and will deliver it. Delivered/read receipts\n` +
+      `   need the webhook, which isn't set up yet.`;
   }
 
   // The manual reminder path — prints one tap-to-send wa.me link per member with the text
@@ -662,6 +682,11 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'dmlist':   return handleDmList(args, 'due');
         case 'dmlist2':  return handleDmList(args, 'nudge');
         case 'dmlist3':  return handleDmList(args, 'final');
+
+        // Proof of today's reminders, on demand. On the Cloud API the operator never sees
+        // the messages themselves — this and the per-batch Telegram report are the only
+        // evidence, so it reads the same record the batch report renders.
+        case 'sent':     return handleSent();
 
         case 'removal':    return removalEngine.handleRemoval();
         case 'warnall':    return removalEngine.warnall();
