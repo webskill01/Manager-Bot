@@ -105,3 +105,49 @@ test('log reports both outcome buckets by name', async () => {
   assert.match(msg, /Keen/);
   assert.match(msg, /Nope/);
 });
+
+// ── logging a call for someone who was never added to the sheet ───────────────
+
+function fakeStoreWithAdd(members) {
+  const store = fakeStore(members);
+  const rows = store.getAll();
+  return {
+    ...store,
+    async add(data) {
+      rows.push({ callResult: '', callDate: '', ...data });
+      return rows[rows.length - 1];
+    },
+  };
+}
+
+test('called on an unknown number asks for the name, writes nothing', async () => {
+  const store = fakeStoreWithAdd([]);
+  const h = createTrackerHandlers(store, groupManager, cfg, log);
+  const reply = await h.handleCalled(['9000000009', 'interested']);
+  assert.match(reply, /name/i);
+  assert.match(reply, /called 9000000009 interested \[Name\]/);
+  assert.equal(store.getAll().length, 0, 'no row created without a name');
+});
+
+test('called on an unknown number WITH a name creates the row, already CALLED + outcome', async () => {
+  const store = fakeStoreWithAdd([]);
+  const h = createTrackerHandlers(store, groupManager, cfg, log);
+  const reply = await h.handleCalled(['9000000009', 'not', 'interested', 'Rahul', 'Kumar']);
+  const m = store.findByPhone('9000000009');
+  assert.ok(m, 'row created');
+  assert.equal(m.name, 'Rahul Kumar');
+  assert.equal(m.status, 'CALLED');
+  assert.equal(m.callResult, 'not-interested');
+  assert.ok(m.callDate, 'callDate stamped');
+  assert.equal(m.paidLast, 0, 'must not count as join revenue');
+  assert.match(reply, /added as a new row/);
+});
+
+test('a name after the outcome does not break an existing member', async () => {
+  const store = fakeStoreWithAdd([{ name: 'A', phone: '9000000001', status: 'NEW', joinDate: '01-06-2026' }]);
+  const h = createTrackerHandlers(store, groupManager, cfg, log);
+  await h.handleCalled(['9000000001', 'interested', 'Ignored', 'Name']);
+  const m = store.findByPhone('9000000001');
+  assert.equal(m.callResult, 'interested');
+  assert.equal(m.name, 'A', 'existing name untouched');
+});

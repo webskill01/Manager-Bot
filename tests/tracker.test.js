@@ -194,7 +194,8 @@ test('called rejects bad input and unknown members without writing', async () =>
   const t = createTrackerHandlers(store, fakeGroupManager(), trackerConfig(tmp()), log);
   assert.match(await t.handleCalled([]), /Format: called/);
   assert.match(await t.handleCalled(['123']), /Invalid number/);
-  assert.match(await t.handleCalled(['9999999999']), /No member found/);
+  // Unknown number is no longer a dead end — it asks for a name instead of writing.
+  assert.match(await t.handleCalled(['9999999999']), /isn't in the sheet/);
   assert.match(await t.handleCalled(['9000000001', 'maybe']), /Unknown outcome/);
   assert.equal(store.writes.length, 0);
 });

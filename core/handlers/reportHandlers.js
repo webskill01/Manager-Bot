@@ -479,6 +479,8 @@ are done in WhatsApp by hand — the bot will say so if you try them here.` : `�
 • called [phone]                 →  logs the call + date, no answer yet
      reappears in "pending" after ${chase} day(s) until you log an answer
      any of these can be re-run later to correct what you logged
+• called [phone] interested [Name]  →  for someone NOT in the sheet:
+     creates their row and logs the call in one go
 • log  →  the full record: interested / not interested / no answer /
           not called yet.  ("calls" does the same thing)
 

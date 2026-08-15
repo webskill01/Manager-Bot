@@ -28,14 +28,21 @@ export function createTrackerHandlers(store, groupManager, config, log) {
   // '' = called but nothing recorded yet (no answer, undecided). Anything the operator
   // types must map to a known outcome or be rejected — silently recording "maybe" as
   // interested would poison the log.
+  // Matches from the FRONT and hands back whatever follows as `rest` — that tail is the
+  // name when the person isn't in the sheet yet (`called 98551XXXXX interested Rahul`).
   function parseOutcome(words) {
-    const raw = words.join(' ').trim().toLowerCase();
-    if (!raw) return { ok: true, value: null };            // null = leave as-is
-    if (['interested', 'yes', 'y', 'int'].includes(raw)) return { ok: true, value: 'interested' };
-    if (['not interested', 'notinterested', 'not', 'no', 'n'].includes(raw)) {
-      return { ok: true, value: 'not-interested' };
+    const w = words.map(s => s.toLowerCase());
+    if (w.length === 0) return { ok: true, value: null, rest: [] };  // null = leave as-is
+    if (w[0] === 'not' && w[1] === 'interested') {
+      return { ok: true, value: 'not-interested', rest: words.slice(2) };
     }
-    return { ok: false, value: null };
+    if (['interested', 'yes', 'y', 'int'].includes(w[0])) {
+      return { ok: true, value: 'interested', rest: words.slice(1) };
+    }
+    if (['notinterested', 'not-interested', 'not', 'no', 'n'].includes(w[0])) {
+      return { ok: true, value: 'not-interested', rest: words.slice(1) };
+    }
+    return { ok: false, value: null, rest: [] };
   }
 
   // `pending` — who to call. Two blocks: people whose month is up and have never been
@@ -80,13 +87,18 @@ export function createTrackerHandlers(store, groupManager, config, log) {
     msg += `\n  called ${example} interested`;
     msg += `\n  called ${example} not interested`;
     msg += `\n  called ${example}            (no answer — reappears in ${followUpDays} day(s))`;
+    msg += `\n\nCalled someone who isn't in the sheet? Add their name and they get a row:`;
+    msg += `\n  called 98551XXXXX interested Rahul Kumar`;
     return msg;
   }
 
   // `called [phone] [interested|not interested]` — records that the pitch happened, the
   // date, and the answer. Nothing else changes: they stay in the group either way.
   async function handleCalled(args) {
-    if (args.length < 1) return '❌ Format: called [phone] [interested | not interested]';
+    if (args.length < 1) {
+      return '❌ Format: called [phone] [interested | not interested]\n' +
+        'Not in the sheet yet? Add the name: called [phone] interested [Name]';
+    }
     const phone = normalizePhone(args[0]);
     if (phone.length !== 10) return '❌ Invalid number. Use 10 digits: called 98551XXXXX';
 
@@ -94,23 +106,51 @@ export function createTrackerHandlers(store, groupManager, config, log) {
     if (!outcome.ok) {
       return `❌ Unknown outcome "${args.slice(1).join(' ')}".\n` +
         `Use: called ${phone} interested   —or—   called ${phone} not interested\n` +
-        `Or just: called ${phone}   (call happened, no answer yet)`;
+        `Or just: called ${phone}   (call happened, no answer yet)\n` +
+        `Name goes LAST, after the outcome: called ${phone} interested Rahul`;
     }
 
-    const member = store.findByPhone(phone);
-    if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
-
     const callDate = todayStr();
-    const repeat = member.status === 'CALLED';
-    const updates = { status: 'CALLED', callDate };
-    if (outcome.value) updates.callResult = outcome.value;
-    await store.update(phone, updates);
+
+    // Not in the sheet — the operator called someone who was never logged as a join.
+    // Refusing would lose the answer, so take the name on the spot and create the row.
+    let member = store.findByPhone(phone);
+    let created = false;
+    if (!member) {
+      const name = outcome.rest.join(' ').trim();
+      if (name.length < 2) {
+        const tail = outcome.value === 'not-interested' ? 'not interested' : outcome.value || '';
+        return `❓ ${phone} isn't in the sheet. What's their name?\n` +
+          `Send:  called ${phone} ${tail}${tail ? ' ' : ''}[Name]`;
+      }
+      member = await store.add({
+        name,
+        phone,
+        joinDate: callDate,
+        billingDate: '',
+        // 0 = not counted as a new member or join revenue anywhere (same flag addsilent uses).
+        paidLast: 0,
+        status: 'CALLED',
+        callDate,
+        callResult: outcome.value || '',
+      }) || { name, phone };
+      created = true;
+      log.info(`➕ ${name} (${phone}) added to sheet from a call log`);
+    }
+
+    const repeat = !created && member.status === 'CALLED';
+    if (!created) {
+      const updates = { status: 'CALLED', callDate };
+      if (outcome.value) updates.callResult = outcome.value;
+      await store.update(phone, updates);
+    }
 
     const said = outcome.value === 'interested' ? ' — INTERESTED'
       : outcome.value === 'not-interested' ? ' — NOT interested' : '';
     log.info(`📞 Called ${member.name} (${phone})${repeat ? ' [repeat]' : ''}${said}`);
 
-    const head = `📞 ${member.name} (${phone}) — called ${callDate}${repeat ? ' (again)' : ''}`;
+    const head = `📞 ${member.name} (${phone}) — called ${callDate}${repeat ? ' (again)' : ''}` +
+      (created ? `\n➕ Not in the sheet before — added as a new row.` : '');
     if (outcome.value === 'interested') {
       return `${head}\n✅ Logged as INTERESTED.\n` +
         `They stay in the group — move them onto the app yourself, then "kick ${phone}" when you want the seat back.`;
