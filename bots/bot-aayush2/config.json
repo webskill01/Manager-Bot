@@ -83,7 +83,7 @@
     "9914623976",
     "7696311496"
   ],
-  "allowedTelegramIds": [],
+  "allowedTelegramIds": ["5332135237","7985971941",""],
   "schedule": {
     "morningDigest": "0 6 * * *",
     "reminderSend": "30 6 * * *",
