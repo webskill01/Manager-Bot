@@ -289,3 +289,47 @@ test('renewed with a dead socket still records the payment', async () => {
   await parser.parse('renewed 9814556677');
   assert.equal(store.rows[0].renewals, 2, 'a renewal collected during a ban was not recorded');
 });
+
+// ── Telegram slash-commands ───────────────────────────────────────────────────
+// Telegram sends /start on its own when someone opens the bot, and its UI autocompletes
+// every command with a leading slash. The shared parser knows nothing about slashes, so
+// without this every one of them answered "❓ Unknown command".
+
+test('/start becomes help — it is Telegram\'s handshake, not a typed command', async () => {
+  const api = fakeTelegram([update(1, 777, '/start')]);
+  const { listener, seen } = listenerOn(api, { allowedIds: [777] });
+  await listener.start();
+  assert.deepEqual(seen, ['help']);
+});
+
+test('a slashed command is unwrapped to the real one', async () => {
+  const api = fakeTelegram([update(1, 777, '/summary')]);
+  const { listener, seen } = listenerOn(api, { allowedIds: [777] });
+  await listener.start();
+  assert.deepEqual(seen, ['summary']);
+});
+
+test('arguments survive the unwrap, including two-word commands', async () => {
+  const api = fakeTelegram([
+    update(1, 777, '/kick 9855112233'),
+    update(2, 777, '/start removal'),
+  ]);
+  const { listener, seen } = listenerOn(api, { allowedIds: [777] });
+  await listener.start();
+  assert.deepEqual(seen, ['kick 9855112233', 'start removal'],
+    '"start removal" is a real command — only a BARE /start means help');
+});
+
+test('the @botname suffix Telegram adds in groups is stripped', async () => {
+  const api = fakeTelegram([update(1, 777, '/summary@sheet_manager1_bot')]);
+  const { listener, seen } = listenerOn(api, { allowedIds: [777] });
+  await listener.start();
+  assert.deepEqual(seen, ['summary']);
+});
+
+test('an unslashed command is passed through untouched', async () => {
+  const api = fakeTelegram([update(1, 777, 'renewed 9855112233')]);
+  const { listener, seen } = listenerOn(api, { allowedIds: [777] });
+  await listener.start();
+  assert.deepEqual(seen, ['renewed 9855112233']);
+});

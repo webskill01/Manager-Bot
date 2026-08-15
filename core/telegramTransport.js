@@ -71,10 +71,24 @@ export function createTelegramListener({ token, allowedIds = [], bootstrapMode =
     }
   }
 
+  // Telegram's UI pushes slash-commands hard: it sends `/start` by itself when someone
+  // opens the bot, autocompletes `/…`, and appends `@botname` in groups. None of that is a
+  // WhatsApp convention, so the shared parser knows nothing about it and every slashed
+  // command fell through to "❓ Unknown command". Normalising here — at the transport that
+  // invents the syntax — keeps the parser transport-blind. `/summary` becomes `summary`.
+  function stripSlash(text) {
+    const m = text.match(/^\/([A-Za-z][\w]*)(?:@\S+)?(\s[\s\S]*)?$/);
+    if (!m) return text;
+    // `/start` is Telegram's "open the bot" handshake, not a command anyone typed on
+    // purpose. Show the help everyone actually wants at that moment.
+    if (m[1].toLowerCase() === 'start' && !m[2]) return 'help';
+    return `${m[1]}${m[2] || ''}`;
+  }
+
   async function handleMessage(msg) {
     const from = msg.from?.id;
     const chatId = msg.chat?.id;
-    const text = (msg.text || '').trim();
+    const text = stripSlash((msg.text || '').trim());
     if (!from || !chatId || !text) return;
 
     // Bootstrap: allowedTelegramIds is empty, so nobody is an operator yet and there is
