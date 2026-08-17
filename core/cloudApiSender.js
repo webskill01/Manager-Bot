@@ -14,7 +14,10 @@
 // The registered number is NOT on the WhatsApp app and is NOT in any group. Members will
 // see renewal messages arrive from a different number than the one running the groups.
 
-const GRAPH_VERSION = 'v21.0';
+// Meta retires a Graph version roughly two years after release, and a call to a retired one
+// fails outright. v21.0 shipped in late 2024 and was close to the edge; v25.0 is what the
+// console was serving in Aug 2026. Override per bot with cloudApi.apiVersion if this ages.
+const GRAPH_VERSION = 'v25.0';
 
 // Meta rejects template variables containing newlines, tabs, or 4+ consecutive spaces.
 // Silently normalising here beats a 132000 error at 6:30 AM for a member whose name was

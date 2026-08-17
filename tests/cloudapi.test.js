@@ -126,7 +126,9 @@ test('sendTemplate posts to the right endpoint with a bearer token', async () =>
   assert.equal(res.ok, true);
   assert.equal(res.messageId, 'wamid.TEST');
   assert.equal(f.calls.length, 1);
-  assert.equal(f.calls[0].url, 'https://graph.facebook.com/v21.0/123456/messages');
+  // Pinned deliberately: a Graph version bump is a deploy-affecting change, so it should
+  // fail here and be noticed rather than drift silently. Meta retires versions after ~2y.
+  assert.equal(f.calls[0].url, 'https://graph.facebook.com/v25.0/123456/messages');
   assert.equal(f.calls[0].opts.headers.Authorization, 'Bearer TOKEN');
   assert.equal(f.calls[0].opts.headers['Content-Type'], 'application/json');
   assert.equal(f.calls[0].body.to, '919876543210');
