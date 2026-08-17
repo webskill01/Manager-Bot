@@ -288,26 +288,52 @@ The last line matters: the reminder arrives from the **new API number, which nob
 watches**. Without it, a member replying gets silence. Put the Baileys number there (change
 `94641-80617` if that's not the one you want them messaging).
 
-### The category classifier will fight you — expected
+### Getting Utility past the category classifier — the two levers
 
-Meta's pre-submit classifier flags these as **Marketing recommended** and warns "this message
-template will be rejected". Tested on the live console in Aug 2026: it does **not** flip to
-Utility when the body is rewritten in plain English, nor when the QR image header is removed.
-It is reacting to the recurring-payment request itself, not to the Punjabi or the media.
-
-**Submit as Utility anyway** and appeal in Business Support Home if rejected. These are bills
-for an existing paid membership, which is what Utility is for, and that is defensible to a
-human reviewer.
-
-**Do not just accept Marketing.** It is not mainly the ~7× price. Marketing templates are
-subject to **per-user frequency caps** — Meta limits how many marketing messages a person
-receives and silently drops the rest, so reminders would stop reaching some members while
-still returning a `wamid` that looks like success. Marketing also carries opt-out and takes a
+Meta's pre-submit classifier recommends **Marketing** on a renewal reminder and warns "this
+message template will be rejected". Marketing is the wrong answer: it is not mainly the ~7×
+price, it is that marketing templates hit **per-user frequency caps**, so Meta silently drops
+some of them while the API still returns a `wamid` that looks like success. A renewal system
+that quietly skips members is worse than a dear one. Marketing also carries opt-out and a
 heavier quality-rating hit when reported.
 
-`renewal_final` is the best probe: a pending-removal warning is the hardest of the four to
-call promotional. If it earns Utility while the priced two don't, the price request is
-confirmed as the trigger and the appeal only has to cover two templates.
+Established on the live console, Aug 2026, by changing one thing at a time:
+
+| Body | Named `{{1}}` | Rupee amount | Verdict |
+|---|---|---|---|
+| final notice, generic "Paaji" | ✗ | none | **Marketing** |
+| final notice, named | ✓ | none | **Utility** |
+| overdue notice, named | ✓ | none | **Utility** |
+| due notice, named | ✓ | ₹90 twice | **Marketing** |
+
+**Both levers are needed:**
+
+1. **Address the member by name** — `{{1}}` in the greeting. This alone flipped the final
+   notice from Marketing to Utility with no other change. A named person plus an account
+   status reads transactional; a generic broadcast reads promotional.
+2. **Don't emphasise a rupee amount.** The named due-notice was still flagged, and the only
+   thing separating it from the two that passed was the price.
+
+What does NOT help, tested and ruled out: rewriting the body in plain English (the classifier
+is not failing on Latin-script Punjabi), and removing the QR image header.
+
+So the two priced templates are the awkward ones. Ladder, cheapest first — the classifier
+re-runs as you type, so watch the badge after each edit:
+
+1. State the amount **once** instead of twice.
+2. Drop the **₹ symbol**: `Renewal due: 90`. Worth trying — it may be the currency marker
+   rather than the numeral that trips it, and this keeps the information.
+3. Drop the figure entirely and lean on the attached QR. Members already know the monthly
+   price. For the **referral** template describe it in words instead of a numeral
+   ("adhi payment" / half) so a discounted member still knows they owe less — otherwise they
+   will pay the full amount by default.
+
+If a template is rejected outright, **do not appeal — submit a new version** using the ladder
+above. That is days faster than Business Support Home, and you now know which lever moves it.
+
+**Re-check the category badge in WhatsApp Manager after approval.** Meta re-categorises
+templates on its own based on content, and a silent flip to Marketing shows up as a 7× bill
+and dropped messages, never as an error.
 
 **Sample values.** Meta asks for one example per variable before it will submit. Use
 `Gurpreet` for `{{1}}` and `15 Aug` for `{{2}}` — `{{2}}` renders like `5 Mar`, no year.
