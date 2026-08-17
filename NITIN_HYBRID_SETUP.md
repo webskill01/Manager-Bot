@@ -230,34 +230,54 @@ Names must match `cloudApi.templates` in `config.json` exactly:
 
 ```
 Sat Sri Akal {{1}} paaji 🙏🏻
-Aaj {{2}} nu tohada ik mahina pura ho gya
-iss mahine lyi iste 90 pay krdo ji 🙏🏻
-Kise vi help lyi 94641-80617 te reply kro ji
+
+Tohadi Punjab Taxi Group di monthly membership da ik mahina {{2}} nu pura ho gya hai.
+Renewal due: ₹90
+Iss mahine lyi upar ditte QR te ₹90 payment karke dss deyo ji 🙏🏻
+
+Kise vi help lyi 9464180617 te msg krdo ji
 ```
 
-**`renewal_due_referral`** — header: IMAGE · body:
-
-```
-Sat Sri Akal {{1}} paaji 🙏🏻
-Aaj {{2}} nu tohada ik mahina pura ho gya
-Tusi ik banda add kraya si, iss lyi iste sirf ₹45/- pay krdo ji 🙏🏻
-Kise vi help lyi 94641-80617 te reply kro ji
-```
-
-**`renewal_overdue`** (the day-5 nudge) — header: IMAGE · body:
+**`renewal_due_referral`** — header: IMAGE · body. Note "sirf" (only) is deliberately gone —
+"only ₹45" is discount language and a marketing signal; a *referral discount applied* says
+the same thing transactionally:
 
 ```
 Sat Sri Akal {{1}} paaji 🙏🏻
-🚨 Aaj {{2}} — renew krke dss deyo ji 🙏🏻
-Kise vi help lyi 94641-80617 te reply kro ji
+
+Tohadi Punjab Taxi Group di monthly membership da ik mahina {{2}} nu pura ho gya hai.
+Renewal due: ₹45 (referral discount applied)
+Tusi ik banda add kraya si, iss lyi upar ditte QR te ₹45 payment karke dss deyo ji 🙏🏻
+
+Kise vi help lyi 9464180617 te msg krdo ji
 ```
 
-**`renewal_final`** (day before removal) — header: IMAGE · body:
+**`renewal_overdue`** (the day-5 nudge) — header: IMAGE · body. **No amount on purpose**:
+referral members owe ₹45 not ₹90, and this template goes to both, so any figure would be
+wrong for some of them:
 
 ```
 Sat Sri Akal {{1}} paaji 🙏🏻
-Hnji veerji knra ji renew? Aaj {{2}} last date aaji 🙏🏻
-Kise vi help lyi 94641-80617 te reply kro ji
+
+Tohadi Punjab Taxi Group di monthly membership da payment pending hai.
+Status: overdue as of {{2}}
+Upar ditte QR te payment karke dss deyo ji 🙏🏻
+
+Kise vi help lyi 9464180617 te msg krdo ji
+```
+
+**`renewal_final`** (day before removal) — header: IMAGE · body. A pending-removal warning is
+the most unambiguously account-status message of the four, so submit this one FIRST as a
+classifier probe — see the category note below:
+
+```
+Sat Sri Akal {{1}} paaji 🙏🏻
+
+Tohadi Punjab Taxi Group di monthly membership da payment hun tak pending hai.
+Status: last date {{2}}
+Aaj payment na hoyi ta kal group cho remove ho jayega ji 🙏🏻
+
+Kise vi help lyi 9464180617 te msg krdo ji
 ```
 
 **Edit the wording however you like — just keep `{{1}}` and `{{2}}`, in that order, neither
@@ -267,6 +287,27 @@ variable and none at all, which is why these two gained a date.
 The last line matters: the reminder arrives from the **new API number, which nobody
 watches**. Without it, a member replying gets silence. Put the Baileys number there (change
 `94641-80617` if that's not the one you want them messaging).
+
+### The category classifier will fight you — expected
+
+Meta's pre-submit classifier flags these as **Marketing recommended** and warns "this message
+template will be rejected". Tested on the live console in Aug 2026: it does **not** flip to
+Utility when the body is rewritten in plain English, nor when the QR image header is removed.
+It is reacting to the recurring-payment request itself, not to the Punjabi or the media.
+
+**Submit as Utility anyway** and appeal in Business Support Home if rejected. These are bills
+for an existing paid membership, which is what Utility is for, and that is defensible to a
+human reviewer.
+
+**Do not just accept Marketing.** It is not mainly the ~7× price. Marketing templates are
+subject to **per-user frequency caps** — Meta limits how many marketing messages a person
+receives and silently drops the rest, so reminders would stop reaching some members while
+still returning a `wamid` that looks like success. Marketing also carries opt-out and takes a
+heavier quality-rating hit when reported.
+
+`renewal_final` is the best probe: a pending-removal warning is the hardest of the four to
+call promotional. If it earns Utility while the priced two don't, the price request is
+confirmed as the trigger and the appeal only has to cover two templates.
 
 **Sample values.** Meta asks for one example per variable before it will submit. Use
 `Gurpreet` for `{{1}}` and `15 Aug` for `{{2}}` — `{{2}}` renders like `5 Mar`, no year.
