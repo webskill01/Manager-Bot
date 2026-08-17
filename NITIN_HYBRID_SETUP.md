@@ -148,6 +148,26 @@ So the order is: do steps 1–6 now → SIM arrives → register it → change O
 > documentation — links at the bottom of this file. The console's menu names still drift; if
 > a step doesn't match your screen, work from the shape, not the wording.
 
+### Status as of 2026-08-15
+
+Done: Meta Business account · app `WS Group Reminder` · WABA `2818177488551937` · test number
+`+1 555 633 6574` with Phone Number ID `1336660736191431` · own number verified as a test
+recipient · `hello_world` received · **all four templates submitted, all as Utility**.
+
+Still open, in the order they block things:
+
+1. **Billing** — the Visa debit card was declined. This is a HARD gate: no payment method
+   means no business-initiated messages, so nothing can go live without it. Try a credit card,
+   or UPI / net banking in the Billing Hub.
+2. **Permanent access token** — the console's Generate button demanded an SMS code that never
+   arrived (it wants 2FA on the Facebook/Business account, nothing to do with WhatsApp). Use
+   the manual route instead: Business Settings → Users → **System users** → add user → assign
+   the WhatsApp app → Generate token → never expires. See step 5.
+3. **The SIM** — the only thing that genuinely cannot be done in advance.
+
+Nothing is wired into the bot yet: `cloudApi.phoneNumberId` is still `""` and
+`reminderChannel` is unset, so reminders remain manual `dmlist`.
+
 ### 1. Meta Business account
 
 Go to `business.facebook.com` and create a Business account (needs a personal Facebook
@@ -226,58 +246,61 @@ the content, and a Gurmukhi `pa` submission will not match what you paste.
 
 Names must match `cloudApi.templates` in `config.json` exactly:
 
+These are the exact bodies that **passed as Utility** on the live console. They are not
+drafts — every one was accepted. If you reword them, read the classifier section below first.
+
 **`renewal_due`** — header: IMAGE (the QR) · body:
 
 ```
 Sat Sri Akal {{1}} paaji 🙏🏻
 
-Tohadi Punjab Taxi Group di monthly membership da ik mahina {{2}} nu pura ho gya hai.
+Tohadi Punjab Taxi Group di monthly membership di payment pending hai.
+Status: due on {{2}}
 Renewal due: ₹90
-Iss mahine lyi upar ditte QR te ₹90 payment karke dss deyo ji 🙏🏻
 
-Kise vi help lyi 9464180617 te msg krdo ji
+Iss mahine lyi upar ditte QR te payment karke dss deyo ji 🙏🏻
+Sada saath bnaye rakho ji — kise vi help lyi 9464180617 te msg krdeyo ji
 ```
 
-**`renewal_due_referral`** — header: IMAGE · body. Note "sirf" (only) is deliberately gone —
-"only ₹45" is discount language and a marketing signal; a *referral discount applied* says
-the same thing transactionally:
+**`renewal_due_referral`** — header: IMAGE · body. "Adhi payment" (half) instead of a second
+figure, so a member who earned the discount knows they owe less without the template carrying
+two different amounts:
 
 ```
 Sat Sri Akal {{1}} paaji 🙏🏻
 
-Tohadi Punjab Taxi Group di monthly membership da ik mahina {{2}} nu pura ho gya hai.
-Renewal due: ₹45 (referral discount applied)
-Tusi ik banda add kraya si, iss lyi upar ditte QR te ₹45 payment karke dss deyo ji 🙏🏻
+Tohadi Punjab Taxi Group di monthly membership di payment pending hai.
+Status: due on {{2}}
+Tusi ik banda add kraya si, iss lyi is mahine adhi payment hi banda hai.
+Upar ditte QR te payment karke dss deyo ji 🙏🏻
 
-Kise vi help lyi 9464180617 te msg krdo ji
+Kise vi help lyi 9464180617 te msg krdeyo ji
 ```
 
 **`renewal_overdue`** (the day-5 nudge) — header: IMAGE · body. **No amount on purpose**:
-referral members owe ₹45 not ₹90, and this template goes to both, so any figure would be
-wrong for some of them:
+referral members owe ₹45 not ₹90 and this template goes to both, so any figure would be wrong
+for some of them:
 
 ```
 Sat Sri Akal {{1}} paaji 🙏🏻
 
-Tohadi Punjab Taxi Group di monthly membership da payment pending hai.
+Hnji Veerji Krna ji Renew ? Tohadi Punjab Taxi Group di monthly membership di payment pending hai.
 Status: overdue as of {{2}}
-Upar ditte QR te payment karke dss deyo ji 🙏🏻
+Upar ditte QR te aaj payment karke dss deyo ji 🙏🏻
 
-Kise vi help lyi 9464180617 te msg krdo ji
+Kise vi help lyi 9464180617 te msg krdeyo ji
 ```
 
-**`renewal_final`** (day before removal) — header: IMAGE · body. A pending-removal warning is
-the most unambiguously account-status message of the four, so submit this one FIRST as a
-classifier probe — see the category note below:
+**`renewal_final`** (day before removal) — header: IMAGE · body:
 
 ```
-Sat Sri Akal {{1}} paaji 🙏🏻
+🚨🚨 SSA {{1}} paaji
 
-Tohadi Punjab Taxi Group di monthly membership da payment hun tak pending hai.
+Tohadi Punjab Taxi Group di monthly membership di payment hun tak pending hai.
 Status: last date {{2}}
-Aaj payment na hoyi ta kal group cho remove ho jayega ji 🙏🏻
+Aaj last date aa ji, payment krke niche ditte number te msg krdeyo ji 🙏🏻
 
-Kise vi help lyi 9464180617 te msg krdo ji
+Kise vi help lyi 9464180617 te msg krdeyo ji
 ```
 
 **Edit the wording however you like — just keep `{{1}}` and `{{2}}`, in that order, neither
@@ -567,6 +590,10 @@ The only thing that gives true per-member proof. Left for after the cutover has 
 | A command says "connection is DOWN" | The Baileys socket is dead. `pm2 logs bot-nitin` — a 403 means the number is flagged. |
 | `cloudapi test` says "not configured" | Missing `phoneNumberId` in `config.json` or `CLOUD_API_TOKEN` in `.env`. |
 | Reminders didn't go out and `sent` is empty | `reminderChannel` isn't `"cloudapi"` yet — they're still manual. Run `dmlist`. |
+| Card declined in the Billing Hub | Meta India rejects most debit cards (RBI rules on international recurring mandates). Use a credit card, or UPI / net banking. |
+| "Generate token" wants an SMS code that never arrives | That's 2FA on your Facebook/Business account, not WhatsApp. Fix the number in Accounts Center, switch 2FA to an authenticator app, or bypass it with the System users route in step 5. |
+| Template says "Category does not match … will be rejected" | Reframe as a pending payment — see the classifier section. Never lead with "your month is complete". |
+| `132000` on every send after editing a template | The template's variable count drifted from two. Every template takes `{{1}}` name and `{{2}}` date — nothing else. |
 
 ---
 

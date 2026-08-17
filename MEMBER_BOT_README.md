@@ -231,6 +231,30 @@ All sends use patterns from the taxi bot codebase:
 > running config and differs between the two profiles. The sections below predate the
 > July 2026 rework and are kept for background; where they disagree with `help`, `help` wins.
 
+### Added 15 Aug 2026 — bot-nitin hybrid (`transport: "dual"`)
+
+bot-nitin now runs **Baileys and Telegram in one process**, on one command parser and one
+sheet cache. Every command works from either channel, and `kick` typed in Telegram really
+removes the member from all 12 groups. See **NITIN_HYBRID_SETUP.md**.
+
+```
+sent                       What went out today: every member with Meta's message id,
+                           every failure with Meta's reason and error code
+```
+
+Config: `"transport": "dual"` in config.json plus `TELEGRAM_TOKEN` in the bot's `.env`.
+Absent the token it degrades to WhatsApp-only with a warning rather than refusing to boot.
+
+**When the WhatsApp socket dies (403), the process stays up.** Sheet commands keep answering
+over Telegram; pure group commands (`approve`, `groupcheck`, `kickghosts`, …) are refused with
+the real cause; and `add` / `kick` / `renewed` still write the sheet, so the record stays right
+while you do the group half by hand. Every reply carries a banner while the socket is down.
+
+Reminders: all four stages now route through the official Cloud API when
+`reminderChannel: "cloudapi"` is set — and never touch the socket, so they survive a ban. A
+failure does NOT fall back to a Baileys DM; it is recorded and reported, and you send those
+few by hand with `dmlist`. **Unset by default — reminders are still manual.**
+
 ### Added 27 Jul 2026
 
 ```
