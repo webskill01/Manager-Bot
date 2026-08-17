@@ -208,6 +208,19 @@ and much easier to get blocked.
 Also: **never start or end the body with a variable** — Meta rejects that. All four below
 open with "Sat Sri Akal", so they are fine.
 
+**Leave "Set custom validity period" UNTICKED.** The form warns that "the standard 10 minutes
+WhatsApp message validity period will be applied" — that is the **authentication** default and
+the console is showing it on the wrong form. For **utility** the real default is **30 days**,
+and the custom field can only make it *shorter* (30 s – 12 h max). Ticking it and choosing the
+maximum 12 hours would cut a 30-day delivery window down to twelve hours.
+
+This matters because TTL governs **delivery to the device, not reading**. Once WhatsApp hands
+the message to the handset the clock stops and it sits in the chat indefinitely — a member who
+doesn't open WhatsApp for three days still has it waiting. TTL only expires for a phone that is
+off or out of coverage for the whole window, and at 30 days that is nobody. A message dropped
+on TTL is never charged and never seen, and you only learn it happened from a *missing*
+delivery webhook — which is not wired yet, so an expiry today would be invisible.
+
 Submit under language **English (`en`)**. The text is Punjabi in Latin script; Meta reviews
 the content, and a Gurmukhi `pa` submission will not match what you paste.
 
@@ -500,5 +513,6 @@ pages often — re-read them if something below stops matching reality.
 - [Template fundamentals](https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/overview) — templates are WABA assets; review takes up to 24h; templates are the only way to message a user outside a customer service window
 - [Messaging limits](https://developers.facebook.com/documentation/business-messaging/whatsapp/messaging-limits) — the 250/day starting limit, and 250 vs 6,000 templates for unverified vs verified portfolios
 - [Upcoming messaging-limit changes](https://developers.facebook.com/documentation/business-messaging/whatsapp/upcoming-messaging-limits-changes/) — limits moved to a per-portfolio basis on 7 Oct 2025; scaling needs ≥50% of the limit used within 7 days
+- [Configure message time-to-live](https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/time-to-live) — utility defaults to **30 days**, customisable only DOWN to 30 s – 12 h; the console's "10 minutes" warning is the authentication default shown on the wrong form
 - [Pricing](https://developers.facebook.com/documentation/business-messaging/whatsapp/pricing) — per-message billing since 1 Jul 2025, rate cards effective 1 Jul 2026, utility free only inside an open customer service window, tiers aggregate at portfolio level
 - [Platform pricing rate cards](https://business.whatsapp.com/products/platform-pricing) — the India/INR/Utility rate itself, behind the selector
