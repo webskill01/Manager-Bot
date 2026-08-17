@@ -131,20 +131,22 @@ cheap prepaid SIM works — it does not need data or an active plan after verifi
 
 The only step that genuinely needs the new number is registering it. In particular:
 
-- **Templates belong to the WABA, not to a phone number.** Submit them now, get them
-  approved now, and they are waiting when the number lands. Approval is the other thing
-  with a queue, so doing it in parallel with the SIM saves days.
-- **Meta gives you a free test number** the moment you add the WhatsApp product. It has its
-  own `phoneNumberId` and can message up to 5 recipient numbers you verify. That is enough
-  to run `cloudapi test` against your own phone and see the real Punjabi text with the QR
-  header, end to end, before the SIM exists.
+- **Templates are WABA assets, not phone-number assets.** Submit them now, get them approved
+  now, and they are waiting when the number lands. Review takes **up to 24 hours**, so doing
+  this in parallel with the SIM is free time.
+- **Meta gives you a free test number** the moment you add the WhatsApp product, along with a
+  pre-approved `hello_world` template. It has its own `phoneNumberId` and sends **free**
+  messages to up to **5 recipient numbers** you verify. That is enough to run `cloudapi test`
+  against your own phone and see the real Punjabi text with the QR header, end to end,
+  before the SIM exists.
 
-So the order is: do steps 1–5 now → SIM arrives → register it → change ONE value in
+So the order is: do steps 1–6 now → SIM arrives → register it → change ONE value in
 `config.json` → test again → flip the flag.
 
-> Meta's console gets rearranged every few months, and my knowledge has a cutoff. Menu
-> names below may have moved; the *shape* of the flow is stable. If a step doesn't match
-> what you see, tell me what is on screen and I'll work from that.
+> **Verified against Meta's docs, August 2026.** The facts below (test number + 5 recipients,
+> 24h template review, 250/day starting limit, portfolio-level limits) come from the current
+> documentation — links at the bottom of this file. The console's menu names still drift; if
+> a step doesn't match your screen, work from the shape, not the wording.
 
 ### 1. Meta Business account
 
@@ -152,32 +154,41 @@ Go to `business.facebook.com` and create a Business account (needs a personal Fa
 login — the account is only an owner handle, nothing gets posted). Give it the real
 business name you want members to eventually see.
 
-### 2. Business verification — start it now, it is not a blocker
+### 2. Business verification — SKIP IT for now
 
-This is the long pole: documents, then a review queue.
+Checked the numbers, and verification buys you nothing you need:
 
-Meta wants a legal business name + address, and documents proving both. In India that is
-usually a **GST certificate** or **Certificate of Incorporation / Shop & Establishment
-licence**, plus something showing the same name and address (**bank statement** or
-**utility bill**). A business email on your own domain and a website help.
+| | Unverified | Verified |
+|---|---|---|
+| Messages/24h to unique users | **250** | 1,000 |
+| Templates per WABA | 250 | 6,000 |
 
-**You do not need this to go live.** Unverified, you get ~250 business-initiated
-conversations per 24h — your volume is ~22–31/day, so it is roughly 8× headroom. Verification
-raises the ceiling and is needed for a display name, not for sending. Start it, then carry
-on with the rest; if you have no business documents, skip it entirely and revisit later.
+Your real volume is **~22–31 reminders a day** and you need **4 templates**. So unverified
+gives roughly 8× the sending headroom and 60× the templates you'll ever use.
+
+Since October 2025 these limits are set **per business portfolio**, not per phone number, and
+they scale automatically — but only if you use at least half your current limit within 7
+days, which at 30/day you never will. That is fine: you sit at 250 forever and never notice.
+
+So: **don't chase verification.** If you later want it (it needs a legal business name and
+address, proven by a GST certificate or Certificate of Incorporation plus a matching bank
+statement or utility bill), it can be done any time without touching the bot. Nothing in
+this setup depends on it.
 
 ### 3. Create the app and get the free test number
 
 At `developers.facebook.com` → create an app of type **Business** → add the **WhatsApp**
-product. This gives you a WhatsApp Business Account (WABA) and a **test number**.
+product. In **API Setup** you'll be asked to connect a WhatsApp Business Account — you can
+select an existing one or **create a new one**. Create one, and **write down which WABA it
+is**: when the SIM arrives you add the real number to *this same WABA*, and your approved
+templates come along with it.
 
-On the WhatsApp → API Setup page, note:
-- the **test number's `phoneNumberId`** (a long digit string — *not* a phone number)
-- the **"To"** field, where you add up to 5 verified recipient numbers. **Add your own
-  phone here** so you can receive test sends.
+On the API Setup page, note:
+- the **test number's `phoneNumberId`** — a long digit string, *not* a phone number
+- the **"To"** field: add up to **5 recipient numbers**. **Put your own phone here** so you
+  can receive test sends. Sends to these are free.
 
-**Remember which WABA this is.** When the SIM arrives, add it to this *same* WABA so the
-approved templates apply to it.
+You'll also see a **temporary access token** here. Ignore it — see step 5.
 
 ### 4. Submit four templates
 
@@ -256,12 +267,18 @@ login, `.jpg` or `.png`. A GitHub repo's raw URL, Cloudinary, or any static host
 **Keep it alive** — a dead link fails every send, and a *changed* QR silently sends members
 the wrong payment target.
 
-**The token.** In Business Settings → Users → **System Users**, create a system user, give
-it access to the WhatsApp app, and generate a token with `whatsapp_business_messaging` and
-`whatsapp_business_management`. Choose **never expires**.
+**The token.** In Business Settings → Users → **System Users**, create a system user, give it
+access to the WhatsApp app, and generate a token with **never expires** and these permissions:
 
-> **Do not use the temporary token on the API Setup page.** It dies in 24 hours, and when it
-> does the bot stops reminding and you find out from a `190` in the Telegram failure report.
+```
+whatsapp_business_messaging     ← sending
+whatsapp_business_management    ← templates
+business_management
+```
+
+> **Do not use the temporary token on the API Setup page.** Meta's own docs call it "not
+> suitable for development purposes" — it expires within hours, and when it does the bot
+> stops reminding and you find out from a `190` in the Telegram failure report.
 
 Then, on the VPS, in `bots/bot-nitin/.env` (gitignored, so it never reaches GitHub):
 
@@ -321,6 +338,38 @@ This is the whole handover, and it is one value:
 
 Keep the SIM in a phone and reachable until the OTP is done. Afterwards the number is
 API-only: it will not work in the WhatsApp app and cannot be added to any group.
+
+If `cloudapi test` comes back `132001` (template not found) after the swap, the real number
+went onto a *different* WABA than the templates. Move the number, or re-submit the four
+templates on the WABA it actually landed on.
+
+### 7b. What it will cost — add a payment method
+
+Read the rate yourself; I could not extract it. Meta puts India's utility rate behind an
+interactive selector and a downloadable rate card, current rates **effective 1 July 2026**:
+
+- `business.whatsapp.com/products/platform-pricing` → pick **India**, currency **INR**,
+  category **Utility**
+- or the rate-card CSV/PDF linked from `developers.facebook.com/docs/whatsapp/pricing`
+
+Then the arithmetic is just:
+
+```
+monthly ≈ rate_per_utility_message × 31 × 30       ≈ rate × 930
+```
+
+31/day is your worst case (due + day-5 + final on a busy day); ~22/day is typical. At the
+₹0.115 the code comments assume, that is roughly **₹105/month** — but **verify the rate**,
+because India's marketing rate rose on 1 Jan 2026 and the authentication-international rate
+on 1 Apr 2026, so the numbers in this repo's older notes may be stale.
+
+**Assume every reminder is billed.** Utility templates are free only inside an open 24-hour
+customer service window — i.e. when the member messaged *that* number first. Your templates
+point replies at the Baileys number on purpose, so no window ever opens on the API number and
+nothing is free. That is the right trade: it is the Baileys number that must keep the
+conversation, and ~₹100/month is the entire point of this exercise.
+
+Volume tiers exist but start far above your scale — ignore them.
 
 ### 8. Throw the switch
 
@@ -439,3 +488,17 @@ The only thing that gives true per-member proof. Left for after the cutover has 
 | A command says "connection is DOWN" | The Baileys socket is dead. `pm2 logs bot-nitin` — a 403 means the number is flagged. |
 | `cloudapi test` says "not configured" | Missing `phoneNumberId` in `config.json` or `CLOUD_API_TOKEN` in `.env`. |
 | Reminders didn't go out and `sent` is empty | `reminderChannel` isn't `"cloudapi"` yet — they're still manual. Run `dmlist`. |
+
+---
+
+## Sources
+
+Part 2 was checked against Meta's live documentation in **August 2026**. Meta changes these
+pages often — re-read them if something below stops matching reality.
+
+- [Cloud API — Get Started](https://developers.facebook.com/docs/whatsapp/cloud-api/get-started/) — app creation, selecting or creating a WABA, the test number, the temporary token being unfit for real use
+- [Template fundamentals](https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/overview) — templates are WABA assets; review takes up to 24h; templates are the only way to message a user outside a customer service window
+- [Messaging limits](https://developers.facebook.com/documentation/business-messaging/whatsapp/messaging-limits) — the 250/day starting limit, and 250 vs 6,000 templates for unverified vs verified portfolios
+- [Upcoming messaging-limit changes](https://developers.facebook.com/documentation/business-messaging/whatsapp/upcoming-messaging-limits-changes/) — limits moved to a per-portfolio basis on 7 Oct 2025; scaling needs ≥50% of the limit used within 7 days
+- [Pricing](https://developers.facebook.com/documentation/business-messaging/whatsapp/pricing) — per-message billing since 1 Jul 2025, rate cards effective 1 Jul 2026, utility free only inside an open customer service window, tiers aggregate at portfolio level
+- [Platform pricing rate cards](https://business.whatsapp.com/products/platform-pricing) — the India/INR/Utility rate itself, behind the selector
