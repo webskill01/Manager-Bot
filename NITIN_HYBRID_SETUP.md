@@ -288,7 +288,7 @@ The last line matters: the reminder arrives from the **new API number, which nob
 watches**. Without it, a member replying gets silence. Put the Baileys number there (change
 `94641-80617` if that's not the one you want them messaging).
 
-### Getting Utility past the category classifier — the two levers
+### Getting Utility past the category classifier
 
 Meta's pre-submit classifier recommends **Marketing** on a renewal reminder and warns "this
 message template will be rejected". Marketing is the wrong answer: it is not mainly the ~7×
@@ -297,39 +297,38 @@ some of them while the API still returns a `wamid` that looks like success. A re
 that quietly skips members is worse than a dear one. Marketing also carries opt-out and a
 heavier quality-rating hit when reported.
 
-Established on the live console, Aug 2026, by changing one thing at a time:
+Established on the live console, Aug 2026, by changing one thing at a time. **Two things
+matter, and neither is the price:**
 
-| Body | Named `{{1}}` | Rupee amount | Verdict |
-|---|---|---|---|
-| final notice, generic "Paaji" | ✗ | none | **Marketing** |
-| final notice, named | ✓ | none | **Utility** |
-| overdue notice, named | ✓ | none | **Utility** |
-| due notice, named | ✓ | ₹90 twice | **Marketing** |
+**1. Address the member by name.** `{{1}}` in the greeting. This alone flipped the final
+notice from Marketing to Utility with nothing else changed. A named person plus an account
+status reads transactional; a generic "Paaji" broadcast reads promotional.
 
-**Both levers are needed:**
+**2. Frame it as a payment that is PENDING on an existing account** — not as a billing cycle
+that has completed. This was the whole fight:
 
-1. **Address the member by name** — `{{1}}` in the greeting. This alone flipped the final
-   notice from Marketing to Utility with no other change. A named person plus an account
-   status reads transactional; a generic broadcast reads promotional.
-2. **Don't emphasise a rupee amount.** The named due-notice was still flagged, and the only
-   thing separating it from the two that passed was the price.
+| Body shape | Verdict |
+|---|---|
+| `payment pending hai` + `Status: overdue as of {{2}}` | **Utility** |
+| `payment hun tak pending hai` + `Status: last date {{2}}` | **Utility** |
+| `payment pending hai` + `Status: due on {{2}}` | **Utility** |
+| `ik mahina {{2}} nu pura ho gya hai` ("your month is complete, now pay") | **Marketing** |
 
-What does NOT help, tested and ruled out: rewriting the body in plain English (the classifier
-is not failing on Latin-script Punjabi), and removing the QR image header.
+"Your month is up, please pay" reads as soliciting a NEW purchase cycle. "Payment is pending,
+status: due on <date>" is an account statement. Same intent to you, completely different shape
+to a classifier.
 
-So the two priced templates are the awkward ones. Ladder, cheapest first — the classifier
-re-runs as you type, so watch the badge after each edit:
+Two structural habits that come with it: keep `Status: … {{2}}` on **its own line** (a labelled
+status field reads like a statement, not prose), and keep the words `membership`, `payment`,
+`pending`, `Status`, `due` in the body.
 
-1. State the amount **once** instead of twice.
-2. Drop the **₹ symbol**: `Renewal due: 90`. Worth trying — it may be the currency marker
-   rather than the numeral that trips it, and this keeps the information.
-3. Drop the figure entirely and lean on the attached QR. Members already know the monthly
-   price. For the **referral** template describe it in words instead of a numeral
-   ("adhi payment" / half) so a discounted member still knows they owe less — otherwise they
-   will pay the full amount by default.
+**Ruled out, so nobody wastes time retrying them:** the rupee amount is NOT the trigger — a
+version with no figure at all was still flagged while the reframed version with `Renewal due:
+₹90` passed. Rewriting the body in plain English does not help either (the classifier is not
+failing on Latin-script Punjabi), and removing the QR image header does nothing.
 
-If a template is rejected outright, **do not appeal — submit a new version** using the ladder
-above. That is days faster than Business Support Home, and you now know which lever moves it.
+If a template is rejected outright, **do not appeal — submit a new version** with the pending
+framing. That is days faster than Business Support Home.
 
 **Re-check the category badge in WhatsApp Manager after approval.** Meta re-categorises
 templates on its own based on content, and a silent flip to Marketing shows up as a 7× bill
