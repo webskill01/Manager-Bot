@@ -260,3 +260,50 @@ test('ten straight API rejections trip the circuit breaker', async () => {
   assert.equal(f.calls.length, 10, 'kept calling Meta after ten straight failures');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ── the two-variable contract ─────────────────────────────────────────────────
+// Every template takes exactly {{1}} name and {{2}} a date. Meta rejects any param-count
+// mismatch with 132000, and the real count lives in an approved template on Meta's side
+// that the code cannot inspect — so the only version that can't silently rot is one shape
+// everywhere. This caught renewal_final being sent 3 params against a 0-variable body.
+test('every reminder stage sends exactly two body params: name then a date', async () => {
+  const dir = botDir();
+  const f = fakeFetch([okResponse()]);
+  const sender = createReminderSender(cloudOn(dir), log, { fetchImpl: f.impl });
+
+  for (const type of ['normal', 'referral']) {
+    f.calls.length = 0;
+    await sender.sendToMember(() => null, '9855112233', 'Gurpreet', dir, type, '05-03-2026');
+    const params = f.calls[0].body.template.components.find(c => c.type === 'body').parameters;
+    assert.equal(params.length, 2, `${type} sent ${params.length} params, template expects 2`);
+    assert.equal(params[0].text, 'Gurpreet');
+    assert.match(params[1].text, /^\d{1,2} \w{3}$/, `param 2 must be a date, got "${params[1].text}"`);
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the overdue and final stages send two params too, not three', async () => {
+  const dir = botDir();
+  const f = fakeFetch([okResponse()]);
+  const store = makeStore([
+    // 6 days overdue = the final-reminder milestone for this config.
+    { name: 'Balwinder', phone: '9000000009', status: 'ACTIVE', renewals: 1, paidLast: 90,
+      billingDate: formatDate(new Date(Date.now() - 6 * 864e5)) },
+  ]);
+  const { createOverdueEngine } = await import('../core/overdueEngine.js');
+  const cfg = { ...cloudOn(dir), paidGroups: ['g1@g.us'] };
+  globalThis.fetch = f.impl;
+  try {
+    const engine = createOverdueEngine(cfg, log);
+    await engine.runOverdueCheck(store, () => ({ user: { id: 'bot' }, async groupMetadata() { return { participants: [] }; }, async sendMessage() {} }), []);
+  } finally {
+    delete globalThis.fetch;
+  }
+  assert.ok(f.calls.length > 0, 'the overdue engine sent nothing through the API');
+  for (const call of f.calls) {
+    const params = call.body.template.components.find(c => c.type === 'body').parameters;
+    assert.equal(params.length, 2,
+      `${call.body.template.name} sent ${params.length} params — Meta answers 132000 for a mismatch`);
+  }
+  fs.rmSync(dir, { recursive: true, force: true });
+});

@@ -120,7 +120,13 @@ export function createOverdueEngine(config, log) {
         for (const m of pendingFinal) {
           const result = await sender.sendTemplate({
             type: 'finalReminder',
-            bodyParams: [m.name, String(finalReminderDay), friendlyDate()],
+            // Every Cloud API template in this bot takes exactly two variables:
+            // {{1}} the member's name, {{2}} a date. Meta rejects ANY param-count
+            // mismatch (132000), and the count lives in an approved template the code
+            // cannot see — so one uniform shape is the only version that can't rot.
+            // Was [name, days, date]: three params against a template whose text is
+            // "Hnji Veerji knra ji renew ?" and has none.
+            bodyParams: [m.name, friendlyDate()],
             phone: m.phone,
           });
           if (result.ok) {
@@ -210,7 +216,8 @@ export function createOverdueEngine(config, log) {
         if (cloud) {
           const result = await day5Sender.sendTemplate({
             type: 'overdue',
-            bodyParams: [m.name, String(config.overdue.autoReminderDays)],
+            // Same two-variable shape as every other template here — see finalReminder above.
+            bodyParams: [m.name, friendlyDate()],
             phone: m.phone,
           });
           if (result.ok) {

@@ -127,70 +127,150 @@ A number registered on the Cloud API is **permanently removed from the WhatsApp 
 It needs a **third number**, which receives one OTP and is then never touched again. Any
 cheap prepaid SIM works — it does not need data or an active plan after verification.
 
-### 1. Meta onboarding
+### Everything except the OTP can be done BEFORE the SIM arrives
 
-1. Create a **Meta Business account** → `business.facebook.com`.
-2. At `developers.facebook.com`, create an app of type **Business**, then add the
-   **WhatsApp** product. This creates a WhatsApp Business Account (WABA).
-3. **Register the spare number** to the WABA and verify it by OTP.
-4. Start **Business Verification**. Unverified accounts cap at ~250 business-initiated
-   conversations per day — well above your ~22/day — so **the cutover is not blocked on
-   it**. Start it anyway; the cap tightens over time without it.
-5. Add a **payment method**. Utility messages in India are cheap; the estimate in the code
-   is ~₹90/month at ~22 due members a day. **Check the current India utility rate on
-   Meta's pricing page before funding** — it has changed twice, and I am not going to quote
-   a number that may be stale.
-6. Create a **System User** and issue a **long-lived token** with `whatsapp_business_messaging`.
-   **Do not use the temporary token from the app dashboard — it expires in 24 hours and the
-   bot will silently stop reminding.**
+The only step that genuinely needs the new number is registering it. In particular:
 
-### 2. Submit four templates
+- **Templates belong to the WABA, not to a phone number.** Submit them now, get them
+  approved now, and they are waiting when the number lands. Approval is the other thing
+  with a queue, so doing it in parallel with the SIM saves days.
+- **Meta gives you a free test number** the moment you add the WhatsApp product. It has its
+  own `phoneNumberId` and can message up to 5 recipient numbers you verify. That is enough
+  to run `cloudapi test` against your own phone and see the real Punjabi text with the QR
+  header, end to end, before the SIM exists.
+
+So the order is: do steps 1–5 now → SIM arrives → register it → change ONE value in
+`config.json` → test again → flip the flag.
+
+> Meta's console gets rearranged every few months, and my knowledge has a cutoff. Menu
+> names below may have moved; the *shape* of the flow is stable. If a step doesn't match
+> what you see, tell me what is on screen and I'll work from that.
+
+### 1. Meta Business account
+
+Go to `business.facebook.com` and create a Business account (needs a personal Facebook
+login — the account is only an owner handle, nothing gets posted). Give it the real
+business name you want members to eventually see.
+
+### 2. Business verification — start it now, it is not a blocker
+
+This is the long pole: documents, then a review queue.
+
+Meta wants a legal business name + address, and documents proving both. In India that is
+usually a **GST certificate** or **Certificate of Incorporation / Shop & Establishment
+licence**, plus something showing the same name and address (**bank statement** or
+**utility bill**). A business email on your own domain and a website help.
+
+**You do not need this to go live.** Unverified, you get ~250 business-initiated
+conversations per 24h — your volume is ~22–31/day, so it is roughly 8× headroom. Verification
+raises the ceiling and is needed for a display name, not for sending. Start it, then carry
+on with the rest; if you have no business documents, skip it entirely and revisit later.
+
+### 3. Create the app and get the free test number
+
+At `developers.facebook.com` → create an app of type **Business** → add the **WhatsApp**
+product. This gives you a WhatsApp Business Account (WABA) and a **test number**.
+
+On the WhatsApp → API Setup page, note:
+- the **test number's `phoneNumberId`** (a long digit string — *not* a phone number)
+- the **"To"** field, where you add up to 5 verified recipient numbers. **Add your own
+  phone here** so you can receive test sends.
+
+**Remember which WABA this is.** When the SIM arrives, add it to this *same* WABA so the
+approved templates apply to it.
+
+### 4. Submit four templates
 
 Category **Utility** for all four (payment/account update). *Not* Marketing — far pricier
-and much easier to get blocked. Bodies come from `bots/bot-nitin/config.json` → `messages`,
-with `{name}` → `{{1}}` and `{date}` → `{{2}}`:
+and much easier to get blocked.
 
-| Template name | From | Params |
-|---|---|---|
-| `renewal_due` | `messages.reminder` | `{{1}}` name, `{{2}}` date |
-| `renewal_due_referral` | `messages.referralReminder` | `{{1}}` name, `{{2}}` date |
-| `renewal_overdue` | `messages.overdue` | `{{1}}` name, `{{2}}` days |
-| `renewal_final` | `messages.finalReminder` | `{{1}}` name, `{{2}}` days, `{{3}}` date |
+**Two hard rules the code depends on:**
 
-Those names are already in `config.json` under `cloudApi.templates` — name them exactly
-this at Meta, or change the config to match.
+1. **Exactly two variables in every template: `{{1}}` = the member's name, `{{2}}` = a
+   date.** The code sends two body params to all four. Meta answers `132000` on any
+   mismatch, and it cannot see how many variables your approved template has, so this is
+   a contract you have to hold up. (Locked by a test — see `tests/cloudapi-reminders.test.js`.)
+2. **Every template needs an IMAGE header.** `cloudApi.headerImageUrl` is applied to every
+   send, so a template without a header is rejected. Upload the UPI QR as the sample image
+   on all four.
 
-Two things about the text:
+Also: **never start or end the body with a variable** — Meta rejects that. All four below
+open with "Sat Sri Akal", so they are fine.
 
-- **Submit under language code `en`.** The bodies are Punjabi written in Latin script.
-  Meta reviews the content, and a Gurmukhi `pa` submission will not match.
-- **Add a line telling members to reply on the old number.** The reminder arrives from the
-  new API number, which nobody is watching. Something like
-  *"Reply on 9XXXXXXXXX for any help"* with the Baileys number.
+Submit under language **English (`en`)**. The text is Punjabi in Latin script; Meta reviews
+the content, and a Gurmukhi `pa` submission will not match what you paste.
 
-Give `renewal_due` and `renewal_due_referral` an **image header** for the UPI QR.
+Names must match `cloudApi.templates` in `config.json` exactly:
 
-### 3. Host the QR
+**`renewal_due`** — header: IMAGE (the QR) · body:
 
-Template headers need a fetchable URL — the inline attach that Baileys does is not
-available. Upload `bots/bot-nitin/qr-payment.jpg` anywhere static and public, then put the
-URL in `config.json`:
-
-```json
-"headerImageUrl": "https://.../qr-payment.jpg"
+```
+Sat Sri Akal {{1}} paaji 🙏🏻
+Aaj {{2}} nu tohada ik mahina pura ho gya
+iss mahine lyi iste 90 pay krdo ji 🙏🏻
+Kise vi help lyi 94641-80617 te reply kro ji
 ```
 
-No code involved. Keep that URL alive — a dead link makes Meta reject the send.
+**`renewal_due_referral`** — header: IMAGE · body:
 
-### 4. Fill in the config
+```
+Sat Sri Akal {{1}} paaji 🙏🏻
+Aaj {{2}} nu tohada ik mahina pura ho gya
+Tusi ik banda add kraya si, iss lyi iste sirf ₹45/- pay krdo ji 🙏🏻
+Kise vi help lyi 94641-80617 te reply kro ji
+```
 
-`bots/bot-nitin/.env` — the token, because `.env` is gitignored:
+**`renewal_overdue`** (the day-5 nudge) — header: IMAGE · body:
+
+```
+Sat Sri Akal {{1}} paaji 🙏🏻
+🚨 Aaj {{2}} — renew krke dss deyo ji 🙏🏻
+Kise vi help lyi 94641-80617 te reply kro ji
+```
+
+**`renewal_final`** (day before removal) — header: IMAGE · body:
+
+```
+Sat Sri Akal {{1}} paaji 🙏🏻
+Hnji veerji knra ji renew? Aaj {{2}} last date aaji 🙏🏻
+Kise vi help lyi 94641-80617 te reply kro ji
+```
+
+**Edit the wording however you like — just keep `{{1}}` and `{{2}}`, in that order, neither
+first nor last.** Your existing `messages.overdue` and `messages.finalReminder` had only one
+variable and none at all, which is why these two gained a date.
+
+The last line matters: the reminder arrives from the **new API number, which nobody
+watches**. Without it, a member replying gets silence. Put the Baileys number there (change
+`94641-80617` if that's not the one you want them messaging).
+
+**Sample values.** Meta asks for one example per variable before it will submit. Use
+`Gurpreet` for `{{1}}` and `15 Aug` for `{{2}}` — `{{2}}` renders like `5 Mar`, no year.
+
+### 5. Host the QR, and get a permanent token
+
+**The QR.** Template headers need a fetchable public URL — the inline attach Baileys does is
+not available here. Upload `bots/bot-nitin/qr-payment.jpg` anywhere static and public and
+put the URL in `config.json` → `cloudApi.headerImageUrl`. It must be plain `https`, no
+login, `.jpg` or `.png`. A GitHub repo's raw URL, Cloudinary, or any static host is fine.
+**Keep it alive** — a dead link fails every send, and a *changed* QR silently sends members
+the wrong payment target.
+
+**The token.** In Business Settings → Users → **System Users**, create a system user, give
+it access to the WhatsApp app, and generate a token with `whatsapp_business_messaging` and
+`whatsapp_business_management`. Choose **never expires**.
+
+> **Do not use the temporary token on the API Setup page.** It dies in 24 hours, and when it
+> does the bot stops reminding and you find out from a `190` in the Telegram failure report.
+
+Then, on the VPS, in `bots/bot-nitin/.env` (gitignored, so it never reaches GitHub):
 
 ```
 CLOUD_API_TOKEN=EAAxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
-`bots/bot-nitin/config.json` — the `cloudApi` block is already there; fill the two blanks:
+And in `bots/bot-nitin/config.json`, fill the two blanks — for now with the **test**
+number's id:
 
 ```json
 "cloudApi": {
@@ -200,19 +280,49 @@ CLOUD_API_TOKEN=EAAxxxxxxxxxxxxxxxxxxxxxxxxxxx
 }
 ```
 
-`phoneNumberId` is on the WhatsApp → API Setup page. It is **not** the phone number.
+`pm2 restart bot-nitin` after either file changes.
 
-### 5. Test before switching anything on
+### 6. Prove the whole pipeline works — on the test number
 
 ```
 cloudapi test 9XXXXXXXXX
 ```
 
-Use a number you can check. It reports the message id on success, or Meta's exact error.
-**Reminders are still manual at this point** — `reminderChannel` is not set yet, so nothing
-is automatic and this changes nothing about your daily round.
+Send it to **a number you added to the test number's recipient list** (your own). Expect the
+QR image, the Punjabi text with your name and a date filled in, and a message id back.
 
-### 6. Throw the switch
+Check it looks right on the handset: the QR renders, `{{1}}`/`{{2}}` came out as a real name
+and date, and the "reply on …" line shows the number you want.
+
+**Reminders are still manual at this stage.** `reminderChannel` is not set, so nothing runs
+on a timer and your daily `dmlist` round is unchanged. Nothing you do here can send a
+message to a real member — the test number physically cannot reach anyone outside those 5.
+
+If it fails, the error tells you which rule you broke:
+
+| Error | Meaning |
+|---|---|
+| `132000` | param count mismatch — your template doesn't have exactly two variables |
+| `132001` | template name not found, or not approved yet, on this WABA |
+| `132012` | component mismatch — usually a missing IMAGE header on the template |
+| `131030` | recipient not in the test number's allowed list |
+| `190` | token expired — you used the temporary one |
+
+### 7. When the SIM arrives
+
+This is the whole handover, and it is one value:
+
+1. Add the new number to the **same WABA** (WhatsApp → API Setup → add phone number) and
+   verify by OTP. Your four templates are already approved on that WABA and apply to it.
+2. Copy its **new `phoneNumberId`** and replace `cloudApi.phoneNumberId` in `config.json`.
+3. `pm2 restart bot-nitin`, then `cloudapi test <your own number>` again — this time it can
+   reach any number, not just the five.
+4. Only then, step 8.
+
+Keep the SIM in a phone and reachable until the OTP is done. Afterwards the number is
+API-only: it will not work in the WhatsApp app and cannot be added to any group.
+
+### 8. Throw the switch
 
 Add one line to `bots/bot-nitin/config.json`:
 
