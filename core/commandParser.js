@@ -103,6 +103,14 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     ['kickghosts',  'Bulk group removal needs a WhatsApp connection. Remove them by hand.'],
     ['diag',        'Diagnostic for the WhatsApp socket — nothing to probe on Telegram.'],
     ['remind',      'This DMs the member a UPI QR over WhatsApp. Send it yourself, or use: dmlist'],
+    // These three are engine-backed, and core/telegram.js constructs no engines — there is
+    // no socket for them to drive. They were previously unreachable by accident: RENEWAL_ONLY
+    // refused them while the friend bots were tracker-profile. Flipping those bots to full
+    // removed that guard and they started answering with a bare null-pointer error, which
+    // tells the operator nothing. Listed here so the refusal names the real reason.
+    ['removal',     'The overdue list works without a socket — use: pending  (or: overdue)'],
+    ['kickall',     'Bulk removal needs a WhatsApp connection. See who is due with `pending`, then remove them by hand.'],
+    ['warnall',     'This DMs every overdue member. Send those yourself — `dmlist3` gives you one tap-to-send link each.'],
   ]);
 
   function whatsappOnly(cmd) {

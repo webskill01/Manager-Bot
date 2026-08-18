@@ -381,3 +381,43 @@ test('ping reports the transport instead of a permanently disconnected socket', 
   assert.match(reply, /Telegram/);
   assert.ok(!reply.includes('❌ Disconnected'), `ping reads as broken: ${reply}`);
 });
+
+// ── engine-backed commands on a socket-less FULL bot ──────────────────────────
+// These were unreachable by accident until 2026-08-18: RENEWAL_ONLY refused them while the
+// friend bots were tracker-profile. Flipping those bots to full removed that guard and all
+// three answered with a bare "Cannot read properties of null" — core/telegram.js constructs
+// no engines. A null-pointer tells the operator nothing; the refusal has to name the reason.
+test('engine-backed group commands refuse cleanly on a socket-less full bot', async () => {
+  const cfg = { ...tgConfig(), profile: 'full' };
+  const parser = tgParser(cfg);
+  for (const cmd of ['removal', 'kickall', 'warnall']) {
+    const out = await parser.parse(cmd);
+    const s = Array.isArray(out) ? out.join(String.fromCharCode(10)) : out;
+    assert.ok(!/Cannot read properties|Error processing command/.test(s),
+      `"${cmd}" crashed instead of refusing:\n${s}`);
+    assert.match(s, /needs a live WhatsApp connection/);
+  }
+});
+
+test('the refusal points at something that actually works', async () => {
+  const parser = tgParser({ ...tgConfig(), profile: 'full' });
+  assert.match(await parser.parse('removal'), /pending/);
+  assert.match(await parser.parse('warnall'), /dmlist3/);
+});
+
+// The whole command surface, so a future gate change cannot reopen this quietly.
+test('no command crashes on a socket-less full bot', async () => {
+  const parser = tgParser({ ...tgConfig(), profile: 'full' });
+  const cmds = ['help', 'summary', 'digest', 'due', 'overdue', 'pending', 'removal', 'kickall',
+    'warnall', 'kickghosts', 'stop kickall', 'start removal', 'diag', 'approve', 'approveall',
+    'reject', 'rejectall', 'notinsheet', 'leftmembers', 'stillin', 'groupcheck 9876500001',
+    'kick 9876500001', 'rejoin 9876500001', 'links 9876500001', 'sendlinks 9876500001',
+    'remind 9876500001', 'dmlist', 'drip', 'sent', 'log', 'calls', 'called 9876500001',
+    'moved 9876500001', 'revenue', 'forecast', 'stats', 'refs 9876500001'];
+  for (const cmd of cmds) {
+    const out = await parser.parse(cmd);
+    const s = Array.isArray(out) ? out.join(String.fromCharCode(10)) : String(out);
+    assert.ok(!/Cannot read properties|Error processing command/.test(s),
+      `"${cmd}" crashed:\n${s.slice(0, 200)}`);
+  }
+});
