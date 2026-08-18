@@ -233,6 +233,11 @@ function log0() {
 // ── the bot never sends member-facing messages ────────────────────────────────
 import { createMemberHandlers } from '../core/handlers/memberHandlers.js';
 
+// A throwaway dir per run. These configs used botDir: TMP_BOT_DIR, so every suite run wrote a real
+// reminder-state.json into the repo root — that is how a member's phone number ended up
+// committed to git. Tests must never write state where the project lives.
+const TMP_BOT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-test-'));
+
 // handleAdd used to end in groupManager.sendToMember(phone, [12 links, welcome]), which the
 // live manager delivers as 13 separate messages at a fixed 1,200 ms interval. That machine
 // cadence — not the invite links — is what reads as automation to WhatsApp. The operator now
@@ -251,7 +256,7 @@ function addHarness({ links = [] } = {}) {
     async removeFromAllGroups() { return { removed: [], failed: [] }; },
   };
   const config = {
-    botDir: '.', botName: 'bot-test', profile: 'full',
+    botDir: TMP_BOT_DIR, botName: 'bot-test', profile: 'full',
     paidGroups: ['g1@g.us', 'g2@g.us'],
     joining: { fee: 90 }, renewal: { fullAmount: 90, referralAmount: 45 },
     groupNames: ['A', 'B'], welcomeMessage: 'Welcome {name} ji',

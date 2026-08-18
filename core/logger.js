@@ -4,7 +4,10 @@ const _istFmt = new Intl.DateTimeFormat('en-IN', {
   timeZone: 'Asia/Kolkata',
   year: 'numeric', month: '2-digit', day: '2-digit',
   hour: '2-digit', minute: '2-digit', second: '2-digit',
-  hour12: false,
+  // hourCycle, not hour12. With hour12:false, en-IN resolves to the h24 cycle (1-24), so
+  // midnight logged as "24:41:58" while pm2's own stamp on the same line said 00:41:58 —
+  // an hour that does not exist, on a date that had already rolled over. h23 gives 0-23.
+  hourCycle: 'h23',
 });
 
 function istTimestamp() {

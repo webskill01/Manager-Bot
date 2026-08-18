@@ -1,7 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createTelegramListener } from '../core/telegramTransport.js';
 import { createCommandParser } from '../core/commandParser.js';
+
+// A throwaway dir per run. These configs used botDir: TMP_BOT_DIR, so every suite run wrote a real
+// reminder-state.json into the repo root — that is how a member's phone number ended up
+// committed to git. Tests must never write state where the project lives.
+const TMP_BOT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-test-'));
 
 const log = { info() {}, warn() {}, error() {} };
 
@@ -141,7 +149,7 @@ test('a revoked token rejects instead of retrying forever', async () => {
 // ── commandParser under transport: "dual" ─────────────────────────────────────
 
 const dualConfig = (extra = {}) => ({
-  botDir: '.',
+  botDir: TMP_BOT_DIR,
   botName: 'bot-nitin',
   profile: 'full',
   transport: 'dual',

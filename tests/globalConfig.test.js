@@ -99,3 +99,36 @@ test('rollover: surplus re-pinned via surplusCreditDate counts in next billing w
   const start = new Date(b); start.setMonth(start.getMonth() - 1);
   assert.ok(c >= start && c < b);
 });
+
+// ── logger timestamp ──────────────────────────────────────────────────────────
+// The VPS logged midnight as "24:41:58 IST" on a date that had already rolled over — an
+// hour that does not exist. Cause: hour12:false lets the locale pick the hour cycle, and
+// the VPS's ICU resolved en-IN to h24 (1-24) while the dev machine gave h23 (0-23). Same
+// code, different output, which is why it survived review. hourCycle pins it.
+test('IST timestamps use a 0-23 hour cycle, never 24', () => {
+  const fmt = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hourCycle: 'h23',
+  });
+  const hourOf = (iso) =>
+    fmt.formatToParts(new Date(iso)).find(p => p.type === 'hour').value;
+
+  assert.equal(hourOf('2026-08-18T19:11:58Z'), '00', 'midnight IST must be 00, not 24');
+  assert.equal(hourOf('2026-08-18T18:30:00Z'), '00');
+  assert.equal(hourOf('2026-08-18T19:30:00Z'), '01');
+  assert.equal(hourOf('2026-08-18T06:30:00Z'), '12');
+  assert.equal(hourOf('2026-08-18T18:29:00Z'), '23');
+});
+
+test('core/logger.js pins hourCycle rather than relying on hour12', async () => {
+  const fs = await import('node:fs');
+  const src = fs.readFileSync('core/logger.js', 'utf8');
+  assert.match(src, /hourCycle: 'h23'/, 'the hour cycle must be explicit');
+  // Strip // comments first — the fix carries an explanation that names hour12:false, and
+  // matching against prose would fail on the very comment describing the bug.
+  const code = src.split('\n').filter(l => !l.trim().startsWith('//')).join('\n');
+  assert.ok(!/hour12:\s*false/.test(code),
+    'hour12:false lets the locale choose h23 or h24 — that is the bug');
+});

@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createMemberHandlers } from '../core/handlers/memberHandlers.js';
+
+// A throwaway dir per run. These configs used botDir: TMP_BOT_DIR, so every suite run wrote a real
+// reminder-state.json into the repo root — that is how a member's phone number ended up
+// committed to git. Tests must never write state where the project lives.
+const TMP_BOT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-test-'));
 
 const log = { info() {}, warn() {}, error() {} };
 
@@ -31,7 +39,7 @@ function harness(profile) {
     async sendToMember() { return true; },
   };
   const config = {
-    botDir: '.',
+    botDir: TMP_BOT_DIR,
     botName: 'bot-test',
     profile,
     paidGroups: ['g1@g.us'],

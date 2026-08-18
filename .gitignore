@@ -25,6 +25,10 @@ bots/*/trial-video.mp4
 
 # Per-bot runtime state (transient, contains member phone numbers — keep local only)
 bots/*/reminder-state.json
+# Root-level too: tests used botDir '.', so a suite run wrote real reminder state
+# (including a member's phone) into the repo and it got committed once already.
+reminder-state.json
+drip-state.json
 bots/*/overdue-state.json
 bots/*/removal-state.json
 

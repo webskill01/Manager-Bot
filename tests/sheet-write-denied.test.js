@@ -1,6 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { createCommandParser, sheetsHint } from '../core/commandParser.js';
+
+// A throwaway dir per run. These configs used botDir: TMP_BOT_DIR, so every suite run wrote a real
+// reminder-state.json into the repo root — that is how a member's phone number ended up
+// committed to git. Tests must never write state where the project lives.
+const TMP_BOT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-test-'));
 
 // bot-abhi's sheet went read-only because the Drive account owning it ran out of storage,
 // so every write 403'd with "The caller does not have permission" (the API reports that
@@ -28,7 +36,7 @@ function denyingStore() {
 }
 
 const config = {
-  botDir: '.',
+  botDir: TMP_BOT_DIR,
   botName: 'bot-test',
   profile: 'tracker',
   paidGroups: ['g1@g.us'],

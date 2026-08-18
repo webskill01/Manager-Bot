@@ -10,6 +10,11 @@ import { createMemberHandlers } from '../core/handlers/memberHandlers.js';
 import { createCommandParser } from '../core/commandParser.js';
 import { createReportHandlers } from '../core/handlers/reportHandlers.js';
 
+// A throwaway dir per run. These configs used botDir: TMP_BOT_DIR, so every suite run wrote a real
+// reminder-state.json into the repo root — that is how a member's phone number ended up
+// committed to git. Tests must never write state where the project lives.
+const TMP_BOT_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-test-'));
+
 const log = { info() {}, warn() {}, error() {} };
 
 // Labels only. config.groupLinks (label + invite URL in one blob) is gone: a stored invite
@@ -21,7 +26,7 @@ const GROUP_NAMES = [
 ];
 
 const tgConfig = (extra = {}) => ({
-  botDir: '.',
+  botDir: TMP_BOT_DIR,
   botName: 'bot-test',
   profile: 'tracker',
   transport: 'telegram',
