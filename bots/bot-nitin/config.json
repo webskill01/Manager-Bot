@@ -1,14 +1,19 @@
 {
   "botName": "bot-nitin",
   "transport": "dual",
-  "dripIds": ["5332135237"],
+  "dripIds": [
+    "5332135237"
+  ],
   "drip": {
     "startHour": 9,
     "endHour": 21,
     "gapMinMs": 1080000,
     "gapMaxMs": 1500000
   },
-  "allowedTelegramIds": ["5332135237","7985971941"],
+  "allowedTelegramIds": [
+    "5332135237",
+    "7985971941"
+  ],
   "warmupHours": 0,
   "paidGroups": [
     "120363423482434246@g.us",
@@ -67,20 +72,6 @@
     "circuitBreakerThreshold": 10,
     "circuitBreakerCooldownMs": 60000
   },
-  "groupLinks": [
-    "1.DELHI ONLY (Punjab Taxi Group):\n https://chat.whatsapp.com/DprbSnyBdt349DoSUTE9eq?s=sw&p=a&ilr=1&amv=0",
-    "2.CHANDIGARH ONLY (Punjab Taxi Group):\n https://chat.whatsapp.com/BqaWCFOLkQBEqWS9MbLW7f?s=sw&p=a&ilr=1&amv=0",
-    "3.MOHALI ONLY (Punjab Taxi Group):\n https://chat.whatsapp.com/EOTre2j0d5gHmUT2ySafXw?s=sw&p=a&ilr=1&amv=0",
-    "4.AMRITSAR ONLY (Punjab Taxi Group):\n https://chat.whatsapp.com/LlUhaoTdq7u8PaK1iKLPgd?s=sw&p=a&ilr=1&amv=0",
-    "5.PATIALA ONLY (Punjab Taxi Group):\n https://chat.whatsapp.com/CuDE6rtmwdlLqhxtyjGhHG?s=sw&p=a&ilr=1&amv=0",
-    "6.LUDHIANA ONLY (Punjab Taxi Group):\n https://chat.whatsapp.com/HdQA93ig5lE97fBad3Pf2v?s=sw&p=a&ilr=1&amv=0",
-    "7.JALANDHAR DUTY (Punjab Taxi Group):\n https://chat.whatsapp.com/Kc6n4fyNl1JAXRsN2nZ4fm?s=sw&p=a&ilr=1&amv=0",
-    "8.AMBALA ONLY (Punjab Taxi Group):\n https://chat.whatsapp.com/ELmGXecMENDCaNYagB8V7s?s=sw&p=a&ilr=1&amv=0",
-    "9.ZIRAKPUR ONLY (Punjab Taxi Group):\n https://chat.whatsapp.com/L3apUofy14jLlChQS9rdhE?s=sw&p=a&ilr=1&amv=0",
-    "10.NOIDA ONLY ( Punjab Taxi Group):\n https://chat.whatsapp.com/JybEjsmdNUxL3HfgrUMR1Y?s=sw&p=a&ilr=1&amv=0",
-    "11.GURGAON ONLY (Punjab Taxi Service):\n https://chat.whatsapp.com/ErxjthhuMwZ4kIuIA8I8PZ?s=sw&p=a&ilr=1&amv=0",
-    "PUNJAB TAXI (Mix Duty):\n https://chat.whatsapp.com/LJEtqRN4kBg2wN0L78rBvi?s=sw&p=a&ilr=1&amv=0"
-  ],
   "welcomeMessage": "Group ch duty 120+ group cho forward krde aa veer is krke advance Paytm kise nu ni Krna 🚨 \n\n Group ch free and exchange da msg allowed ni haiga ji ⚠️\n\n Group ch je kisi fraud number di duty share hove ta sanu personally usda number msg krdo 🙏",
   "trial": {
     "groupId": "120363407001665784@g.us",
@@ -136,5 +127,19 @@
     "overdue": "Sat Sri Akal {name} paaji 🙏🏻\n🚨🚨 Aaj last date aaji renew krke dss deyo. 🙏🏻",
     "finalReminder": "Hnji Veerji knra ji renew ?",
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
-  }
+  },
+  "groupNames": [
+    "DELHI ONLY (Punjab Taxi Group)",
+    "CHANDIGARH ONLY (Punjab Taxi Group)",
+    "MOHALI ONLY (Punjab Taxi Group)",
+    "AMRITSAR ONLY (Punjab Taxi Group)",
+    "PATIALA ONLY (Punjab Taxi Group)",
+    "LUDHIANA ONLY (Punjab Taxi Group)",
+    "JALANDHAR DUTY (Punjab Taxi Group)",
+    "AMBALA ONLY (Punjab Taxi Group)",
+    "ZIRAKPUR ONLY (Punjab Taxi Group)",
+    "NOIDA ONLY ( Punjab Taxi Group)",
+    "GURGAON ONLY (Punjab Taxi Service)",
+    "PUNJAB TAXI (Mix Duty)"
+  ]
 }

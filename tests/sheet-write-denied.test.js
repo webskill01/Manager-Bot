@@ -46,7 +46,7 @@ const parser = () => createCommandParser(
 );
 
 test('a sheet write denial replies to the operator instead of escaping silently', async () => {
-  for (const cmd of ['addnew Love 8283027327', 'addsilent Pardeep 8591190011', 'add Rajan 9876500001']) {
+  for (const cmd of ['addsilent Pardeep 8591190011', 'add Rajan 9876500001']) {
     const out = await parser().parse(cmd);
     assert.ok(typeof out === 'string' && out.length > 0, `${cmd} must return a reply, not throw`);
     assert.match(out, /Error processing command/, `${cmd} reports the failure`);

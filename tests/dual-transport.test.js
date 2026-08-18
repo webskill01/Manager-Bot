@@ -146,7 +146,7 @@ const dualConfig = (extra = {}) => ({
   profile: 'full',
   transport: 'dual',
   paidGroups: ['g1@g.us', 'g2@g.us'],
-  groupLinks: ['1. GROUP A:\n https://chat.whatsapp.com/AAA111'],
+  groupNames: ['GROUP A'],
   joining: { fee: 90 },
   renewal: { fullAmount: 90, referralAmount: 45, billingCycleDays: 30 },
   overdue: { autoReminderDays: 5, finalReminderDays: 6, consolidatedListDays: 7 },

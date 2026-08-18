@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  createManualGroupManager, parseGroupLink, waMeLink, NoGroupAccessError,
+  createManualGroupManager, waMeLink, NoGroupAccessError,
 } from '../core/manualGroupManager.js';
 import { createMemberHandlers } from '../core/handlers/memberHandlers.js';
 import { createCommandParser } from '../core/commandParser.js';
@@ -12,9 +12,12 @@ import { createReportHandlers } from '../core/handlers/reportHandlers.js';
 
 const log = { info() {}, warn() {}, error() {} };
 
-const GROUP_LINKS = [
-  '1. SINGH TRAVELS (PAID) (DELHI):\n https://chat.whatsapp.com/AAA111',
-  '2. SINGH TRAVELS (PAID) (MOHALI):\n https://chat.whatsapp.com/BBB222',
+// Labels only. config.groupLinks (label + invite URL in one blob) is gone: a stored invite
+// URL resets on every ban and re-link, so it was wrong more often than right. Names are
+// stable, so they stayed — as config.groupNames.
+const GROUP_NAMES = [
+  'SINGH TRAVELS (PAID) (DELHI)',
+  'SINGH TRAVELS (PAID) (MOHALI)',
 ];
 
 const tgConfig = (extra = {}) => ({
@@ -23,7 +26,7 @@ const tgConfig = (extra = {}) => ({
   profile: 'tracker',
   transport: 'telegram',
   paidGroups: ['g1@g.us', 'g2@g.us'],
-  groupLinks: GROUP_LINKS,
+  groupNames: GROUP_NAMES,
   welcomeMessage: 'Welcome {name} ji',
   joining: { fee: 100 },
   renewal: { fullAmount: 100, referralAmount: 100 },
@@ -72,14 +75,12 @@ test('waMeLink encodes newlines so multi-line onboarding text survives the URL',
   assert.ok(!link.includes('\n'), 'raw newline leaked into the URL');
 });
 
-test('parseGroupLink splits the label off the URL', () => {
-  const p = parseGroupLink(GROUP_LINKS[0], 0);
-  assert.equal(p.groupName, '1. SINGH TRAVELS (PAID) (DELHI)');
-  assert.equal(p.link, 'https://chat.whatsapp.com/AAA111');
-});
-
-test('parseGroupLink falls back to a positional name when the entry has no URL', () => {
-  assert.deepEqual(parseGroupLink('', 4), { groupId: null, groupName: 'Group 5', link: '' });
+test('a socket-less bot offers NO invite links at all', async () => {
+  // It cannot call groupInviteCode(), and config no longer stores URLs. Returning [] is what
+  // makes handleAdd/handleSendLinks say "share them from your own phone" instead of handing
+  // over links that stopped working at the last ban.
+  const gm = createManualGroupManager(tgConfig(), log);
+  assert.deepEqual(await gm.getInviteLinksForMissing('9855112233'), []);
 });
 
 // ── manual group manager ──────────────────────────────────────────────────────
@@ -105,15 +106,15 @@ test('removeFromAllGroups removes nobody and names the groups to clear by hand',
   assert.ok(res.manual.includes('SINGH TRAVELS (PAID) (MOHALI)'));
 });
 
-test('kick instructions fall back to group JIDs when no groupLinks are configured', async () => {
-  const gm = createManualGroupManager(tgConfig({ groupLinks: [] }), log);
+test('kick instructions fall back to group JIDs when no groupNames are configured', async () => {
+  const gm = createManualGroupManager(tgConfig({ groupNames: [] }), log);
   const res = await gm.removeFromAllGroups('9855112233');
   assert.ok(res.manual.includes('Group 1'));
   assert.ok(res.manual.includes('Group 2'));
 });
 
-test('kick names ALL paid groups even when groupLinks is short of them', async () => {
-  // 3 paid groups but only 2 links configured. Naming the 2 would leave the member
+test('kick names ALL paid groups even when groupNames is short of them', async () => {
+  // 3 paid groups but only 2 names configured. Naming the 2 would leave the member
   // sitting in the third paid group with the operator believing they were cleared.
   const cfg = tgConfig({ paidGroups: ['g1@g.us', 'g2@g.us', 'g3@g.us'] });
   const gm = createManualGroupManager(cfg, log);
@@ -188,14 +189,17 @@ test('kick on an unknown number updates nothing but still gives instructions', a
   assert.ok(reply.includes('remove 9855112233'));
 });
 
-test('links returns every configured link and admits it cannot diff the roster', async () => {
+// SUPERSEDES "links returns every configured link". It used to print config.groupLinks and
+// admit it could not diff the roster. Those stored URLs are gone — they broke on every ban
+// — so the honest answer is now that it has no links at all, not a list of dead ones.
+test('links on a socket-less bot offers no URLs and says why', async () => {
   const store = fakeStore([{ name: 'Raju', phone: '9855112233', status: 'ACTIVE' }]);
   const gm = createManualGroupManager(tgConfig(), log);
   const h = createMemberHandlers(store, gm, tgConfig(), log);
   const reply = await h.handleLinks(['9855112233']);
-  assert.ok(reply.includes('https://chat.whatsapp.com/AAA111'));
-  assert.ok(reply.includes('https://chat.whatsapp.com/BBB222'));
-  assert.ok(/can't check which ones/.test(reply), `links overclaimed:\n${reply}`);
+  assert.ok(!reply.includes('chat.whatsapp.com'), `a dead invite link was offered:\n${reply}`);
+  assert.match(reply, /no WhatsApp connection/);
+  assert.match(reply, /Raju/);
 });
 
 // ── command gate ──────────────────────────────────────────────────────────────

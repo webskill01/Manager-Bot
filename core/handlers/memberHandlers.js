@@ -1,4 +1,5 @@
 import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod, clampedBillingDate, daysFromToday, overdueCohort, isTracker } from '../globalConfig.js';
+import { buildLinkBatches, renderTapLinks } from '../linkShare.js';
 
 export function createMemberHandlers(store, groupManager, config, log) {
   const inFlightAdds = new Set();
@@ -131,31 +132,32 @@ export function createMemberHandlers(store, groupManager, config, log) {
         }
       }
 
-      // Build the message sequence from config: group links + welcome message
-      const groupLinks = config.groupLinks || [];
+      // Invite codes are fetched LIVE, never read from config. config.groupLinks went stale
+      // on every ban and re-link and had to be edited and pushed by hand; groupInviteCode()
+      // reads whatever is current. A socket-less bot returns [] and simply gets no links.
+      let links = [];
+      try { links = await groupManager.getInviteLinksForMissing(phone); }
+      catch (err) { log.warn(`⚠️  Invite link fetch failed for ${phone}: ${err.message}`); }
+
       const welcome = config.welcomeMessage
         ? config.welcomeMessage.replace(/\{name\}/g, name)
         : null;
-      const messages = welcome ? [...groupLinks, welcome] : [...groupLinks];
+      const batchSize = config.linkBatchSize ?? 6;
+      const batches = buildLinkBatches({ links, batchSize, welcome });
 
-      if (messages.length === 0) {
-        return `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}${refNote}\n⚠️ No groupLinks configured — add them to config.json`;
+      const head = `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}${refNote}`;
+      const next = `\n\nWhen they join, use:\napprove  (approves all pending across all groups)`;
+
+      if (batches.length === 0) {
+        return `${head}\n\n⚠️ No group links available — this bot has no WhatsApp connection,` +
+          ` so share the invites from your own phone.${next}`;
       }
 
-      const { sent, failed, manual } = await groupManager.sendToMember(phone, messages);
-
-      // On a Telegram bot nothing was sent and nothing could be — say so and hand over the
-      // tap-to-send link. Printing "Sent 0/4 messages" would be a quiet lie of exactly the
-      // kind this codebase refuses elsewhere (see trackerOnly/fullOnly in commandParser).
-      if (manual) {
-        return `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}${refNote}\n\n${manual}`;
-      }
-
-      let reply = `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}${refNote}\n`;
-      reply += `📨 Sent ${sent}/${messages.length} messages to ${phone}`;
-      if (failed > 0) reply += ` (${failed} failed — check if number is on WhatsApp)`;
-      reply += `\n\nWhen they join, use:\napprove  (approves all pending across all groups)`;
-      return reply;
+      // The bot deliberately sends NOTHING here. It used to fire 12 link messages plus a
+      // welcome at a fixed 1,200 ms interval from the linked device, and that cadence — not
+      // the links — is what reads as automation. The operator taps and sends from their own
+      // phone instead.
+      return `${head}\n\n${renderTapLinks(phone, batches, links.length, batchSize)}${next}`;
     } finally {
       inFlightAdds.delete(phone);
     }
@@ -220,128 +222,6 @@ export function createMemberHandlers(store, groupManager, config, log) {
 
       log.info(`📋 Silent add: ${name} (${phone}) — not counted as new member`);
       return `✅ ${name} (${phone}) added to sheet (no links sent, not counted as new member).\n📅 Billing: ${billingDate}\n\nNow use:\nrejoin ${phone}  →  adds directly to all groups`;
-    } finally {
-      inFlightAdds.delete(phone);
-    }
-  }
-
-  // Like handleAdd (counts as a NEW paying member, stores joining fee) but sends NO links.
-  // For the "share links manually → person pays → add to sheet" flow (sendlinks then addnew).
-  async function handleNewAdd(args) {
-    if (args.length < 2) return '❌ Format: addnew [Name] [phone]  or  addnew [Name] [phone] [day 1-31]';
-
-    const mutableArgs = [...args];
-
-    // Optional "ref <refPhone> [prev|backdate]" suffix — same parsing as handleAdd
-    let referrerPhone = null;
-    let isBackdate = false;
-    const refIdx = mutableArgs.findIndex(a => a.toLowerCase() === 'ref');
-    if (refIdx !== -1) {
-      const refParts = mutableArgs.splice(refIdx);
-      refParts.shift();
-      isBackdate = refParts.some(p => ['prev', 'backdate'].includes(p.toLowerCase()));
-      const phoneParts = refParts.filter(p => !['prev', 'backdate'].includes(p.toLowerCase()));
-      if (phoneParts.length > 0) {
-        const refNorm = normalizePhone(phoneParts.map(p => p.replace(/\D/g, '')).join(''));
-        if (refNorm.length === 10) referrerPhone = refNorm;
-      }
-    }
-
-    // Pop optional billing day (1–31) from end
-    let billingDay = null;
-    const maybeDate = mutableArgs[mutableArgs.length - 1];
-    if (/^\d{1,2}$/.test(maybeDate) && parseInt(maybeDate) >= 1 && parseInt(maybeDate) <= 31) {
-      billingDay = parseInt(mutableArgs.pop());
-    }
-
-    // Extract phone from the right
-    const phoneParts = [];
-    while (mutableArgs.length > 1) {
-      const last = mutableArgs[mutableArgs.length - 1];
-      if (/^\+\d+$/.test(last) || /^\d{3,}$/.test(last)) {
-        phoneParts.unshift(last.replace(/\D/g, ''));
-        mutableArgs.pop();
-      } else {
-        break;
-      }
-    }
-
-    if (phoneParts.length === 0) return '❌ Format: addnew [Name] [phone]';
-    const phone = normalizePhone(phoneParts.join(''));
-    if (phone.length !== 10) return '❌ Invalid number. Use 10 digits.';
-    const name = mutableArgs.join(' ').trim();
-    if (name.length < 2) return '❌ Name too short.';
-
-    if (inFlightAdds.has(phone)) return `⏳ Operation for ${phone} already in progress.`;
-
-    const existing = store.findByPhone(phone);
-    if (existing) {
-      if (existing.status === 'ACTIVE') return `⚠️ ${existing.name} (${phone}) already ACTIVE. Use 'renewed' to update billing.`;
-      if (existing.status === 'REMOVED') return `⚠️ ${existing.name} already in sheet as REMOVED. Use: rejoin ${phone}`;
-      if (existing.status === 'SKIPPED') return `⚠️ ${existing.name} already SKIPPED. Use: unskip ${phone}`;
-    }
-
-    inFlightAdds.add(phone);
-    try {
-      const now = new Date();
-      const day = billingDay ?? now.getDate();
-      const billingDate = formatDate(clampedBillingDate(now.getFullYear(), now.getMonth() + 1, day));
-
-      // Compute refCreditDate before add if backdating — pins referral to referrer's PREVIOUS window
-      let refCreditDate = '';
-      if (referrerPhone && isBackdate) {
-        const ref = store.findByPhone(referrerPhone);
-        if (ref) {
-          const billing = parseDate(ref.billingDate);
-          if (billing) {
-            refCreditDate = formatDate(new Date(billing.getFullYear(), billing.getMonth() - 1, billing.getDate() - 1));
-          }
-        }
-      }
-
-      await store.add({
-        name,
-        phone,
-        joinDate: todayStr(),
-        billingDate,
-        // joining fee → counts as a NEW member + join revenue in reports (unlike addsilent's 0).
-        paidLast: config.joining.fee,
-        reference: referrerPhone || '',
-        refCreditDate,
-        // Tracker bots start everyone at NEW — the head of the call funnel.
-        ...(isTracker(config) ? { status: 'NEW' } : {}),
-      });
-
-      let refNote = '';
-      if (referrerPhone) {
-        const referrer = store.findByPhone(referrerPhone);
-        if (referrer) {
-          if (isBackdate && refCreditDate) {
-            const billingObj = parseDate(referrer.billingDate);
-            const periodStart = billingObj
-              ? formatDate(new Date(billingObj.getFullYear(), billingObj.getMonth() - 2, billingObj.getDate()))
-              : '?';
-            const periodEnd = billingObj
-              ? formatDate(new Date(billingObj.getFullYear(), billingObj.getMonth() - 1, billingObj.getDate()))
-              : '?';
-            const logEntry = `${name} (joined ${todayStr()}) backdated to ${periodStart}–${periodEnd} on ${todayStr()}`;
-            const newLog = referrer.refLog ? `${referrer.refLog} | ${logEntry}` : logEntry;
-            await store.update(referrerPhone, { refLog: newLog });
-          }
-          const refs = getReferralsInBillingPeriod(referrerPhone, referrer.billingDate, store.getAll()).length;
-          const refTag = refs >= 2 ? `🎁 ${refs} refs this month — free renewal`
-            : refs === 1 ? `★ 1 ref this month — ₹${config.renewal.referralAmount}` : '0 refs';
-          const backdateNote = refCreditDate ? ' ⏪ backdated' : '';
-          refNote = `\n👥 Referrer: ${referrer.name} — ${refTag}${backdateNote}`;
-        } else {
-          refNote = `\n⚠️ Referrer ${referrerPhone} not found in sheet.`;
-        }
-      }
-
-      log.info(`📋 New add (no links): ${name} (${phone}) — counted as new member`);
-      // `rejoin` updates the sheet and tells you to add them by hand — it has never added
-      // anyone to a group itself (see handleRejoin), so don't promise that it does.
-      return `✅ ${name} (${phone}) added to sheet as a NEW member (no links sent).\n📅 Billing: ${billingDate}${refNote}\n\nNext:\nsendlinks ${phone}  →  the group links + welcome message\nrejoin ${phone}      →  reactivate billing if they had left`;
     } finally {
       inFlightAdds.delete(phone);
     }
@@ -511,12 +391,13 @@ export function createMemberHandlers(store, groupManager, config, log) {
 
     const links = await groupManager.getInviteLinksForMissing(phone);
 
-    // Without a socket there is no roster to diff against, so "missing from N groups" is
-    // unknowable — return every configured link and say plainly that it's all of them.
+    // A socket-less bot has no invite links at all now: it cannot call groupInviteCode(),
+    // and config no longer stores URLs because a stored one is stale the moment the number
+    // is banned and re-linked. Say that plainly rather than printing links that don't work.
     if (groupManager.manual) {
-      if (links.length === 0) return '⚠️ No groupLinks configured in config.json';
-      const all = links.map(l => `• ${l.groupName}\n  ${l.link}`).join('\n\n');
-      return `🔗 All ${links.length} group links (can't check which ones ${member.name} is already in):\n\n${all}`;
+      return `🔗 This bot has no WhatsApp connection, so it cannot fetch invite links.\n` +
+        `Share the invites for ${member.name} from your own phone —` +
+        ` open each group → Invite via link.`;
     }
 
     if (links.length === 0) return `✅ ${member.name} is in all ${config.paidGroups.length} groups.`;
@@ -640,27 +521,28 @@ export function createMemberHandlers(store, groupManager, config, log) {
     // Works for ANY number — sheet membership is not required (e.g. fresh prospects).
     const member = store.findByPhone(phone);
 
-    const groupLinks = config.groupLinks || [];
+    // Live codes, same as handleAdd — see the note there for why config.groupLinks is gone.
+    let links = [];
+    try { links = await groupManager.getInviteLinksForMissing(phone); }
+    catch (err) { log.warn(`⚠️  Invite link fetch failed for ${phone}: ${err.message}`); }
+
     const welcome = config.welcomeMessage
       ? config.welcomeMessage.replace(/\{name\}/g, member?.name || 'ji')
       : null;
-    const messages = welcome ? [...groupLinks, welcome] : [...groupLinks];
-
-    if (messages.length === 0) return '⚠️ No groupLinks configured in config.json';
-
-    const { sent, failed, manual } = await groupManager.sendToMember(phone, messages);
+    const batchSize = config.linkBatchSize ?? 6;
+    const batches = buildLinkBatches({ links, batchSize, welcome });
     const who = member ? `${member.name} (${phone})` : phone;
 
-    if (manual) {
-      const note = member ? '' : `\nℹ️ ${phone} is not in the sheet.`;
-      return `🔗 Links + welcome for ${who}${note}\n\n${manual}`;
+    if (batches.length === 0) {
+      return `⚠️ No group links available for ${who}.\n` +
+        `Either they are already in every group, or this bot has no WhatsApp connection —` +
+        ` in which case share the invites from your own phone.`;
     }
 
-    let reply = `📨 Sent ${sent}/${messages.length} messages to ${who}`;
-    if (!member) reply += `\nℹ️ ${phone} is not in the sheet — links sent anyway.`;
-    if (failed > 0) reply += `\n⚠️ ${failed} failed — check if number is on WhatsApp`;
-    reply += `\n\nWhen they join, use:\napprove  (approves all pending across all groups)`;
-    return reply;
+    const note = member ? '' : `\nℹ️ ${phone} is not in the sheet.`;
+    return `🔗 Links + welcome for ${who}${note}\n\n` +
+      `${renderTapLinks(phone, batches, links.length, batchSize)}\n\n` +
+      `When they join, use:\napprove  (approves all pending across all groups)`;
   }
 
   async function handleRef(parts) {
@@ -790,5 +672,5 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return `✅ Rejected ${phone} in ${rejected}/${found} group(s)${failed > 0 ? ` (${failed} failed)` : ''}`;
   }
 
-  return { handleAdd, handleSilentAdd, handleNewAdd, handleKick, handleSkip, handleUnskip, handleDelay, handleDelayAll, handleLinks, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
+  return { handleAdd, handleSilentAdd, handleKick, handleSkip, handleUnskip, handleDelay, handleDelayAll, handleLinks, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
 }

@@ -569,7 +569,14 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
       switch (cmd) {
         case 'add':        return memberH.handleAdd(args);
         case 'addsilent':  return memberH.handleSilentAdd(args);
-        case 'addnew':     return memberH.handleNewAdd(args);
+        // Deleted: `add` no longer sends anything, so the two commands became the same
+        // operation. Kept as a named case rather than falling through to "Unknown command"
+        // because the muscle memory is real. addsilent stays — it differs on paidLast: 0,
+        // which keeps an existing member out of join revenue.
+        case 'addnew':
+          return `❌ \`addnew\` is gone — \`add\` no longer sends anything, so it does the same job.\n\n` +
+                 `add [Name] [phone]        →  new paying member (counts as join revenue)\n` +
+                 `addsilent [Name] [phone]  →  existing member, NOT counted as a new join`;
         case 'kick':       return memberH.handleKick(mergePhoneFromStart(args));
         case 'skip':       return memberH.handleSkip(mergePhoneFromStart(args));
         case 'unskip':     return memberH.handleUnskip(mergePhoneFromStart(args));

@@ -47,10 +47,6 @@
     "circuitBreakerThreshold": 10,
     "circuitBreakerCooldownMs": 60000
   },
-  "groupLinks": [
-    "1. MAHADEV TRAVELS (PAID) ( UK / HP / ALL INDIA ):\n https://chat.whatsapp.com/ESbmcWfm5P79DGPi0cWkdP",
-    "2. MAHADEV TRAVELS (PAID) ( ALL PUNJAB DUTY ):\n https://chat.whatsapp.com/D5VUHdeLlOV5flzul4jS3P"
-  ],
   "welcomeMessage": "🚨 Group me share hone wali duties alag-alag groups se forward hoti hain, isliye kisi ko bhi bina jaane ya verify kiye advance payment na karein.\n\n⚠️ Free aur Exchange wale messages allowed nahi hain.\n\n🙏 Agar kisi duty ya number par fraud ka doubt lage, toh uska number mujhe personal message kar dein.",
   "trial": {
     "groupId": "120363424245386199@g.us",
@@ -83,14 +79,20 @@
     "9914623976",
     "7696311496"
   ],
-  "dripIds": ["5832606609"],
+  "dripIds": [
+    "5832606609"
+  ],
   "drip": {
     "startHour": 9,
     "endHour": 21,
     "gapMinMs": 1080000,
     "gapMaxMs": 1500000
   },
-  "allowedTelegramIds": ["5332135237","7985971941","5832606609"],
+  "allowedTelegramIds": [
+    "5332135237",
+    "7985971941",
+    "5832606609"
+  ],
   "schedule": {
     "morningDigest": "0 6 * * *",
     "reminderSend": "30 6 * * *",
@@ -111,5 +113,9 @@
   "tracker": {
     "callAfterDays": 30,
     "followUpDays": 3
-  }
+  },
+  "groupNames": [
+    "MAHADEV TRAVELS (PAID) ( UK / HP / ALL INDIA )",
+    "MAHADEV TRAVELS (PAID) ( ALL PUNJAB DUTY )"
+  ]
 }

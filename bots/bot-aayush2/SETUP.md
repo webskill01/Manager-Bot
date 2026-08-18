@@ -18,7 +18,7 @@ This folder is scaffolded but **not yet runnable**. It is a standard member-mana
 
 ## 3. Fill in `config.json`
 - `paidGroups` — replace the `TODO_…@g.us` placeholder with this bot's real group ID(s).
-- `groupLinks` — invite links sent to new members.
+- `groupNames` — group labels only, no URLs. `kick` uses them to name the groups to clear by hand.
 - `welcomeMessage`, `messages.*` — customise the text for this owner.
 - `renewal.fullAmount` / `referralAmount` / `joining.fee` — this owner's pricing.
 - `allowedNumbers` — owner's 10-digit number(s) (these can issue commands). Replace `TODO_OWNER_10_DIGIT_NUMBER`.

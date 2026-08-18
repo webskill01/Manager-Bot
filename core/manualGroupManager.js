@@ -25,16 +25,10 @@ export class NoGroupAccessError extends Error {
   }
 }
 
-// Config stores each group link as one blob: "1. SINGH TRAVELS (PAID) (…):\n https://chat…".
-// Split the label off the URL so links/sendlinks can render the same {groupName, link}
-// shape the live groupManager returns. No URL in the entry → the whole string is the label.
-export function parseGroupLink(entry, idx) {
-  const str = String(entry || '');
-  const m = str.match(/(https?:\/\/\S+)/);
-  if (!m) return { groupId: null, groupName: str.trim() || `Group ${idx + 1}`, link: '' };
-  const label = str.slice(0, m.index).replace(/[\s:]+$/, '').trim();
-  return { groupId: null, groupName: label || `Group ${idx + 1}`, link: m[1] };
-}
+// parseGroupLink is gone. config.groupLinks used to store a label and a URL in one blob and
+// this split them apart; config now carries config.groupNames (labels only). Invite URLs are
+// fetched live from the socket where one exists, and simply do not exist where one does not
+// — a stored invite link is wrong the moment the number is banned and re-linked.
 
 // wa.me opens WhatsApp with a chat to `phone` and `text` already typed, so the operator
 // sends from their own phone with one tap. Same technique dmList.js uses for reminders —
@@ -48,15 +42,15 @@ export function waMeLink(phone, text) {
 
 export function createManualGroupManager(config, log) {
   const paidGroups = config.paidGroups || [];
-  const links = (config.groupLinks || []).map(parseGroupLink);
+  const names = config.groupNames || [];
 
-  // Group names for "remove them from…" instructions. groupLinks carries the real subjects,
-  // so prefer it — but ONLY when it covers every paid group. If the two lists have drifted,
+  // Group names for "remove them from…" instructions. config.groupNames carries the real
+  // subjects, so prefer them — but ONLY when they cover every paid group. If the two lists have drifted,
   // naming the shorter one would tell the operator to clear 2 groups when the bot manages 3
   // and quietly leave someone inside a paid group. A vaguer, complete list beats a precise,
   // incomplete one.
   function groupNames() {
-    if (links.length === paidGroups.length && links.length > 0) return links.map(l => l.groupName);
+    if (names.length === paidGroups.length && names.length > 0) return names;
     return paidGroups.map((id, i) => `Group ${i + 1} (${String(id).slice(0, 12)}…)`);
   }
 
@@ -108,11 +102,12 @@ export function createManualGroupManager(config, log) {
   function addToAllGroups(phone, name) { return _addToAllGroups(phone, name); }
   function rejoinAdd(phone, name) { return _addToAllGroups(phone, name); }
 
-  // The live version returns only the groups the member is MISSING from, which needs a
-  // roster read. With no socket every configured link is returned instead; handleLinks
-  // checks `manual` and words its reply accordingly rather than claiming to know.
+  // No socket means groupInviteCode() cannot be called, and invite URLs are no longer kept
+  // in config — they reset on every ban and re-link, so a stored copy is wrong more often
+  // than right. These bots run 2-3 groups whose operators share invites from their own
+  // phones. Returning [] makes handleAdd/handleSendLinks say exactly that.
   async function getInviteLinksForMissing() {
-    return links.filter(l => l.link);
+    return [];
   }
 
   async function checkMembership() { throw new NoGroupAccessError('groupcheck'); }

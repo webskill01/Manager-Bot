@@ -47,10 +47,6 @@
     "circuitBreakerThreshold": 10,
     "circuitBreakerCooldownMs": 60000
   },
-  "groupLinks": [
-    "1. SINGH TRAVELS (PAID) ( ONLY DELHI // GURGAON // NOIDA - PICK-DROP):\n https://chat.whatsapp.com/EmNNfzBnT6W2OQEv4N09RK?s=cl&p=a&mlu=2",
-    "2. Malwa Travels (PAID) Mix Duty Group :\n https://chat.whatsapp.com/FX6np7mxn8dCty5g4nA8Mr?s=cl&p=a&mlu=2"
-  ],
   "welcomeMessage": "🚨 Group ch share hon waliyan duties kai groups cho forward hundiyan ne, is karke kise nu vi advance payment na kro.\n\n⚠️ Free te Exchange de messages allowed nahi han.\n\n🙏 Je kise fraud number di duty vekho ta number private msg kar deo.",
   "trial": {
     "groupId": "120363424849920943@g.us",
@@ -83,14 +79,20 @@
     "9914623976",
     "9877524103"
   ],
-  "dripIds": ["5932459548"],
+  "dripIds": [
+    "5932459548"
+  ],
   "drip": {
     "startHour": 9,
     "endHour": 21,
     "gapMinMs": 1080000,
     "gapMaxMs": 1500000
   },
-  "allowedTelegramIds": ["5332135237","7985971941","5932459548"],
+  "allowedTelegramIds": [
+    "5332135237",
+    "7985971941",
+    "5932459548"
+  ],
   "schedule": {
     "morningDigest": "0 6 * * *",
     "reminderSend": "30 6 * * *",
@@ -111,5 +113,9 @@
   "tracker": {
     "callAfterDays": 30,
     "followUpDays": 3
-  }
+  },
+  "groupNames": [
+    "SINGH TRAVELS (PAID) ( ONLY DELHI // GURGAON // NOIDA - PICK-DROP)",
+    "Malwa Travels (PAID) Mix Duty Group"
+  ]
 }

@@ -6,7 +6,11 @@ const log = { info() {}, warn() {}, error() {} };
 
 // Every add path must stamp status NEW on a tracker bot. If one of them didn't, people
 // added that way would sit in the sheet with the wrong status and the call funnel would
-// quietly under-report them. `addnew` is the one the friend operators actually use.
+// quietly under-report them.
+//
+// `addnew` was a third path here until 2026-08-18. It was deleted, not renamed: it existed
+// only to add someone WITHOUT sending links, and `add` stopped sending anything, so the two
+// became one operation. addsilent survives because it differs on something real — paidLast 0.
 function harness(profile) {
   const added = [];
   const store = {
@@ -33,7 +37,7 @@ function harness(profile) {
     paidGroups: ['g1@g.us'],
     joining: { fee: 100 },
     renewal: { fullAmount: 100, referralAmount: 50 },
-    groupLinks: ['1. Group: https://chat.whatsapp.com/AAA'],
+    groupNames: ['Group A'],
     welcomeMessage: 'welcome',
     messages: {},
     rateLimits: {},
@@ -41,18 +45,15 @@ function harness(profile) {
   return { store, h: createMemberHandlers(store, groupManager, config, log) };
 }
 
-test('addnew stamps status NEW on a tracker bot, exactly like add', async () => {
-  const { store, h } = harness('tracker');
-  await h.handleNewAdd(['Balwinder', '9876500001']);
-  assert.equal(store.added.length, 1, 'member was added');
-  assert.equal(store.added[0].status, 'NEW');
+test('handleNewAdd is gone, not merely unrouted', () => {
+  const { h } = harness('tracker');
+  assert.equal(h.handleNewAdd, undefined, 'a dead export invites a future caller');
 });
 
-test('all three add paths stamp NEW on a tracker bot', async () => {
+test('both add paths stamp NEW on a tracker bot', async () => {
   for (const [label, call] of [
     ['add', h => h.handleAdd(['Amrik', '9876500001'])],
     ['addsilent', h => h.handleSilentAdd(['Balwinder', '9876500002'])],
-    ['addnew', h => h.handleNewAdd(['Charan', '9876500003'])],
   ]) {
     const { store, h } = harness('tracker');
     await call(h);
@@ -65,7 +66,6 @@ test('none of them stamp NEW on a full-profile bot', async () => {
   for (const [label, call] of [
     ['add', h => h.handleAdd(['Amrik', '9876500001'])],
     ['addsilent', h => h.handleSilentAdd(['Balwinder', '9876500002'])],
-    ['addnew', h => h.handleNewAdd(['Charan', '9876500003'])],
   ]) {
     const { store, h } = harness('full');
     await call(h);
@@ -75,10 +75,9 @@ test('none of them stamp NEW on a full-profile bot', async () => {
 
 // paidLast is the revenue sentinel, and it is where the three paths genuinely differ:
 // 0 means "existing member, do not count as a paid join".
-test('add and addnew count as paid joins; addsilent does not', async () => {
+test('add counts as a paid join; addsilent does not', async () => {
   const cases = [
     ['add', h => h.handleAdd(['Amrik', '9876500001']), 100],
-    ['addnew', h => h.handleNewAdd(['Charan', '9876500003']), 100],
     ['addsilent', h => h.handleSilentAdd(['Balwinder', '9876500002']), 0],
   ];
   for (const [label, call, expected] of cases) {

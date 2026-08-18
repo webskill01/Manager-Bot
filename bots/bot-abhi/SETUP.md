@@ -36,7 +36,7 @@ Fill in the placeholders below, then start it.
 ## 3. Fill in `config.json`
 - `split` — set the real names/percentages (see above).
 - `paidGroups` — the `…@g.us` IDs of this bot's groups.
-- `groupLinks` — invite links sent to new members.
+- `groupNames` — group labels only, no URLs. `kick` uses them to name the groups to clear by hand.
 - `welcomeMessage`, `messages.*` — customise text.
 - `renewal.fullAmount` / `referralAmount` / `joining.fee` — this owner's pricing.
 - `allowedNumbers` — owner's 10-digit number(s) (these can issue commands).

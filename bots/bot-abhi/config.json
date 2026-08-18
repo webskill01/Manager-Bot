@@ -48,11 +48,6 @@
     "circuitBreakerThreshold": 10,
     "circuitBreakerCooldownMs": 60000
   },
-  "groupLinks": [
-    "1. SINGH TRAVELS (PAID) ( ONLY DELHI // GURGAON // NOIDA - PICK-DROP):\n https://chat.whatsapp.com/CfQD1yDXh9286SfULIm0vX?s=cl&p=a&ilr=4",
-    "2. SINGH TRAVELS (PAID) (Chandigarh//mohali//zirakpur):\n https://chat.whatsapp.com/LGYSy7XFPHx58Q7sZCTYKx?s=cl&p=a&ilr=4",
-    "3. SINGH TRAVELS (PAID) (MIX DUTY):\n https://chat.whatsapp.com/J9m6Y7jKTNvCbKPJjZdQmM?s=cl&p=a&ilr=4"
-  ],
   "welcomeMessage": "🚨 Group ch share hon waliyan duties kai groups cho forward hundiyan ne, is karke kise nu vi advance payment na kro.\n\n⚠️ Free te Exchange de messages allowed nahi han.\n\n🙏 Je kise fraud number di duty vekho ta number private msg kar deo.",
   "trial": {
     "groupId": "120363423723888340@g.us",
@@ -83,14 +78,20 @@
     "9914623976",
     "8725871944"
   ],
-  "dripIds": ["5290581049"],
+  "dripIds": [
+    "5290581049"
+  ],
   "drip": {
     "startHour": 9,
     "endHour": 21,
     "gapMinMs": 1080000,
     "gapMaxMs": 1500000
   },
-  "allowedTelegramIds": ["5332135237","5290581049","7985971941"],
+  "allowedTelegramIds": [
+    "5332135237",
+    "5290581049",
+    "7985971941"
+  ],
   "schedule": {
     "morningDigest": "0 6 * * *",
     "reminderSend": "30 6 * * *",
@@ -111,5 +112,10 @@
   "tracker": {
     "callAfterDays": 30,
     "followUpDays": 3
-  }
+  },
+  "groupNames": [
+    "SINGH TRAVELS (PAID) ( ONLY DELHI // GURGAON // NOIDA - PICK-DROP)",
+    "SINGH TRAVELS (PAID) (Chandigarh//mohali//zirakpur)",
+    "SINGH TRAVELS (PAID) (MIX DUTY)"
+  ]
 }
