@@ -20,7 +20,7 @@ const SLOW_COMMANDS = new Set([
   'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
   'kick', 'rejoin', 'sendlinks', 'links', 'groupcheck', 'remind', 'renewed',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
-  'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi',
+  'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip',
 ]);
 
 // A Sheets 403 is a Google-side problem, not a bot problem, but its raw message ("The
@@ -68,7 +68,7 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null) {
   const memberH = createMemberHandlers(store, groupManager, config, log);
   const renewalH = createRenewalHandlers(store, config, log);
   const lookupH = createLookupHandlers(store, config, log);
@@ -84,7 +84,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   const RENEWAL_ONLY = new Set([
     'renewed', 'remind', 'dmlist', 'dmlist2', 'dmlist3', 'sent', 'due', 'overdue', 'refs', 'ref',
     'warnall', 'kickall', 'removal', 'forecast', 'collection',
-    'norenew', 'toprefs', 'loyal', 'churn', 'upcoming',
+    'norenew', 'toprefs', 'loyal', 'churn', 'upcoming', 'drip',
   ]);
 
   // Commands that read or mutate LIVE WhatsApp group state. A Telegram-operated bot holds
@@ -688,6 +688,21 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         // evidence, so it reads the same record the batch report renders.
         case 'sent':     return handleSent();
 
+        // The drip pushes tap-to-send links to Telegram on a timer so the operator sends
+        // them by hand, spaced out, instead of remembering to run `dmlist` and then firing
+        // a whole day's reminders in one sitting.
+        case 'drip': {
+          if (!dripEngine) {
+            return '⚠️ Drip unavailable — it needs a Telegram listener, and this bot has none.\n' +
+                   'Add TELEGRAM_TOKEN to this bot\'s .env and restart. Meanwhile: dmlist';
+          }
+          const sub = (args[0] || '').toLowerCase();
+          if (sub === 'stop')  return dripEngine.stop();
+          if (sub === 'start') return dripEngine.start();
+          if (sub === 'test')  return dripEngine.test();
+          return dripEngine.status();
+        }
+
         case 'removal':    return removalEngine.handleRemoval();
         case 'warnall':    return removalEngine.warnall();
         case 'kickall':    return removalEngine.kickall();
@@ -752,5 +767,16 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     activeOverdueList = list;
   }
 
-  return { parse, setOverdueList };
+  // Run a report the way an operator would type it, and hand back one string.
+  //
+  // The restored morning/evening digest crons call this rather than reaching into the
+  // handlers directly, so the scheduled report and the typed command can never drift apart
+  // — that drift is how `digest` and the old cron ended up computing different sets.
+  // Array replies (chunked reports) are joined; Telegram's own splitter handles length.
+  async function runReport(cmd) {
+    const out = await parse(cmd);
+    return Array.isArray(out) ? out.join('\n\n') : out;
+  }
+
+  return { parse, setOverdueList, runReport };
 }

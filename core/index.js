@@ -37,6 +37,7 @@ import { createCommandParser, isSlowCommand } from './commandParser.js';
 import { createScheduler } from './scheduler.js';
 import { createReminderSender, renderSendLog } from './reminderSender.js';
 import { createOverdueEngine } from './overdueEngine.js';
+import { createDripEngine } from './dripEngine.js';
 import { createTrialRemovalEngine } from './trialRemovalEngine.js';
 import { createRemovalEngine } from './removalEngine.js';
 import { createGhostRemovalEngine } from './ghostRemovalEngine.js';
@@ -63,6 +64,7 @@ export async function startBot(config, log, authDir) {
   let latestQR = null;
   let qrTimestamp = null;
   let commandParser = null;
+  let dripEngine = null;
   let schedulerStarted = false;
   // Second command channel, on `transport: "dual"` only (bot-nitin). It drives the SAME
   // commandParser and the SAME live socket, so `kick` typed in Telegram really removes the
@@ -113,6 +115,18 @@ export async function startBot(config, log, authDir) {
   log.info('📊 Connecting to Google Sheets...');
   const sheetClient = await createSheetClient(config.serviceAccountPath, config.sheetId, log);
   const store = createMemberStore(sheetClient, config.botName);
+
+  // Built here, not inside the connection handler: the drip sends nothing over WhatsApp, so
+  // it must not be coupled to whether a socket ever comes up. On a flagged number the drip
+  // is the ONLY thing still reminding anyone, which is exactly when it matters most.
+  // notifyTelegram is a hoisted function declaration, so referencing it this early is fine.
+  if (!isTracker(config)) {
+    dripEngine = createDripEngine(
+      config, log, store, reminderSender,
+      (text) => notifyTelegram(text, config.dripIds),
+    );
+  }
+
   // The first read retries transient failures internally (see sheetClient.withRetry).
   // If it still fails, say so loudly and exit non-zero rather than dying with a bare
   // unhandled rejection — pm2 restarts either way, but a silent death at "Connecting to
@@ -366,7 +380,7 @@ export async function startBot(config, log, authDir) {
       sock.ev.on('groups.update', (updates) => { for (const u of updates || []) groupMetaCache.delete(u?.id); });
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine);
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {
@@ -455,6 +469,9 @@ export async function startBot(config, log, authDir) {
                 reminderSender.resume(store, getSock, config.botDir, broadcast);
                 overdueEngine.resume(store, getSock, getBroadcastJids);
               }
+              // NOT gated on usesCloudApi: the drip is what runs precisely while the Cloud
+              // API is still blocked on billing, and it transmits nothing over WhatsApp.
+              dripEngine?.resume();
             }, msLeft + 1000);
           } else {
             trialEngine.resume();
@@ -469,6 +486,7 @@ export async function startBot(config, log, authDir) {
               reminderSender.resume(store, getSock, config.botDir, broadcast);
               overdueEngine.resume(store, getSock, getBroadcastJids);
             }
+            dripEngine?.resume();
             await resolveAdminJids();
           }
 
@@ -519,6 +537,18 @@ export async function startBot(config, log, authDir) {
                 await overdueEngine.runOverdueCheck(store, getSock, getBroadcastJids());
                 await reportBatch('Overdue check', null);
               },
+
+              // The three below exist ONLY when a Telegram listener is running, and they
+              // deliver through notifyTelegram — never broadcast(), whose WhatsApp half is
+              // the traffic that got numbers banned. A token-less bot spreads nothing here
+              // and so registers none of these jobs at all. That absence IS the safety gate.
+              ...(config.usesTelegram ? {
+                morningDigest:  async () => { await notifyTelegram(await commandParser.runReport('digest')); },
+                eveningSummary: async () => { await notifyTelegram(await commandParser.runReport('summary')); },
+                // Not gated on warm-up: warm-up keeps a freshly linked WhatsApp number
+                // quiet, and the drip never transmits on it.
+                dripArm: () => dripEngine.arm(),
+              } : {}),
             });
           }
         }

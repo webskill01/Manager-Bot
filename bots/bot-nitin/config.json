@@ -1,6 +1,13 @@
 {
   "botName": "bot-nitin",
   "transport": "dual",
+  "dripIds": ["5332135237"],
+  "drip": {
+    "startHour": 9,
+    "endHour": 21,
+    "gapMinMs": 1080000,
+    "gapMaxMs": 1500000
+  },
   "allowedTelegramIds": ["5332135237","7985971941"],
   "warmupHours": 0,
   "paidGroups": [

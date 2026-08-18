@@ -572,6 +572,13 @@ This bot has NO scheduled jobs — it only acts when you send a command.`;
   Tap a link → the message is already typed → hit send. Attach the QR
   yourself on the ₹${config.renewal.fullAmount} round.
 
+  Or let the bot pace it for you — same links, pushed a few at a time:
+• drip        →  what's been pushed today and what's left
+• drip test   →  push one batch NOW to check it works (records nothing)
+• drip stop   →  pause for today   ·   drip start  →  resume
+  It wakes at 9 AM, sends up to 3 links every 18-25 min until 9 PM, and
+  re-reads the sheet each time so anyone who pays drops off the rest.
+
 • dmlist [1-31]  →  everyone billed on that day of the month, still unpaid
 • dmlist [1-31] msg2|msg3  →  same batch, escalated wording
 

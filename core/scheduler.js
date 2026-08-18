@@ -34,16 +34,27 @@ export function createScheduler(config, log) {
     log.info(`⏰ Scheduled ${label} @ ${expr} (${tz}, jitter ≤${schedule.jitterMaxMinutes ?? 20}m)`);
   }
 
-  // morning-digest and evening-summary were removed deliberately (2026-07-27): both DM'd
-  // every admin twice a day, and that was the traffic that got freshly linked numbers
-  // banned — a brand-new account whose first-ever action is a 6 AM text blast to three
-  // non-contacts. The same reports are now the `digest` and `summary` commands, so the
-  // information is pulled on demand instead of pushed. Do NOT reintroduce them as crons.
-  // The schedule.morningDigest / schedule.eveningSummary config keys are now inert.
+  // morning-digest and evening-summary were removed in July 2026 because both DM'd every
+  // admin twice a day over WhatsApp, and that was the traffic that got freshly linked
+  // numbers banned — a brand-new account whose first-ever action is a 6 AM text blast to
+  // three non-contacts.
+  //
+  // They are back, under the one condition that removes the cause entirely: index.js passes
+  // these tasks ONLY when config.usesTelegram is true, and the tasks it passes deliver
+  // through notifyTelegram — never broadcast(), which also writes to the WhatsApp socket.
+  // So a bot with no Telegram token receives no digest task and registers no digest job.
+  //
+  // That is why the gate lives in the caller rather than here: this file cannot see how a
+  // task delivers, and a `usesTelegram` check in this file would give the wrong answer for
+  // any task that still reached WhatsApp. Absent task → absent job is the honest contract.
+  // Do NOT add a WhatsApp delivery path to these.
   function start(tasks) {
     register(schedule.reminderSend,   'reminder-send',    tasks.reminderSend);
     register(schedule.reminderSend2,  'reminder-send-2',  tasks.reminderSend2);
     register(schedule.overdueCheck,   'overdue-check',    tasks.overdueCheck);
+    if (tasks.morningDigest)  register(schedule.morningDigest,  'morning-digest',  tasks.morningDigest);
+    if (tasks.eveningSummary) register(schedule.eveningSummary, 'evening-summary', tasks.eveningSummary);
+    if (tasks.dripArm)        register(schedule.dripArm || '0 9 * * *', 'drip-arm', tasks.dripArm);
     log.info(`⏰ Scheduler started — ${jobs.length} jobs active`);
   }
 

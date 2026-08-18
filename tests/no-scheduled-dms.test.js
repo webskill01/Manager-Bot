@@ -51,7 +51,17 @@ const overdueConfig = (botDir, extra = {}) => ({
 
 // ── scheduler ────────────────────────────────────────────────────────────────
 
-test('scheduler registers ONLY the three send jobs — no digest, no summary', () => {
+// SUPERSEDES the July 2026 rule that the digests could never be scheduled at all.
+//
+// Back then this test passed digest TASKS and asserted no digest JOB was created, because
+// the only delivery available was broadcast(), which writes to the WhatsApp socket. The
+// digests are now allowed — but only over Telegram, and index.js expresses that by passing
+// the tasks solely when config.usesTelegram is true.
+//
+// So the property worth pinning moved: it is no longer "digests never register", it is
+// "no task in, no job out". A bot with no Telegram listener passes no digest task and
+// therefore still schedules nothing that could reach WhatsApp. That is the case below.
+test('a bot with no Telegram listener schedules no digest and no drip', () => {
   const log = capturingLog();
   const scheduler = createScheduler({
     schedule: {
@@ -65,12 +75,13 @@ test('scheduler registers ONLY the three send jobs — no digest, no summary', (
   }, log);
 
   const called = [];
+  // Exactly what index.js passes when config.usesTelegram is false: the three renewal
+  // jobs and nothing else. The digest cron keys are still present in config and must
+  // stay inert on their own.
   scheduler.start({
-    morningDigest: () => called.push('morningDigest'),
     reminderSend: () => called.push('reminderSend'),
     reminderSend2: () => called.push('reminderSend2'),
     overdueCheck: () => called.push('overdueCheck'),
-    eveningSummary: () => called.push('eveningSummary'),
   });
 
   const scheduled = log.lines.filter(l => l.startsWith('⏰ Scheduled'));
@@ -78,6 +89,7 @@ test('scheduler registers ONLY the three send jobs — no digest, no summary', (
   assert.ok(log.lines.some(l => l.includes('3 jobs active')));
   assert.ok(!scheduled.some(l => l.includes('morning-digest')), 'morning digest must NOT be scheduled');
   assert.ok(!scheduled.some(l => l.includes('evening-summary')), 'evening summary must NOT be scheduled');
+  assert.ok(!scheduled.some(l => l.includes('drip-arm')), 'drip must NOT be scheduled');
   assert.deepEqual(
     scheduled.map(l => l.match(/Scheduled (\S+)/)[1]).sort(),
     ['overdue-check', 'reminder-send', 'reminder-send-2'],
