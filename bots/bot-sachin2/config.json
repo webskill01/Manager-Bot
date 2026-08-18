@@ -9,15 +9,15 @@
     "shares": [
       {
         "label": "Sachin",
-        "percent": 60
+        "percent": 50
       },
       {
         "label": "Nitin",
-        "percent": 20
+        "percent": 25
       },
       {
         "label": "Tanishq",
-        "percent": 20
+        "percent": 25
       }
     ]
   },
