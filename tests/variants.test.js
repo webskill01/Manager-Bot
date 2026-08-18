@@ -54,3 +54,78 @@ test('the spread is roughly even, not 90% one variant', () => {
     assert.ok(counts[k] > 200, `variant ${k} only got ${counts[k]}/900 — hash is skewed`);
   }
 });
+
+// ── the real shipped configs ──────────────────────────────────────────────────
+import fs from 'node:fs';
+import { buildDmList } from '../core/dmList.js';
+
+const BOTS = ['bot-nitin', 'bot-abhi', 'bot-sachin2', 'bot-aayush2'];
+const STAGES = ['reminder', 'referralReminder', 'overdue', 'finalReminder'];
+
+function ddmmyyyy(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() - offsetDays);
+  const p = (x) => String(x).padStart(2, '0');
+  return `${p(d.getDate())}-${p(d.getMonth() + 1)}-${d.getFullYear()}`;
+}
+
+test('every shipped variant substitutes cleanly — no {name} or {date} survives', () => {
+  for (const bot of BOTS) {
+    const cfg = JSON.parse(fs.readFileSync(`bots/${bot}/config.json`, 'utf8'));
+    for (const [cohort, days] of [['due', 0], ['nudge', cfg.overdue.autoReminderDays], ['final', cfg.overdue.finalReminderDays]]) {
+      // 40 members spreads them across every variant of whichever stage this cohort maps to.
+      const members = Array.from({ length: 40 }, (_, i) => ({
+        name: `Member${i}`, phone: `90000000${String(i).padStart(2, '0')}`,
+        billingDate: ddmmyyyy(days), status: 'ACTIVE', renewals: 0,
+      }));
+      const { rows } = buildDmList({ members, config: cfg, cohort });
+      assert.ok(rows.length > 0, `${bot}/${cohort} produced no rows`);
+      for (const r of rows) {
+        assert.ok(!r.text.includes('{name}'), `${bot}/${cohort}: unsubstituted {name} in:\n${r.text}`);
+        assert.ok(!r.text.includes('{date}'), `${bot}/${cohort}: unsubstituted {date} in:\n${r.text}`);
+        assert.ok(r.text.trim().length > 0, `${bot}/${cohort}: empty message`);
+      }
+    }
+  }
+});
+
+test('a template naming the member twice substitutes BOTH', () => {
+  // Plain-string .replace() only swaps the first match, so the second would ship as the
+  // literal text "{name}". Easy to hit now that operators hand-write several variants.
+  const cfg = {
+    joining: { fee: 90 },
+    overdue: { autoReminderDays: 5, finalReminderDays: 6, consolidatedListDays: 7 },
+    messages: { reminder: '{name} ji, {date} nu {name} da mahina {date} nu pura hoya' },
+  };
+  const members = [{ name: 'Rajan', phone: '9000000001', billingDate: ddmmyyyy(0), status: 'ACTIVE', renewals: 0 }];
+  const { rows } = buildDmList({ members, config: cfg, cohort: 'due' });
+  assert.ok(!rows[0].text.includes('{name}'), rows[0].text);
+  assert.ok(!rows[0].text.includes('{date}'), rows[0].text);
+  assert.equal((rows[0].text.match(/Rajan/g) || []).length, 2);
+});
+
+test('bots with variants actually produce more than one distinct message', () => {
+  for (const bot of ['bot-nitin', 'bot-abhi', 'bot-sachin2']) {
+    const cfg = JSON.parse(fs.readFileSync(`bots/${bot}/config.json`, 'utf8'));
+    const members = Array.from({ length: 60 }, (_, i) => ({
+      name: 'SameName', phone: `90000000${String(i).padStart(2, '0')}`,
+      billingDate: ddmmyyyy(0), status: 'ACTIVE', renewals: 0,
+    }));
+    const { rows } = buildDmList({ members, config: cfg, cohort: 'due' });
+    const distinct = new Set(rows.map(r => r.text));
+    assert.equal(distinct.size, cfg.messages.reminder.length,
+      `${bot}: expected ${cfg.messages.reminder.length} distinct wordings, saw ${distinct.size}`);
+  }
+});
+
+test('every shipped config still parses and keeps its amounts consistent', () => {
+  for (const bot of BOTS) {
+    const cfg = JSON.parse(fs.readFileSync(`bots/${bot}/config.json`, 'utf8'));
+    for (const stage of STAGES) {
+      const v = cfg.messages[stage];
+      const list = Array.isArray(v) ? v : [v];
+      assert.ok(list.length > 0 && list.every(x => typeof x === 'string' && x.trim()),
+        `${bot}.messages.${stage} has an empty or non-string entry`);
+    }
+  }
+});

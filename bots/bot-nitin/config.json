@@ -122,10 +122,26 @@
     "groupReminder": "Sat Sri Akal ji 🙏🏻 Aaj {date} nu ehna members da ik mahina pura ho gya — upar dite QR te 90 pay karke dss deyo ji 🙏🏻:",
     "groupOverdue": "🚨 Inna veera di renew di aaj last date aaji — jaldi to jaldi renew karke dss deyo ji 🙏🏻:",
     "groupAutoRenewed": "Inna members ne 2 bande add karaye ne — ehna da is mahine da renewal FREE aaji",
-    "reminder": "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\niss mahine lyi iste 90 pay krdo ji 🙏🏻",
-    "referralReminder": "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\nTusi ik banda add kraya si, iss lyi iste sirf ₹45/- pay krdo ji 🙏🏻",
-    "overdue": "Sat Sri Akal {name} paaji 🙏🏻\n🚨🚨 Aaj last date aaji renew krke dss deyo. 🙏🏻",
-    "finalReminder": "Hnji Veerji knra ji renew ?",
+    "reminder": [
+      "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\niss mahine lyi iste 90 pay krdo ji 🙏🏻",
+      "{name} paaji Sat Sri Akal 🙏🏻\nTohada mahina {date} nu pura ho gya si ji\nIss mahine lyi 90 pay krdo ji 🙏🏻",
+      "Sat Sri Akal ji {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya hai\nKirpa krke iss mahine de 90 pay kr deyo ji 🙏🏻"
+    ],
+    "referralReminder": [
+      "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\nTusi ik banda add kraya si, iss lyi iste sirf ₹45/- pay krdo ji 🙏🏻",
+      "{name} paaji Sat Sri Akal 🙏🏻\nTohada mahina {date} nu pura ho gya si ji\nTusi ik banda add kraya si, iss lyi sirf ₹45/- pay krdo ji 🙏🏻",
+      "Sat Sri Akal ji {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya hai\nIk banda add karan karke tohada sirf ₹45/- banda hai ji 🙏🏻"
+    ],
+    "overdue": [
+      "Sat Sri Akal {name} paaji 🙏🏻\n🚨🚨 Aaj last date aaji renew krke dss deyo. 🙏🏻",
+      "{name} paaji 🙏🏻\n🚨🚨 Aaj last date hai ji, renew krke dss deyo.",
+      "Sat Sri Akal {name} paaji\n🚨 Renew di last date aaj hai ji, kirpa krke kr deyo 🙏🏻"
+    ],
+    "finalReminder": [
+      "Hnji Veerji knra ji renew ?",
+      "Hnji {name} paaji, renew krna hai ji ?",
+      "{name} veerji, group chalu rakhna hai ji ?"
+    ],
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
   },
   "groupNames": [

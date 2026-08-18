@@ -79,8 +79,11 @@ export function buildDmList({ members, config, cohort = 'due', billingDay = null
     // simply wrong — telling someone billed on the 20th that their date is the 28th reads
     // as a mistake and invites an argument about what they actually owe.
     const text = templateFor(stage, config, { referral, phone: m.phone })
-      .replace('{name}', m.name)
-      .replace('{date}', friendlyDate(m.billingDate));
+      // Global, not first-occurrence. A plain-string .replace() swaps only the first match,
+      // so a template mentioning the member twice would send the second one as the literal
+      // text "{name}". Cheap to get wrong now that operators write several variants each.
+      .replace(/\{name\}/g, m.name)
+      .replace(/\{date\}/g, friendlyDate(m.billingDate));
 
     rows.push({
       name: m.name,
