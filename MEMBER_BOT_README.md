@@ -143,12 +143,20 @@ A migration script will be built in Phase 1 to do this automatically.
 
 ### 1. Scheduled Jobs (IST timezone locked)
 
-| Time | Job |
-|------|-----|
-| 9:00 AM | Morning digest — who's due today |
-| 9:30 AM | Send renewal reminder + QR to each due member (rate-limited) |
-| 10:00 PM | Evening auto-summary — new joins, renewals, removals |
-| Continuous | Overdue detection — flags anyone crossing 5-day mark |
+> **Superseded 18 Aug 2026** — the table below describes the original design. What actually
+> runs now is listed here. Every job jitters 0-20 min and nothing on a timer messages a member.
+
+| Time | Job | Delivers to |
+|------|-----|-------------|
+| 6:00 AM | `morning-digest` — who's due today | Telegram (operators) |
+| 6:30 / 7:30 AM | `reminder-send` / `-2` | **inert** until `reminderChannel: "cloudapi"` |
+| 9:00 AM | `drip-arm` — starts the day's tap-link drip | Telegram (drip owner) |
+| 10:00 AM | `overdue-check` | **inert** until the Cloud API is live |
+| 10:00 PM | `evening-summary` | Telegram (operators) |
+
+Bots with a Telegram listener register the digests and the drip; bots without register
+neither. Telegram-only bots (the friend bots) have no reminder jobs at all, so they show
+**3 jobs active** where bot-nitin shows 6.
 
 ### 2. Renewal Reminder Flow
 
@@ -201,7 +209,8 @@ Bot:
 Reply LINKS 98551XXXXX to get invite links for failed groups.
 ```
 
-4. If you reply `LINKS 98551XXXXX` → bot sends only the 3 failed group invite links
+4. If you reply `LINKS 98551XXXXX` → you get tap-to-send links for the 3 failed groups.
+   (Since 18 Aug 2026 the bot never sends these itself — you tap and send from your own phone.)
 5. If groups require admin approval → `approve 98551XXXXX` auto-approves across all pending groups
 
 ### 5. Remove Member Flow
@@ -230,6 +239,48 @@ All sends use patterns from the taxi bot codebase:
 > **Send `help` to the bot for the authoritative, per-bot list** — it's generated from the
 > running config and differs between the two profiles. The sections below predate the
 > July 2026 rework and are kept for background; where they disagree with `help`, `help` wins.
+
+### Added 18 Aug 2026 — the drip, full friend bots, link rework
+
+**`drip`** — the bot paces your MANUAL reminders instead of you remembering to run `dmlist`.
+A 9 AM job builds the day's three cohorts, then pushes one Telegram message every 18-25 min
+until 9 PM carrying up to three tap-to-send `wa.me` links (one due-today, one day-N overdue,
+one day-M final). You tap and send from your own phone — the bot sends nothing to members.
+
+| Command | Does |
+|---|---|
+| `drip` | what's been pushed today, what's left, whether it's running |
+| `drip test` | push one real batch NOW, ignores the window, **records nothing** |
+| `drip stop` / `drip start` | pause for the day / resume |
+
+The sheet is re-read before every push, so anyone who pays mid-day drops off the rest of the
+queue. Whatever isn't reached by 9 PM is dropped, not carried — they arrive tomorrow one day
+more overdue. A 9 PM report says "N pushed, M NOT reached", so a dead drip and a quiet day
+never look the same. `dripIds` in config decides who gets buzzed; `allowedTelegramIds` stays
+the command allow-list, so partners keep access and the digests without the notifications.
+
+**Digests are back**, Telegram-only: `morning-digest` (6 AM) and `evening-summary` (10 PM).
+They are passed to the scheduler ONLY when the bot has a Telegram listener — no task in, no
+job out — so a token-less bot still schedules nothing that could reach WhatsApp.
+
+**Message variants.** `messages.reminder` / `referralReminder` / `overdue` / `finalReminder`
+each accept a **string or an array**. Each member gets one picked from their phone + the
+date: random across members and months, stable within a day. Identical text to hundreds of
+people is a stronger spam signal than any send gap, so this matters more than timing.
+
+**Link sharing changed shape.** `add` and `sendlinks` no longer send anything. They fetch
+invite codes **live** from the socket and hand you tap-to-send links, split into batches of
+`linkBatchSize` (default 6) so nothing hides behind WhatsApp's "Read more" fold. The old path
+fired 13 messages at a fixed 1.2-second interval, and that cadence — not the links — is what
+reads as automation. `config.groupLinks` is gone (a stored invite URL dies at the next ban);
+`config.groupNames` keeps the labels, which `kick` uses to name the groups to clear by hand.
+
+**`addnew` is deleted** — with `add` no longer sending, they were the same command. Typing it
+returns a pointer. `addsilent` stays: it differs on `paidLast: 0`, keeping an existing member
+out of join revenue.
+
+**All four bots run `profile: "full"`.** Call tracking (`called`, `log`) works on every
+profile now. **`pending` means OVERDUE everywhere** — the call list lives in `log`.
 
 ### Added 15 Aug 2026 — bot-nitin hybrid (`transport: "dual"`)
 
