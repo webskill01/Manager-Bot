@@ -138,6 +138,27 @@ export function loadConfig(botDir) {
   return config;
 }
 
+// Pick one wording from a config value that may be a plain string or an array of variants.
+//
+// Seeded on phone + date: random-looking across members AND across months, but stable
+// within a day. That stability is the point — dripEngine rebuilds from the sheet before
+// every push, and a variant that changed between two rebuilds would show the operator one
+// message and hand the member another.
+//
+// The reason this exists at all is anti-spam, not variety: 929 people receiving
+// byte-identical text is a stronger signal to WhatsApp than any gap between sends can
+// offset. A plain string is returned untouched, so nothing changes until an operator
+// actually writes alternate wordings into their config.
+export function pickVariant(value, phone, date = todayStr()) {
+  if (!Array.isArray(value)) return value;
+  if (value.length === 0) return '';
+  if (value.length === 1) return value[0];
+  const seed = `${phone}|${date}`;
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (Math.imul(h, 31) + seed.charCodeAt(i)) >>> 0;
+  return value[h % value.length];
+}
+
 // Who receives the drip. Deliberately NOT allowedTelegramIds: that list is the command
 // security boundary and must keep covering every partner, but on a friend bot only the
 // friend actually sends the messages — buzzing the other two ~34 times a day is pure noise.

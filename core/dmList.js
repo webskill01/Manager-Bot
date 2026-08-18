@@ -1,6 +1,6 @@
 import {
   daysFromToday, todayStr, friendlyDate, isDelayActive, renewedOn, parseDate,
-  getReferralsInBillingPeriod, chunkByChars, MAX_CHARS_PER_MSG,
+  getReferralsInBillingPeriod, chunkByChars, MAX_CHARS_PER_MSG, pickVariant,
 } from './globalConfig.js';
 
 // Re-exported for tests and for callers that already import them from here.
@@ -16,11 +16,15 @@ export function pickStage(overdueDays, config) {
   return 'msg1';
 }
 
-function templateFor(stage, config, { referral }) {
+// Each message may be a string or an array of variants — see pickVariant. The pick is keyed
+// on the member's phone so it is stable for them within the day, which matters because the
+// drip re-renders this list before every push.
+function templateFor(stage, config, { referral, phone }) {
   const m = config.messages || {};
-  if (stage === 'msg3') return m.finalReminder || m.overdue || 'Renewal pending — please repay.';
-  if (stage === 'msg2') return m.overdue || 'Your renewal date has passed — please repay.';
-  return (referral && m.referralReminder) ? m.referralReminder : (m.reminder || 'Your renewal is due today.');
+  const pick = (v) => pickVariant(v, phone);
+  if (stage === 'msg3') return pick(m.finalReminder) || pick(m.overdue) || 'Renewal pending — please repay.';
+  if (stage === 'msg2') return pick(m.overdue) || 'Your renewal date has passed — please repay.';
+  return (referral && m.referralReminder) ? pick(m.referralReminder) : (pick(m.reminder) || 'Your renewal is due today.');
 }
 
 // Two ways to pick who lands on the list. Both are backwards-only — messaging someone
@@ -74,7 +78,7 @@ export function buildDmList({ members, config, cohort = 'due', billingDay = null
     // {date} is the member's OWN billing date, not today. On a backlog run today's date is
     // simply wrong — telling someone billed on the 20th that their date is the 28th reads
     // as a mistake and invites an argument about what they actually owe.
-    const text = templateFor(stage, config, { referral })
+    const text = templateFor(stage, config, { referral, phone: m.phone })
       .replace('{name}', m.name)
       .replace('{date}', friendlyDate(m.billingDate));
 
