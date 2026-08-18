@@ -219,3 +219,61 @@ test('arm auto-renews once before the first push', async () => {
   await engine.arm();
   assert.equal(renewCalls, 1, 'a 2-ref member owes nothing — chasing them is a real error');
 });
+
+// ── the drip and the Cloud API are alternatives, never a pair ─────────────────
+// Flipping reminderChannel to "cloudapi" wakes the three reminder crons, which message the
+// same members the drip queues links for. Both on = every member reminded twice, once by
+// Meta and once by the operator's thumb. Gated at the engine, not just the cron, because
+// `drip start` and `drip test` are typed by hand.
+const cloudCfg = () => ({
+  ...cfg,
+  botDir: tempBotDir(),
+  drip: { startHour: 0, endHour: 24 },
+  reminderChannel: 'cloudapi',
+  // token is injected from the gitignored .env at load time, never config.json — but
+  // isConfigured() requires it, so a fixture without one would silently make usesCloudApi
+  // false and "pass" these tests for the wrong reason.
+  cloudApi: {
+    phoneNumberId: '1336660736191431',
+    token: 'EAA-fake-system-user-token',
+    templates: { reminder: 'renewal_due' },
+  },
+});
+
+function cloudEngine(calls) {
+  const store = { refresh: async () => {}, getAll: () => [member('A', '9000000001', 0)] };
+  return createDripEngine(cloudCfg(), quietLog, store,
+    { autoRenewDue: async () => [] }, async (t) => { calls.push(t); return true; });
+}
+
+test('tick pushes nothing once reminders run through the Cloud API', async () => {
+  const calls = [];
+  await cloudEngine(calls).tick();
+  assert.equal(calls.length, 0, 'double-reminding every member is the bug this prevents');
+});
+
+test('arm does nothing once the Cloud API is live', async () => {
+  const calls = [];
+  await cloudEngine(calls).arm();
+  assert.equal(calls.length, 0);
+});
+
+test('a hand-typed drip start is refused, with the reason', () => {
+  const calls = [];
+  const reply = cloudEngine(calls).start();
+  assert.match(reply, /Cloud API/);
+  assert.equal(calls.length, 0);
+});
+
+test('drip test is refused too — it would push real links', async () => {
+  const calls = [];
+  const reply = await cloudEngine(calls).test();
+  assert.match(reply, /Cloud API/);
+  assert.equal(calls.length, 0);
+});
+
+test('resume after a restart does not revive the drip', () => {
+  const calls = [];
+  cloudEngine(calls).resume();
+  assert.equal(calls.length, 0);
+});

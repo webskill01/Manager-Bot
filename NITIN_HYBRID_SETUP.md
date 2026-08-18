@@ -507,6 +507,47 @@ Cross-check the count against `due` the same morning.
 
 ---
 
+## Until the Cloud API is live: the drip
+
+Cloud API is blocked on billing, so reminders are still sent **by hand**. The drip removes the
+part you kept getting wrong — remembering — without touching the part that keeps you safe.
+
+At 9 AM a `drip-arm` cron builds the day's three queues (due today, day-5, day-6) and then
+pushes you one Telegram message every 18–25 minutes until 9 PM, each carrying up to three
+tap-to-send `wa.me` links — one per queue. You tap, WhatsApp opens with the message typed,
+you hit send. It leaves from your own phone as a normal human message.
+
+```json
+"dripIds": ["5332135237"],
+"drip": { "startHour": 9, "endHour": 21, "gapMinMs": 1080000, "gapMaxMs": 1500000 }
+```
+
+`dripIds` is who gets buzzed — deliberately **not** `allowedTelegramIds`, which stays as the
+command allow-list so Tanishq keeps command access and the digests without ~34 buzzes a day.
+
+| Command | Does |
+|---|---|
+| `drip` | what's been pushed today, what's left, and whether it's running |
+| `drip test` | pushes one real batch **now**, ignores the window, **records nothing** — those members still get their real push later |
+| `drip stop` / `drip start` | pause for the day / resume |
+
+Behaviour worth knowing:
+
+- The sheet is re-read before **every** push, so anyone who pays mid-day drops off the rest of
+  the queue. `markPhoneReminded` is honoured too — a manual `dmlist` earlier won't double-hit.
+- Whatever isn't reached by 9 PM is **dropped, not carried**. Those members arrive tomorrow one
+  day more overdue, which the 5/6/7 ladder absorbs. Carrying them is what lets a backlog snowball.
+- At 9 PM you get "N pushed, M not reached". **If that report doesn't arrive, the drip died** —
+  a dead drip and a quiet day look identical otherwise.
+- `messages.reminder` and friends accept an **array** of wordings. Each member gets one picked
+  from `hash(phone + today)` — random across members and months, stable within a day.
+
+**When the Cloud API goes live, the drip is replaced, not run alongside it.** Flipping
+`reminderChannel` wakes the three reminder crons; leave the drip armed and members would get
+both. Set `drip stop`, or drop the `drip` block, on the same day you cut over.
+
+---
+
 ## How you know reminders are actually going out
 
 You will not see them — they leave from a number that is not on your phone. So:

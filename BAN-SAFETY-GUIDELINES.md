@@ -65,7 +65,23 @@ first** — keep it that way. Rules per step:
 - ✅ Ask them to **save your number** in this first conversation.
 
 ### Step 2 — Sharing group links
-- ✅ Share links **only inside an active chat** where they asked to join (our `sendlinks` does this — fine).
+
+> **18 Aug 2026 — the bot no longer sends these. You do.**
+> `add` and `sendlinks` used to fire 12 link messages plus a welcome at a fixed 1.2-second
+> interval from the linked device. Nobody types 13 messages in 16 seconds, and that cadence —
+> not the links themselves — is what reads as automation. Both commands now hand you
+> **tap-to-send links**: tap, WhatsApp opens with the message already typed, hit send.
+>
+> bot-nitin's 12 groups arrive as **2 taps of 6 links each**, because WhatsApp hides anything
+> past ~800 characters behind "Read more" and a single 12-link message would bury most of them.
+> Send both parts; a 15–30 second gap between your taps is normal and fine.
+>
+> Invite codes are fetched **live** from the socket every time, so they are never stale after a
+> ban and re-link. `groupLinks` is gone from config — there is nothing to update any more.
+> Friend bots have no WhatsApp connection, so they cannot fetch codes at all: share those
+> invites from your own phone.
+
+- ✅ Share links **only inside an active chat** where they asked to join.
 - ✅ 2–3 links in one message is OK for an interested person. Add a line of human text around the links,
   never a bare link-dump.
 - ❌ Don't paste your invite links into other people's groups, status of strangers, or unrelated chats —
@@ -133,6 +149,16 @@ The July 2026 rework exists because payment-demand DMs are our #1 ban signal. Ru
 > The only automated outbound left on a full-profile bot is one group message per group
 > per day. Tracker-profile bots register **zero** cron jobs.
 
+> **18 Aug 2026 — the digests are back, over Telegram only.**
+> The rule above was never "these reports are dangerous", it was "the only way to deliver
+> them was WhatsApp". Now that every bot has a Telegram operator channel, `morning-digest`
+> and `evening-summary` run again — and a `drip-arm` job at 9 AM joins them. All three
+> deliver through Telegram and **cannot** reach the WhatsApp socket: a bot with no Telegram
+> token is passed no such task and therefore registers no such job.
+>
+> What has NOT changed: no bot sends anything to a **member** on a schedule. The drip pushes
+> links to *you*; you send them. That distinction is the whole design.
+
 - ✅ **Group reminder mode is the default for fragile numbers.** One tagged digest in the paid group replaces
   all cold DMs. Members are in that group by choice — near-zero report risk.
 - ✅ **No message tags more than 20 people.** Larger lists split automatically and are spaced apart. Bulk
@@ -147,13 +173,42 @@ The July 2026 rework exists because payment-demand DMs are our #1 ban signal. Ru
   pattern the bot was rebuilt to avoid.
 - ❌ Don't send reminders late at night (recipients report night-time business messages far more).
 
+### The drip (18 Aug 2026) — the bot paces you, you still send
+
+Reminders are sent **by hand**, from your own phone, and that has not changed. What changed is that you no
+longer have to remember. From 9 AM the bot pushes you up to three tap-to-send links per Telegram message,
+every 18–25 minutes, until 9 PM.
+
+- `drip` — what's been pushed today, what's left  ·  `drip test` — one batch now, records nothing
+- `drip stop` — pause for the day  ·  `drip start` — resume
+
+**Tap them as they arrive.** Ignoring six buzzes and then firing them all at once recreates the exact burst
+this replaces — you'd be worse off than before, because now there are more of them. If you can't keep up,
+`drip stop` is the correct answer, not a catch-up session.
+
+**Read this honestly:** forgetting used to rate-limit you by accident. That safety net is gone. A full day is
+roughly **53 messages** (~31 due + ~12 at day-5 + ~10 at day-6). If you were sending 20 a day before, this is
+a deliberate step up in exposure, not a neutral convenience. The 18–25 min spacing and the wording variants
+are what keep it safe — don't compress either.
+
+- ✅ Anyone who pays mid-day drops off the remaining queue automatically. You never chase someone who settled up.
+- ✅ Whatever isn't reached by 9 PM is **dropped, not carried**. They arrive tomorrow one day more overdue,
+  which the 5/6/7 ladder absorbs. Don't try to catch up manually at 10 PM.
+- ✅ At 9 PM you get "N pushed, M not reached" — if that report never arrives, the drip died. Check `drip`.
+- ✅ Message wording can be an **array** of 2–3 variants in config; each member gets one picked from their
+  phone number and the date. 929 people receiving identical text is a stronger spam signal than any gap
+  setting can offset, so this matters more than the timing does.
+
 ---
 
 ## 6. What the bot already does for you (don't fight it)
 
 | Protection | What it means for you |
 |---|---|
-| **No scheduled DMs at all** | Nothing is pushed to you or to members on a timer — reports are commands now |
+| **No scheduled DMs to members, ever** | Timers push to your Telegram only. Nothing the bot runs on a schedule can reach a member's phone |
+| **The bot never sends member-facing messages** | Reminders and group links are handed to you as tap-links. Every message a member gets came from your own thumb |
+| **Live invite codes** | Fetched from the socket at send time — never stale after a ban, nothing to update in config |
+| **Wording variants** | `messages.*` can be an array; each member gets one picked from their phone + the date, so 929 people don't receive identical text |
 | **Cron jitter (0–20 min)** | The remaining reminder jobs fire at slightly different times daily — don't "fix" the timing |
 | **Warm-up mode (72h default)** | Fresh links stay silent — wait it out. Only set `warmupHours: 0` on an established, healthy number |
 | **403/401 halt** | After a ban the bot STOPS reconnecting — never delete auth and re-scan without the 2-week protocol |

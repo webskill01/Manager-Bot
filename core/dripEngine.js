@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomBetween, todayStr, friendlyDate } from './globalConfig.js';
 import { buildDmList } from './dmList.js';
+import { usesCloudApi } from './cloudApiSender.js';
 
 // Paces the operator's MANUAL renewal DMs.
 //
@@ -120,6 +121,7 @@ export function createDripEngine(config, log, store, reminderSender, notify) {
   }
 
   async function tick() {
+    if (cloudApiActive()) return;
     const state = loadState();
     if (state.stopped || state.done) return;
 
@@ -161,9 +163,21 @@ export function createDripEngine(config, log, store, reminderSender, notify) {
     log.info(`💧 Drip finished — ${state.pushed.length} pushed, ${left} unreached`);
   }
 
+  // The drip and the Cloud API are alternatives, never a pair. Flipping reminderChannel to
+  // "cloudapi" wakes the three reminder crons, which message the same members the drip is
+  // queueing links for — leaving both on would send everyone the reminder twice, once from
+  // Meta and once from the operator's thumb. Refusing here rather than only skipping the
+  // cron matters because `drip start` is typed by hand.
+  function cloudApiActive() {
+    if (!usesCloudApi(config)) return false;
+    log.info('💧 Drip inactive — reminders run through the Cloud API');
+    return true;
+  }
+
   // Called by the 9 AM cron. Auto-renew runs ONCE per day here, not per tick: a 2-referral
   // member owes nothing, and chasing them for money is a real error, not a cosmetic one.
   async function arm() {
+    if (cloudApiActive()) return;
     const state = loadState();
     if (state.stopped) return log.info('💧 Drip is stopped — not arming');
     state.armedAt = new Date().toISOString();
@@ -188,6 +202,9 @@ export function createDripEngine(config, log, store, reminderSender, notify) {
   }
 
   function start() {
+    if (cloudApiActive()) {
+      return 'ℹ️ Reminders run through the Cloud API on this bot — the drip is not used.';
+    }
     const state = loadState();
     state.stopped = false;
     state.done = false;
@@ -209,6 +226,9 @@ export function createDripEngine(config, log, store, reminderSender, notify) {
   // a 9 AM cron and then 20 minutes per push. Because it records nothing, the members it
   // shows still get their real push later — running it never costs anyone a reminder.
   async function test() {
+    if (cloudApiActive()) {
+      return 'ℹ️ Reminders run through the Cloud API on this bot — the drip is not used.';
+    }
     await store.refresh();
     const state = loadState();
     const members = store.getAll();
@@ -226,6 +246,7 @@ export function createDripEngine(config, log, store, reminderSender, notify) {
   // A restart mid-window must not silently end the day. Nothing replays: `pushed` is
   // persisted, so resuming picks up exactly where it left off.
   function resume() {
+    if (cloudApiActive()) return;
     const state = loadState();
     if (state.stopped || state.done || !state.armedAt) return;
     if (!withinWindow(new Date(), settings)) return;
