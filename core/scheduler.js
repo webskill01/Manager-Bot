@@ -16,6 +16,11 @@ export function createScheduler(config, log) {
 
   function register(expr, label, fn) {
     if (!expr) return;
+    // No task, no job — the same contract the digests rely on, applied to every job rather
+    // than only the ones the caller happens to guard. core/telegram.js passes three tasks;
+    // without this the other three still registered, pointing at undefined, and threw
+    // "fn is not a function" at 6:30, 7:30 and 10:00 IST on all three friend bots.
+    if (typeof fn !== 'function') return;
     if (!cron.validate(expr)) {
       log.warn(`⏰ Invalid cron for ${label}: ${expr}`);
       return;
@@ -52,9 +57,9 @@ export function createScheduler(config, log) {
     register(schedule.reminderSend,   'reminder-send',    tasks.reminderSend);
     register(schedule.reminderSend2,  'reminder-send-2',  tasks.reminderSend2);
     register(schedule.overdueCheck,   'overdue-check',    tasks.overdueCheck);
-    if (tasks.morningDigest)  register(schedule.morningDigest,  'morning-digest',  tasks.morningDigest);
-    if (tasks.eveningSummary) register(schedule.eveningSummary, 'evening-summary', tasks.eveningSummary);
-    if (tasks.dripArm)        register(schedule.dripArm || '0 9 * * *', 'drip-arm', tasks.dripArm);
+    register(schedule.morningDigest,  'morning-digest',  tasks.morningDigest);
+    register(schedule.eveningSummary, 'evening-summary', tasks.eveningSummary);
+    register(schedule.dripArm || '0 9 * * *', 'drip-arm', tasks.dripArm);
     log.info(`⏰ Scheduler started — ${jobs.length} jobs active`);
   }
 

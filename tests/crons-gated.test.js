@@ -92,3 +92,29 @@ test('the drip arms at 9 AM by default when no cron is configured', () => {
   assert.ok(log.lines.some(l => l.includes('drip-arm @ 0 9 * * *')));
   s.stop();
 });
+
+// A job whose task is missing must not be registered at all. core/telegram.js passes only
+// morningDigest / eveningSummary / dripArm, and the three reminder jobs were registered
+// anyway pointing at undefined — every friend bot logged "fn is not a function" at 6:30,
+// 7:30 and 10:00 IST. Nothing was sent, but a cron that exists only to throw is a lie about
+// what the bot does, and it buries real errors.
+test('a job with no task is not registered, even when its cron expression exists', () => {
+  const log = countingLog();
+  const s = createScheduler(schedCfg, log);
+  s.start({ morningDigest: noop, eveningSummary: noop, dripArm: noop });
+  assert.equal(jobCount(log), 3, 'the three reminder jobs have no task and must not register');
+  const names = log.lines.filter(l => l.includes('⏰ Scheduled')).map(l => l.match(/Scheduled (\S+)/)[1]);
+  assert.deepEqual(names.sort(), ['drip-arm', 'evening-summary', 'morning-digest']);
+  s.stop();
+});
+
+test('a registered job never throws because its task was undefined', async () => {
+  const log = countingLog();
+  const everySecond = { schedule: { ...schedCfg.schedule, reminderSend: '* * * * * *' } };
+  const s = createScheduler(everySecond, log);
+  s.start({ morningDigest: noop });          // reminderSend deliberately absent
+  await new Promise(r => setTimeout(r, 2200));
+  s.stop();
+  assert.ok(!log.lines.some(l => l.includes('fn is not a function')),
+    'an unregistered task must not fire:\n' + log.lines.join('\n'));
+});
