@@ -1,6 +1,6 @@
 # WhatsApp Ban-Safety Guidelines — Manager Bot Operators
 
-**Who this is for:** every friend operating a bot number (bot-nitin, bot-abhi, bot-sachin2, bot-aayush2, bot-manny).
+**Who this is for:** every friend operating a bot number (bot-nitin, bot-abhi, bot-sachin2, bot-aayush2).
 **Why it exists:** three of our numbers got repeatedly temp-banned (403). Investigation showed the bans come from
 WhatsApp's ML systems scoring **the number's trust, the IP it links from, and its sending behavior** — not from any
 single bug. The bot now automates a lot of safety (jitter, spacing, warm-up, group digests), but the operator's

@@ -20,7 +20,7 @@ Fill in the placeholders below, then start it.
 - Reports (`summary`, `revenue`, `forecast`, `monthly`) will show one line per person, e.g.
   `Worker (50%): ₹500` / `Nitin (25%): ₹250` / `Partner (25%): ₹250`.
 - To make this a plain 50-50 bot instead, delete the whole `split` block — it falls back to
-  the legacy `Per person: ₹X` line (same as bot-nitin / bot-manny).
+  the legacy `Per person: ₹X` line (same as bot-nitin).
 
 ## 1. Google Sheet
 - Create a new Google Sheet with a tab named **`MEMBERS`**.
@@ -50,7 +50,7 @@ OWNER_NUMBER=91XXXXXXXXXX
 SHEET_ID=<paste the new sheet ID here>
 STATS_PORT=3011
 ```
-`STATS_PORT` must be unique — bot-nitin=3010, bot-manny=3003, bot-3=3011.
+`STATS_PORT` must be unique — bot-nitin=3010, bot-3=3011.
 
 ## 5. Start + scan
 ```bash
