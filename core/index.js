@@ -180,6 +180,30 @@ export async function startBot(config, log, authDir) {
     }
   }
 
+  // Telegram-only delivery. The drip and the restored digests use this INSTEAD of
+  // broadcast(), which writes to Telegram and then loops the WhatsApp socket — and that
+  // WhatsApp half is exactly the 6 AM admin-DM traffic that got freshly linked numbers
+  // banned in July. Nothing that runs on a timer may reach a member's phone through the
+  // socket, so the two paths stay separate rather than one growing a flag.
+  //
+  // Returns false when no listener is running, so a token-less bot degrades to silence
+  // rather than quietly falling back to WhatsApp.
+  async function notifyTelegram(text, ids = null) {
+    if (!telegram) return false;
+    const targets = ids && ids.length ? ids : null;
+    try {
+      if (!targets) { await telegram.broadcast(text); return true; }
+      for (const id of targets) {
+        try { await telegram.send(id, text); }
+        catch (err) { log.warn(`⚠️  Telegram send to ${id} failed: ${err.message}`); }
+      }
+      return true;
+    } catch (err) {
+      log.warn(`⚠️  Telegram notify failed: ${err.message}`);
+      return false;
+    }
+  }
+
   // Proof a reminder run happened. On the Cloud API nothing lands on the operator's own
   // phone any more, so without this the only evidence is a pm2 log nobody reads at 6:30 AM.
   // Every member sent is listed with Meta's wamid, and every failure with Meta's own reason

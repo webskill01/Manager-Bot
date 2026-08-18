@@ -117,6 +117,7 @@ export function loadConfig(botDir) {
   if (config.usesTelegram) {
     config.allowedTelegramIds = (config.allowedTelegramIds || []).map(Number).filter(Number.isFinite);
     config.bootstrapMode = config.allowedTelegramIds.length === 0;
+    config.dripIds = resolveDripIds(config);
   }
 
   if (!fs.existsSync(config.serviceAccountPath)) {
@@ -135,6 +136,20 @@ export function loadConfig(botDir) {
   }
 
   return config;
+}
+
+// Who receives the drip. Deliberately NOT allowedTelegramIds: that list is the command
+// security boundary and must keep covering every partner, but on a friend bot only the
+// friend actually sends the messages — buzzing the other two ~34 times a day is pure noise.
+// Absent or empty → everyone allowed, which is the right default for a one-operator bot.
+//
+// Returned as strings. These are only ever passed to Telegram's chat_id (which takes
+// either), never compared against the numeric allowedTelegramIds, so there is no set-
+// membership trap here.
+export function resolveDripIds(config) {
+  const ids = (config?.dripIds || []).map(String).filter(Boolean);
+  if (ids.length > 0) return ids;
+  return (config?.allowedTelegramIds || []).map(String).filter(Boolean);
 }
 
 export function isTracker(config) {
