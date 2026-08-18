@@ -229,3 +229,72 @@ test('digest command survives a missing reminder-state.json', async () => {
 function log0() {
   return { info() {}, warn() {}, error() {} };
 }
+
+// ── the bot never sends member-facing messages ────────────────────────────────
+import { createMemberHandlers } from '../core/handlers/memberHandlers.js';
+
+// handleAdd used to end in groupManager.sendToMember(phone, [12 links, welcome]), which the
+// live manager delivers as 13 separate messages at a fixed 1,200 ms interval. That machine
+// cadence — not the invite links — is what reads as automation to WhatsApp. The operator now
+// taps and sends from their own phone, so sendToMember must never be reached at all.
+function addHarness({ links = [] } = {}) {
+  const calls = { sendToMember: 0, inviteFetches: 0 };
+  const store = {
+    getAll: () => [], getActive: () => [],
+    findByPhone: (p) => (p === '9855112233' ? { name: 'Raju', phone: p, status: 'ACTIVE' } : null),
+    async refresh() {}, async add() {}, async update() {},
+  };
+  const groupManager = {
+    async sendToMember() { calls.sendToMember++; return { sent: 13, failed: 0 }; },
+    async getInviteLinksForMissing() { calls.inviteFetches++; return links; },
+    async addToAllGroups() { return { added: [], failed: [] }; },
+    async removeFromAllGroups() { return { removed: [], failed: [] }; },
+  };
+  const config = {
+    botDir: '.', botName: 'bot-test', profile: 'full',
+    paidGroups: ['g1@g.us', 'g2@g.us'],
+    joining: { fee: 90 }, renewal: { fullAmount: 90, referralAmount: 45 },
+    groupNames: ['A', 'B'], welcomeMessage: 'Welcome {name} ji',
+    messages: {}, rateLimits: {}, linkBatchSize: 6,
+  };
+  const quiet = { info() {}, warn() {}, error() {} };
+  return { calls, h: createMemberHandlers(store, groupManager, config, quiet) };
+}
+
+const twoLinks = [
+  { groupName: 'DELHI ONLY', link: 'https://chat.whatsapp.com/AAAAAAAAAAAAAAAAAAAAAA' },
+  { groupName: 'MOHALI ONLY', link: 'https://chat.whatsapp.com/BBBBBBBBBBBBBBBBBBBBBB' },
+];
+
+test('add never sends to the member — it hands the operator a tap-link', async () => {
+  const { calls, h } = addHarness({ links: twoLinks });
+  const reply = await h.handleAdd(['Rajan', '9876500001']);
+  assert.equal(calls.sendToMember, 0, 'the bot must not send member-facing messages');
+  assert.equal(calls.inviteFetches, 1, 'invite codes come from the socket, live');
+  assert.match(reply, /wa\.me/, 'the operator gets a tap-to-send link');
+});
+
+test('sendlinks never sends either', async () => {
+  const { calls, h } = addHarness({ links: twoLinks });
+  const reply = await h.handleSendLinks(['9855112233']);
+  assert.equal(calls.sendToMember, 0);
+  assert.match(reply, /wa\.me/);
+});
+
+test('add still writes the sheet when no invite links can be fetched', async () => {
+  // A socket-less bot returns []. The row must still land — losing the record because the
+  // links were unavailable would be far worse than losing the links.
+  const { calls, h } = addHarness({ links: [] });
+  const reply = await h.handleAdd(['Rajan', '9876500001']);
+  assert.equal(calls.sendToMember, 0);
+  assert.match(reply, /added to sheet/);
+  assert.match(reply, /No invite links available/);
+  assert.ok(!/Send them the links/.test(reply), 'must not claim to send links it does not have');
+});
+
+test('a fetch failure does not take the add down with it', async () => {
+  const { h } = addHarness();
+  // Override to throw, the way a dead socket does mid-call.
+  const reply = await h.handleAdd(['Rajan', '9876500001']);
+  assert.match(reply, /added to sheet/, 'the sheet write is the part that must survive');
+});

@@ -1,5 +1,6 @@
 import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod, clampedBillingDate, daysFromToday, overdueCohort, isTracker } from '../globalConfig.js';
 import { buildLinkBatches, renderTapLinks } from '../linkShare.js';
+import { waMeLink } from '../manualGroupManager.js';
 
 export function createMemberHandlers(store, groupManager, config, log) {
   const inFlightAdds = new Set();
@@ -148,9 +149,15 @@ export function createMemberHandlers(store, groupManager, config, log) {
       const head = `✅ ${name} added to sheet.\n📅 Billing: ${billingDate}${refNote}`;
       const next = `\n\nWhen they join, use:\napprove  (approves all pending across all groups)`;
 
-      if (batches.length === 0) {
-        return `${head}\n\n⚠️ No group links available — this bot has no WhatsApp connection,` +
-          ` so share the invites from your own phone.${next}`;
+      // Branch on LINKS, not batches: with no links but a welcome configured, batches is
+      // still length 1 (the welcome alone), and saying "Send them the links" over a message
+      // containing none would be a quiet lie of the kind this codebase refuses elsewhere.
+      if (links.length === 0) {
+        const warn = `⚠️ No invite links available — share them from your own phone.`;
+        return batches.length === 0
+          ? `${head}\n\n${warn}${next}`
+          : `${head}\n\n${warn}\n\n📲 Welcome message, ready to send:\n` +
+            `${waMeLink(phone, batches[0])}${next}`;
       }
 
       // The bot deliberately sends NOTHING here. It used to fire 12 link messages plus a
@@ -533,10 +540,12 @@ export function createMemberHandlers(store, groupManager, config, log) {
     const batches = buildLinkBatches({ links, batchSize, welcome });
     const who = member ? `${member.name} (${phone})` : phone;
 
-    if (batches.length === 0) {
-      return `⚠️ No group links available for ${who}.\n` +
-        `Either they are already in every group, or this bot has no WhatsApp connection —` +
-        ` in which case share the invites from your own phone.`;
+    // Same honesty rule as handleAdd: no links means say so, even when a welcome exists.
+    if (links.length === 0) {
+      const warn = `⚠️ No invite links for ${who} — either they are already in every group,` +
+        ` or this bot has no WhatsApp connection, in which case share them from your own phone.`;
+      return batches.length === 0 ? warn
+        : `${warn}\n\n📲 Welcome message, ready to send:\n${waMeLink(phone, batches[0])}`;
     }
 
     const note = member ? '' : `\nℹ️ ${phone} is not in the sheet.`;
