@@ -83,6 +83,13 @@
     "9914623976",
     "9877524103"
   ],
+  "dripIds": ["5932459548"],
+  "drip": {
+    "startHour": 9,
+    "endHour": 21,
+    "gapMinMs": 1080000,
+    "gapMaxMs": 1500000
+  },
   "allowedTelegramIds": ["5332135237","7985971941","5932459548"],
   "schedule": {
     "morningDigest": "0 6 * * *",
@@ -100,7 +107,7 @@
     "finalReminder": "Hnji Veerji knra ji repay ?",
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
   },
-  "profile": "tracker",
+  "profile": "full",
   "tracker": {
     "callAfterDays": 30,
     "followUpDays": 3

@@ -283,38 +283,56 @@ test('renewal commands are refused on a tracker bot with a helpful message', asy
   assert.equal(store.writes.length, 0);
 });
 
-test('pending routes to the call list on a tracker and the overdue list on a full bot', async () => {
+// SUPERSEDES the old split meaning of `pending`. When the friend bots went back to
+// collecting renewals they needed the call list AND the overdue list at once, and one word
+// cannot carry two meanings. `pending` is now overdue on BOTH profiles; the call list lives
+// in `log`, whose "NOT CALLED YET (N) — M due now" bucket is what tracker `pending` showed.
+test('pending means overdue on every profile', async () => {
   const rows = [{ name: 'A', phone: '9000000001', status: 'NEW', joinDate: dayOffset(-31), billingDate: dayOffset(-3) }];
 
-  const trackerParser = createCommandParser(
-    fakeStore(rows), fakeGroupManager(), trackerConfig(tmp()), log,
-    { user: {} }, Date.now(), {}, {}, {}, new Set(), null, null, null,
-  );
-  assert.match(await trackerParser.parse('pending'), /CALL LIST/);
-
-  const fullConfig = { ...trackerConfig(tmp()), profile: 'full' };
-  const fullParser = createCommandParser(
-    fakeStore(rows), fakeGroupManager(), fullConfig, log,
-    { user: {} }, Date.now(), {}, {}, {}, new Set(), null, null, null,
-  );
-  const out = await fullParser.parse('pending');
-  assert.ok(!/CALL LIST/.test(out), 'full profile keeps the renewal meaning of pending');
+  for (const profile of ['tracker', 'full']) {
+    const cfg = { ...trackerConfig(tmp()), profile };
+    const parser = createCommandParser(
+      fakeStore(rows), fakeGroupManager(), cfg, log,
+      { user: {} }, Date.now(), {}, {}, {}, new Set(), null, null, null,
+    );
+    const out = await parser.parse('pending');
+    assert.ok(!/CALL LIST/.test(out), `pending must not be the call list on ${profile}`);
+  }
 });
 
-test('tracker-only commands are refused on a full-profile bot', async () => {
-  const fullConfig = { ...trackerConfig(tmp()), profile: 'full' };
+test('the call list is still reachable, via log', async () => {
+  const rows = [{ name: 'A', phone: '9000000001', status: 'NEW', joinDate: dayOffset(-31), billingDate: dayOffset(-3) }];
   const parser = createCommandParser(
-    fakeStore([]), fakeGroupManager(), fullConfig, log,
+    fakeStore(rows), fakeGroupManager(), { ...trackerConfig(tmp()), profile: 'full' }, log,
     { user: {} }, Date.now(), {}, {}, {}, new Set(), null, null, null,
   );
-  for (const cmd of ['called 9000000001', 'moved 9000000001', 'calls']) {
-    assert.match(await parser.parse(cmd), /tracker-profile command/);
+  const out = await parser.parse('log');
+  assert.match(Array.isArray(out) ? out.join(String.fromCharCode(10)) : out, /NOT CALLED YET/);
+});
+
+// SUPERSEDES "tracker-only commands are refused on a full-profile bot". The friend bots are
+// full profile now and still pitch the app, so refusing call tracking on profile would take
+// away work they actually do. These read and write column Q, which every profile has.
+test('call tracking works on a full-profile bot', async () => {
+  const fullConfig = { ...trackerConfig(tmp()), profile: 'full' };
+  const parser = createCommandParser(
+    fakeStore([{ name: 'A', phone: '9000000001', status: 'ACTIVE', joinDate: dayOffset(-31), billingDate: dayOffset(-3) }]),
+    fakeGroupManager(), fullConfig, log,
+    { user: {} }, Date.now(), {}, {}, {}, new Set(), null, null, null,
+  );
+  for (const cmd of ['called 9000000001', 'calls']) {
+    const out = await parser.parse(cmd);
+    assert.ok(!/tracker-profile command/.test(Array.isArray(out) ? out.join(String.fromCharCode(10)) : out),
+      `"${cmd}" must not be refused on a full bot`);
   }
+  // `moved` stays retired on every profile — it is gone, not profile-gated.
+  assert.match(await parser.parse('moved 9000000001'), /is gone/);
 });
 
 // ── reports ──────────────────────────────────────────────────────────────────
 
-test('tracker revenue counts joining fees only and splits 60-20-20', async () => {
+test('revenue counts joining fees only and applies the configured split', async () => {
   const thisMonth = dayOffset(-1);
   const store = fakeStore([
     { name: 'J1', phone: '9000000001', status: 'NEW', joinDate: thisMonth, paidLast: 100, billingDate: dayOffset(29) },

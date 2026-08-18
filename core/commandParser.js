@@ -591,14 +591,27 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         // Tracker profile has no renewals, so `pending` means the CALL list instead of
         // the overdue-payment list. Every other renewal command is refused outright
         // rather than silently doing nothing.
-        case 'pending':    return tracker ? trackerH.handlePending() : renewalH.handlePending();
-        case 'called':     return tracker ? trackerH.handleCalled(mergePhoneFromStart(args)) : trackerOnly('called');
+        // `pending` means OVERDUE everywhere, on every profile.
+        //
+        // It used to mean the call list on tracker bots and the overdue list on full ones.
+        // Once the friend bots went back to collecting renewals they needed both meanings at
+        // once, and one word cannot carry two. Overdue wins because it is the money question,
+        // and nothing is lost: `log` already prints a "NOT CALLED YET (N) — M due now"
+        // bucket, which is exactly what tracker `pending` used to show.
+        case 'pending':    return renewalH.handlePending();
+        // Call tracking is no longer tracker-only. A full bot still collects renewals AND
+        // still pitches the app, so refusing these on profile would take away work the
+        // friend bots actually do. They read and write column Q, which every profile has.
+        case 'called':     return trackerH.handleCalled(mergePhoneFromStart(args));
         case 'log':
-        case 'calls':      return tracker ? trackerH.handleLog() : trackerOnly('calls');
+        case 'calls':      return trackerH.handleLog();
         // Retired: the bot never marked anyone converted well, and removing them was the
         // operator's call anyway. Kept as an explicit hint because the muscle memory is real.
+        // Retired on EVERY profile, not gated on one. It was profile-gated back when call
+        // tracking was tracker-only; now that a full bot pitches the app too, answering
+        // "that's a tracker command" would be doubly wrong — it is not a tracker command,
+        // it is not a command at all.
         case 'moved':
-          if (!tracker) return trackerOnly('moved');
           return `❌ "moved" is gone — this bot only logs the pitch, it doesn't move or remove anyone.\n\n` +
             `Log what they said:  called ${normPhone(mergePhoneFromStart(args)[0] || '') || '[phone]'} interested\n` +
             `Want the seat back:  kick ${normPhone(mergePhoneFromStart(args)[0] || '') || '[phone]'}\n` +

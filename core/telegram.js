@@ -5,6 +5,10 @@ import { createMemberStore } from './memberStore.js';
 import { createManualGroupManager } from './manualGroupManager.js';
 import { createCommandParser } from './commandParser.js';
 import { createTelegramListener } from './telegramTransport.js';
+import { createScheduler } from './scheduler.js';
+import { createReminderSender } from './reminderSender.js';
+import { createDripEngine } from './dripEngine.js';
+import { isTracker } from './globalConfig.js';
 
 // Telegram-only transport — the operator-facing half of a tracker bot, replacing core/index.js.
 //
@@ -20,8 +24,15 @@ import { createTelegramListener } from './telegramTransport.js';
 // and sending live in telegramTransport.js, shared with bot-nitin's dual transport.
 //
 // Deliberately absent, because none of it applies without a socket: reconnect/backoff,
-// QR + pairing + the scan page, LID↔phone mapping, warm-up, the scheduler, and the
-// trial/removal/ghost/reminder/overdue engines. Those files stay on disk for bot-nitin.
+// QR + pairing + the scan page, LID↔phone mapping, warm-up, and the trial/removal/ghost/
+// overdue engines. Those files stay on disk for bot-nitin.
+//
+// The SCHEDULER is present as of 2026-08-18, which reverses the original "no cron jobs at
+// all" rule for this transport. That rule existed because every scheduled job of the era
+// ended in a WhatsApp send. The two jobs registered here cannot: the digests and the drip
+// deliver through notifyTelegram, and this process holds no socket to fall back to. A
+// tracker-profile bot still registers nothing — it collects no renewals, so there is
+// genuinely nothing to run.
 
 const BOT_START_TIME = Date.now();
 
@@ -43,11 +54,43 @@ export async function startBot(config, log) {
   log.info(`✅ Sheet loaded: ${store.getAll().length} members in cache`);
 
   const groupManager = createManualGroupManager(config, log);
-  // The engine and socket slots are null: a Telegram bot constructs none of them, and
-  // commandParser refuses every command that would have reached one.
+
+  // Telegram-only delivery for the scheduled reports. Named to match index.js's helper so
+  // the two transports read the same, and a function declaration so dripEngine can close
+  // over it before `telegram` below exists.
+  async function notifyTelegram(text, ids = null) {
+    if (!telegram) return false;
+    const targets = ids && ids.length ? ids : null;
+    try {
+      if (!targets) { await telegram.broadcast(text); return true; }
+      for (const id of targets) {
+        try { await telegram.send(id, text); }
+        catch (err) { log.warn(`⚠️  Telegram send to ${id} failed: ${err.message}`); }
+      }
+      return true;
+    } catch (err) {
+      log.warn(`⚠️  Telegram notify failed: ${err.message}`);
+      return false;
+    }
+  }
+
+  // reminderSender is built for exactly one method — autoRenewDue, which the drip runs once
+  // a day so a 2-referral member is never chased for money they do not owe. Its sending
+  // paths are unreachable from here: nothing in this file calls them, and they need a socket
+  // or a Cloud API token this bot has neither of.
+  const reminderSender = isTracker(config) ? null : createReminderSender(config, log);
+  const dripEngine = isTracker(config) ? null : createDripEngine(
+    config, log, store, reminderSender,
+    (text) => notifyTelegram(text, config.dripIds),
+  );
+  const scheduler = createScheduler(config, log);
+
+  // The socket and group-engine slots stay null: a Telegram bot constructs none of them, and
+  // commandParser refuses every command that would have reached one. dripEngine is the one
+  // engine that works here, because it transmits over Telegram rather than WhatsApp.
   const commandParser = createCommandParser(
     store, groupManager, config, log, null, BOT_START_TIME,
-    null, null, null, new Set(), null, null,
+    null, null, null, new Set(), reminderSender, null, dripEngine,
   );
 
   const telegram = createTelegramListener({
@@ -107,6 +150,7 @@ export async function startBot(config, log) {
   function gracefulShutdown(signal) {
     log.info(`👋 ${signal} — shutting down`);
     isShuttingDown = true;
+    scheduler.stop();
     telegram.stop();
     log.info('✅ Shutdown complete');
     process.exit(0);
@@ -123,6 +167,22 @@ export async function startBot(config, log) {
   log.info('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
   startHttpServer();
+
+  // Only after the listener is confirmed up: a job that fires into a dead token would burn
+  // its work and report nothing. Tracker bots register nothing at all.
+  if (isTracker(config)) {
+    log.info('📋 Tracker profile — no scheduled jobs registered (command-driven only)');
+  } else {
+    scheduler.start({
+      morningDigest:  async () => { await notifyTelegram(await commandParser.runReport('digest')); },
+      eveningSummary: async () => { await notifyTelegram(await commandParser.runReport('summary')); },
+      dripArm: () => dripEngine.arm(),
+    });
+    // Picks up a window this bot restarted across; no-ops outside it. `pushed` is persisted,
+    // so nothing is ever re-sent.
+    dripEngine.resume();
+  }
+
   // Telegram is this bot's only transport, so a revoked token means it can do nothing at
   // all. Let the rejection propagate and pm2's backoff surface it, exactly as before.
   await telegram.start();
