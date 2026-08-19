@@ -105,7 +105,7 @@ test('a template naming the member twice substitutes BOTH', () => {
 });
 
 test('bots with variants actually produce more than one distinct message', () => {
-  for (const bot of ['bot-nitin', 'bot-abhi', 'bot-sachin2']) {
+  for (const bot of BOTS) {
     const cfg = JSON.parse(fs.readFileSync(`bots/${bot}/config.json`, 'utf8'));
     const members = Array.from({ length: 60 }, (_, i) => ({
       name: 'SameName', phone: `90000000${String(i).padStart(2, '0')}`,
@@ -127,5 +127,12 @@ test('every shipped config still parses and keeps its amounts consistent', () =>
       assert.ok(list.length > 0 && list.every(x => typeof x === 'string' && x.trim()),
         `${bot}.messages.${stage} has an empty or non-string entry`);
     }
+  }
+});
+
+test('no config still carries the "knra" misspelling of "krna"', () => {
+  for (const bot of BOTS) {
+    const raw = fs.readFileSync(`bots/${bot}/config.json`, 'utf8');
+    assert.ok(!/knra/i.test(raw), `${bot}: "knra" should be "krna"`);
   }
 });

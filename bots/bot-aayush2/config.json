@@ -106,12 +106,18 @@
     "reminder": [
       "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai, apka Mahadev Travels paid group ka monthly plan {date} ko complete ho gya hai\n\nkindly ₹99 ka payment renew kar dena, taaki aapko bina break ke duties milti rahe \n\nPayment ke baad ek screenshot share kar dena \n\nThank you bhai",
       "🕉️*HAR HAR MAHADEV*🕉️\n\nNamaste {name} bhai 🙏\n{date} ko aapka Mahadev Travels paid group ka mahina pura ho gya hai\n\nkindly ₹99 renew kar dena, taaki duties bina rukavat ke milti rahe\n\nPayment ke baad screenshot bhej dena \n\nDhanyavaad bhai",
-      "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai 🙏\nAapka monthly plan {date} ko poora ho chuka hai\n\nkindly ₹99 ka payment kar dena, taaki duties chalti rahe\n\nPayment ke baad ek screenshot share kar dena \n\nThank you bhai"
+      "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai 🙏\nAapka monthly plan {date} ko poora ho chuka hai\n\nkindly ₹99 ka payment kar dena, taaki duties chalti rahe\n\nPayment ke baad ek screenshot share kar dena \n\nThank you bhai",
+      "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai 🙏\nAapka monthly plan aaj {date} ko complete ho gaya hai\n\n₹99 ka payment karke renew karlo ji , taaki aapko bina break ke duties milti rahe \n\nPayment ke baad screenshot share kar dena \n\nThank you bhai",
+      "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai, aapka monthly plan aaj {date} ko complete ho gaya hai\n\n₹99 ka payment karke renew karlo ji, taaki duties bina break ke milti rahe\n\nPayment ke baad screenshot share kar dena\n\nThank you bhai",
+      "🕉️*HAR HAR MAHADEV*🕉️\n\nNamaste {name} bhai 🙏\nAaj {date} ko aapka monthly plan complete ho gaya hai\n\n₹99 pay karke renew karlo ji, taaki aapki duties chalti rahe\n\nPayment ke baad screenshot bhej dena\n\nThank you bhai"
     ],
     "referralReminder": [
       "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai, apka Mahadev Travels paid group ka monthly plan {date} ko complete ho gya hai\n\nkindly ₹99 ka payment renew kar dena, taaki aapko bina break ke duties milti rahe \n\nPayment ke baad ek screenshot share kar dena \n\nThank you bhai",
       "🕉️*HAR HAR MAHADEV*🕉️\n\nNamaste {name} bhai 🙏\n{date} ko aapka Mahadev Travels paid group ka mahina pura ho gya hai\n\nkindly ₹99 renew kar dena, taaki duties bina rukavat ke milti rahe\n\nPayment ke baad screenshot bhej dena \n\nDhanyavaad bhai",
-      "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai 🙏\nAapka monthly plan {date} ko poora ho chuka hai\n\nkindly ₹99 ka payment kar dena, taaki duties chalti rahe\n\nPayment ke baad ek screenshot share kar dena \n\nThank you bhai"
+      "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai 🙏\nAapka monthly plan {date} ko poora ho chuka hai\n\nkindly ₹99 ka payment kar dena, taaki duties chalti rahe\n\nPayment ke baad ek screenshot share kar dena \n\nThank you bhai",
+      "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai 🙏\nAapka monthly plan aaj {date} ko complete ho gaya hai\n\n₹99 ka payment karke renew karlo ji , taaki aapko bina break ke duties milti rahe \n\nPayment ke baad screenshot share kar dena \n\nThank you bhai",
+      "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai, aapka monthly plan aaj {date} ko complete ho gaya hai\n\n₹99 ka payment karke renew karlo ji, taaki duties bina break ke milti rahe\n\nPayment ke baad screenshot share kar dena\n\nThank you bhai",
+      "🕉️*HAR HAR MAHADEV*🕉️\n\nNamaste {name} bhai 🙏\nAaj {date} ko aapka monthly plan complete ho gaya hai\n\n₹99 pay karke renew karlo ji, taaki aapki duties chalti rahe\n\nPayment ke baad screenshot bhej dena\n\nThank you bhai"
     ],
     "overdue": [
       "Hlo {name} Sir, aaj last date hai repay krne ki. \n\nUpar diye QR par pay krke screenshot bhej do",
@@ -120,7 +126,8 @@
     ],
     "finalReminder": [
       "Hnji {name} Sir, group chlane hai aapko ?",
-      "{name} bhai, group continue karna hai ji ?"
+      "{name} bhai, group continue karna hai ji ?",
+      "{name} bhai 🙏\nGroup continue rakhna hai ya nahi, bta dena ji ?"
     ],
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
   },

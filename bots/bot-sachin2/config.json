@@ -119,7 +119,7 @@
       "{name} paaji 🙏 tuhada mahina {date} nu pura ho gya si, ajj renew karke das deyo ji 🚨"
     ],
     "finalReminder": [
-      "Hnji Veerji knra ji repay ?",
+      "Hnji Veerji krna ji repay ?",
       "Hnji {name} veerji, renew krna hai ji ?"
     ],
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"

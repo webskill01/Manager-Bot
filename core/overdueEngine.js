@@ -125,7 +125,7 @@ export function createOverdueEngine(config, log) {
             // mismatch (132000), and the count lives in an approved template the code
             // cannot see — so one uniform shape is the only version that can't rot.
             // Was [name, days, date]: three params against a template whose text is
-            // "Hnji Veerji knra ji renew ?" and has none.
+            // "Hnji Veerji krna ji renew ?" and has none.
             bodyParams: [m.name, friendlyDate()],
             phone: m.phone,
           });
