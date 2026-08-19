@@ -163,6 +163,27 @@ export function createGroupManager(sock, config, log) {
     return links;
   }
 
+  // Every group's invite code in one pass, for the links cache. Deliberately does NOT call
+  // groupMetadata: names come from config.groupNames, so this is one round trip per group
+  // instead of two, and it runs once a month rather than once per add.
+  async function getAllInviteLinks() {
+    const fetched = [];
+    const failed = [];
+
+    for (let i = 0; i < paidGroups.length; i++) {
+      const groupId = paidGroups[i];
+      try {
+        const inviteCode = await sock.groupInviteCode(groupId);
+        fetched.push({ groupId, index: i + 1, link: `https://chat.whatsapp.com/${inviteCode}` });
+      } catch (err) {
+        log.warn(`❌ Invite code failed ${groupId}: ${err.message}`);
+        failed.push({ groupId, index: i + 1, error: err.message });
+      }
+    }
+
+    return { fetched, failed };
+  }
+
   async function checkMembership(phone) {
     const jid = toJid(phone);
     const inGroups = [];
@@ -358,5 +379,5 @@ export function createGroupManager(sock, config, log) {
     return { sent, failed };
   }
 
-  return { addToAllGroups, rejoinAdd, removeFromAllGroups, getInviteLinksForMissing, checkMembership, getAllPendingRequests, approveAllPendingRequests, rejectAllPendingRequests, approveByPhone, rejectByPhone, markAborted, sendToMember };
+  return { addToAllGroups, rejoinAdd, removeFromAllGroups, getInviteLinksForMissing, getAllInviteLinks, checkMembership, getAllPendingRequests, approveAllPendingRequests, rejectAllPendingRequests, approveByPhone, rejectByPhone, markAborted, sendToMember };
 }

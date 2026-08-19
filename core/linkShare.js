@@ -21,8 +21,10 @@ export function buildLinkBatches({ links, batchSize = 6, welcome = null, greetin
   const size = Math.max(1, Number(batchSize) || 6);
   const batches = [];
   for (let i = 0; i < links.length; i += size) {
-    const lines = links.slice(i, i + size)
-      .map((l, j) => `${i + j + 1}. ${l.groupName}\n${l.link}`);
+    // No "1. " prefix: WhatsApp auto-formats a line starting with a digit and a dot as an
+    // ordered list and renders its OWN number, so the written one showed up twice ("1. 1.").
+    // Each batch restarts WhatsApp's numbering at 1 anyway, which is what the operator wants.
+    const lines = links.slice(i, i + size).map(l => `${l.groupName}\n${l.link}`);
     batches.push(lines.join('\n\n'));
   }
   if (batches.length === 0) return welcome ? [welcome] : [];

@@ -145,7 +145,6 @@
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
   },
   "groupNames": [
-    "PUNJAB TAXI (Mix Duty)",
     "DELHI ONLY (Punjab Taxi Group)",
     "CHANDIGARH ONLY (Punjab Taxi Group)",
     "MOHALI ONLY (Punjab Taxi Group)",
@@ -156,6 +155,7 @@
     "AMBALA ONLY (Punjab Taxi Group)",
     "ZIRAKPUR ONLY (Punjab Taxi Group)",
     "NOIDA ONLY ( Punjab Taxi Group)",
-    "GURGAON ONLY (Punjab Taxi Service)"
+    "GURGAON ONLY (Punjab Taxi Service)",
+    "PUNJAB TAXI (Mix Duty)"
   ]
 }

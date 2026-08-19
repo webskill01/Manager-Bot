@@ -110,6 +110,10 @@ export function createManualGroupManager(config, log) {
     return [];
   }
 
+  // No socket to ask, so `refreshlinks` cannot work here. `setlink` still can — that is the
+  // whole point of the cache being operator-writable.
+  async function getAllInviteLinks() { throw new NoGroupAccessError('refreshlinks'); }
+
   async function checkMembership() { throw new NoGroupAccessError('groupcheck'); }
   async function getAllPendingRequests() { throw new NoGroupAccessError('reading join requests'); }
   async function approveAllPendingRequests() { throw new NoGroupAccessError('approve'); }
@@ -122,7 +126,7 @@ export function createManualGroupManager(config, log) {
 
   return {
     manual: true,
-    addToAllGroups, rejoinAdd, removeFromAllGroups, getInviteLinksForMissing,
+    addToAllGroups, rejoinAdd, removeFromAllGroups, getInviteLinksForMissing, getAllInviteLinks,
     checkMembership, getAllPendingRequests, approveAllPendingRequests,
     rejectAllPendingRequests, approveByPhone, rejectByPhone, markAborted, sendToMember,
   };

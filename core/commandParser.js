@@ -18,7 +18,7 @@ let activeOverdueList = [];
 // (find/status/summary/stats/due/pending/refs/help/…) reply immediately and need no ack.
 const SLOW_COMMANDS = new Set([
   'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
-  'kick', 'rejoin', 'sendlinks', 'links', 'groupcheck', 'remind', 'renewed',
+  'kick', 'rejoin', 'sendlinks', 'links', 'refreshlinks', 'groupcheck', 'remind', 'renewed',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
   'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip',
 ]);
@@ -599,6 +599,8 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           return memberH.handleRejectAll();
         case 'rejectall':  return memberH.handleRejectAll();
         case 'links':      return memberH.handleLinks(mergePhoneFromStart(args));
+        case 'refreshlinks': return memberH.handleRefreshLinks();
+        case 'setlink':    return memberH.handleSetLink(args);
         case 'sendlinks':  return memberH.handleSendLinks(mergePhoneFromStart(args));
         case 'rejoin':     return memberH.handleRejoin(mergePhoneFromStart(args));
         case 'groupcheck': return memberH.handleGroupCheck(mergePhoneFromStart(args));

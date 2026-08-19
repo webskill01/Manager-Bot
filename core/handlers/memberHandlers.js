@@ -1,9 +1,25 @@
 import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod, clampedBillingDate, daysFromToday, overdueCohort, isTracker } from '../globalConfig.js';
 import { buildLinkBatches, renderTapLinks } from '../linkShare.js';
 import { waMeLink } from '../manualGroupManager.js';
+import { createLinkStore } from '../linkStore.js';
 
 export function createMemberHandlers(store, groupManager, config, log) {
   const inFlightAdds = new Set();
+  const linkStore = createLinkStore(config, log);
+
+  // Cache first, live fetch only as a fallback. The live path costs two WhatsApp round trips
+  // per group (24 for nitin's twelve) and the operator waits through every one of them before
+  // `add` answers; the cache answers instantly and is refreshed with `refreshlinks` when a
+  // link actually changes. `phone` is only used by the fallback, which still filters to the
+  // groups the member is missing from — the cache has no membership information, so it
+  // returns every group. For an `add` that is the same set, and for `sendlinks` an extra link
+  // to a group they are already in is harmless.
+  async function linksFor(phone) {
+    const cached = linkStore.all();
+    if (cached.length > 0) return cached;
+    try { return await groupManager.getInviteLinksForMissing(phone); }
+    catch (err) { log.warn(`⚠️  Invite link fetch failed for ${phone}: ${err.message}`); return []; }
+  }
 
   async function handleAdd(args) {
     if (args.length < 2) return '❌ Format: add [name] [phone]  or  add [name] [phone] [date 1-31]';
@@ -133,12 +149,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
         }
       }
 
-      // Invite codes are fetched LIVE, never read from config. config.groupLinks went stale
-      // on every ban and re-link and had to be edited and pushed by hand; groupInviteCode()
-      // reads whatever is current. A socket-less bot returns [] and simply gets no links.
-      let links = [];
-      try { links = await groupManager.getInviteLinksForMissing(phone); }
-      catch (err) { log.warn(`⚠️  Invite link fetch failed for ${phone}: ${err.message}`); }
+      const links = await linksFor(phone);
 
       const welcome = config.welcomeMessage
         ? config.welcomeMessage.replace(/\{name\}/g, name)
@@ -388,8 +399,71 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return `✅ ${member.name} reverted to ACTIVE.`;
   }
 
+  // `refreshlinks` — pull every group's current invite code and cache it. Run this once
+  // after a group is reset or an invite revoked; nothing else needs to change and nothing
+  // gets pushed to the server.
+  async function handleRefreshLinks() {
+    let result;
+    try { result = await groupManager.getAllInviteLinks(); }
+    catch (err) {
+      return `❌ Cannot refresh: ${err.message}\n` +
+        `Set links by hand instead: setlink [n] [url]  (see: links)`;
+    }
+
+    const { fetched, failed } = result;
+    if (fetched.length === 0) return `❌ No invite codes could be fetched. Links unchanged.`;
+    if (!linkStore.saveMany(fetched)) return `❌ Fetched ${fetched.length} links but could not save them.`;
+
+    let msg = `✅ Cached ${fetched.length}/${config.paidGroups.length} invite links.`;
+    if (failed.length > 0) {
+      msg += `\n\n⚠️ ${failed.length} failed (previous link kept):\n` +
+        failed.map(f => `   ${f.index}. ${linkStore.nameOf(f.groupId, f.index - 1)} — ${f.error}`).join('\n') +
+        `\nFix one by hand with: setlink [n] [url]`;
+    }
+    return msg;
+  }
+
+  // `setlink [n] [url]` — overwrite one cached link. The escape hatch for when the bot has
+  // no socket (banned, re-linking) but the operator can still copy an invite off their phone.
+  async function handleSetLink(args) {
+    if (args.length < 2) return '❌ Format: setlink [group number] [invite url]   (see: links)';
+    const index = Number(args[0]);
+    if (!Number.isInteger(index) || index < 1 || index > config.paidGroups.length)
+      return `❌ Group number must be 1-${config.paidGroups.length}. Run: links`;
+
+    const url = args[1].trim();
+    if (!/^https:\/\/chat\.whatsapp\.com\/[A-Za-z0-9_-]+$/.test(url))
+      return '❌ That is not a WhatsApp invite link. Expected: https://chat.whatsapp.com/XXXXXXXX';
+
+    const saved = linkStore.set(index, url);
+    if (!saved) return '❌ Could not save the link.';
+    return `✅ ${index}. ${saved.groupName}\n${url}`;
+  }
+
+  // No phone: show the cached links the bot will actually send, with the numbers `setlink`
+  // takes. With a phone: the old live, missing-only lookup.
+  function handleCachedLinks() {
+    const cached = linkStore.all();
+    const missing = linkStore.missing();
+
+    if (cached.length === 0) {
+      return `⚠️ No invite links cached yet.\n` +
+        `Run: refreshlinks   (fetches all ${config.paidGroups.length} from WhatsApp)\n` +
+        `Or set them one at a time: setlink [n] [url]`;
+    }
+
+    const numbered = cached
+      .map(l => `${config.paidGroups.indexOf(l.groupId) + 1}. ${l.groupName}\n   ${l.link}`)
+      .join('\n');
+    let msg = `🔗 Cached invite links (${cached.length}/${config.paidGroups.length}):\n\n${numbered}`;
+    if (missing.length > 0)
+      msg += `\n\n⚠️ Not cached:\n` + missing.map(g => `${g.index}. ${g.groupName}`).join('\n');
+    msg += `\n\nUpdate: refreshlinks  (all)  ·  setlink [n] [url]  (one)`;
+    return msg;
+  }
+
   async function handleLinks(args) {
-    if (args.length < 1) return '❌ Missing arguments. Format: links [phone]';
+    if (args.length < 1) return handleCachedLinks();
     const phone = normalizePhone(args[0]);
     if (phone.length !== 10) return '❌ Invalid number.';
 
@@ -528,10 +602,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
     // Works for ANY number — sheet membership is not required (e.g. fresh prospects).
     const member = store.findByPhone(phone);
 
-    // Live codes, same as handleAdd — see the note there for why config.groupLinks is gone.
-    let links = [];
-    try { links = await groupManager.getInviteLinksForMissing(phone); }
-    catch (err) { log.warn(`⚠️  Invite link fetch failed for ${phone}: ${err.message}`); }
+    const links = await linksFor(phone);
 
     const welcome = config.welcomeMessage
       ? config.welcomeMessage.replace(/\{name\}/g, member?.name || 'ji')
@@ -681,5 +752,5 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return `✅ Rejected ${phone} in ${rejected}/${found} group(s)${failed > 0 ? ` (${failed} failed)` : ''}`;
   }
 
-  return { handleAdd, handleSilentAdd, handleKick, handleSkip, handleUnskip, handleDelay, handleDelayAll, handleLinks, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
+  return { handleAdd, handleSilentAdd, handleKick, handleSkip, handleUnskip, handleDelay, handleDelayAll, handleLinks, handleRefreshLinks, handleSetLink, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
 }

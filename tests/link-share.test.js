@@ -23,10 +23,13 @@ test('12 links split into two batches of six', () => {
   assert.ok(!b[0].includes('PATIALA ONLY'));
 });
 
-test('numbering runs 1-12 across batches, not 1-6 twice', () => {
+test('no written numbering — WhatsApp adds its own', () => {
+  // A line starting "7. PATIALA ONLY" is auto-formatted by WhatsApp as an ordered list item,
+  // and it renders its own counter in front, so the operator saw "1. 7. PATIALA ONLY".
   const b = buildLinkBatches({ links, batchSize: 6 });
-  assert.ok(b[1].includes('7. PATIALA ONLY'));
-  assert.ok(!b[1].includes('1. PATIALA ONLY'));
+  assert.ok(b[1].includes('PATIALA ONLY'));
+  assert.ok(!/^\s*\d+\.\s/m.test(b[0]), 'no batch line starts with a number and a dot');
+  assert.ok(!/^\s*\d+\.\s/m.test(b[1]));
 });
 
 // The whole reason for splitting. WhatsApp collapses a message behind "Read more" at

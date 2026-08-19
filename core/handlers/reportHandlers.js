@@ -35,6 +35,21 @@ function inMonth(dateStr, mm, yyyy) {
 
 export function createReportHandlers(store, config, botStartTime, log) {
 
+  // Splits paid renewals into MUTUALLY EXCLUSIVE full/referral buckets. Some bots price both tiers
+  // the same (abhi/aayush2: full == referral), and a plain two-filter split then put every renewal
+  // in BOTH lists — duplicate names and double-counted revenue. When the amounts are equal there is
+  // no referral tier to report, so everything paid lands in `full`.
+  // Revenue is summed from what was actually paid, so an off-tier amount is never silently dropped.
+  function splitRenewals(paidRenewals) {
+    const { fullAmount, referralAmount } = config.renewal;
+    const hasReferralTier = referralAmount !== fullAmount;
+    return {
+      full: paidRenewals.filter(m => !hasReferralTier || Number(m.paidLast) !== referralAmount),
+      referral: hasReferralTier ? paidRenewals.filter(m => Number(m.paidLast) === referralAmount) : [],
+      revenue: paidRenewals.reduce((s, m) => s + (Number(m.paidLast) || 0), 0),
+    };
+  }
+
   // Checks lastUpdated against a given date string ("DD-MM-YYYY") — handles both storage formats
   function isUpdatedOn(lastUpdated, dateStr) {
     if (!lastUpdated) return false;
@@ -238,11 +253,8 @@ export function createReportHandlers(store, config, botStartTime, log) {
     const totalActive = all.filter(m => m.status === 'ACTIVE').length;
 
     const joinRevenue = newToday.length * config.joining.fee;
-    const fullRenewals = renewedToday.filter(m => m.paidLast === config.renewal.fullAmount);
-    const referralRenewals = renewedToday.filter(m => m.paidLast === config.renewal.referralAmount);
-    const renewalRevenue =
-      fullRenewals.length * config.renewal.fullAmount +
-      referralRenewals.length * config.renewal.referralAmount;
+    const { full: fullRenewals, referral: referralRenewals, revenue: renewalRevenue } =
+      splitRenewals(renewedToday);
     const totalRevenue = joinRevenue + renewalRevenue;
 
     const dateStr = targetDateObj.toLocaleDateString('en-IN', {
@@ -265,8 +277,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
     // Headline count weights half-payment (referral) renewals as 0.5 and full renewals as 1.
     // Ref-free auto-renewals (₹0, earned via 2 referrals) are still LISTED below but are NOT
     // counted in this total — they bring in no revenue. e.g. 4 full + 1 referral + 3 ref-free → 4.5.
-    const weightedRenewals =
-      renewedToday.reduce((s, m) => s + (Number(m.paidLast) === config.renewal.referralAmount ? 0.5 : 1), 0);
+    const weightedRenewals = fullRenewals.length + referralRenewals.length * 0.5;
     const renewalCountLabel = Number.isInteger(weightedRenewals)
       ? String(weightedRenewals) : weightedRenewals.toFixed(1);
     if (totalRenewals > 0) {
@@ -359,11 +370,8 @@ export function createReportHandlers(store, config, botStartTime, log) {
     // Renewals: only count entries where the "renewed" command was actually run this month.
     // Uses lastRenewed (set exclusively by handleRenewed) so kicks/skips/other ops don't pollute the count.
     const renewedThisMonth = all.filter(m => m.lastRenewed && isUpdatedThisMonth(m.lastRenewed));
-    const fullRenewals = renewedThisMonth.filter(m => m.paidLast === config.renewal.fullAmount);
-    const referralRenewals = renewedThisMonth.filter(m => m.paidLast === config.renewal.referralAmount);
-    const renewalRevenue =
-      fullRenewals.length * config.renewal.fullAmount +
-      referralRenewals.length * config.renewal.referralAmount;
+    const { full: fullRenewals, referral: referralRenewals, revenue: renewalRevenue } =
+      splitRenewals(renewedThisMonth.filter(m => Number(m.paidLast) !== 0));
 
     // New joins this month (by joinDate) — excludes silent adds (paidLast 0) and anyone already
     // counted as a renewal this month, so a same-month add+renew isn't billed twice (matches monthly).
@@ -530,6 +538,9 @@ This bot has NO scheduled jobs — it only acts when you send a command.`;
 • delayall [days] confirm  →  apply it
 • approve / approveall  /  rejectall
 • sendlinks [phone]  /  links [phone]
+• links  →  cached invite links (what the bot actually sends)
+• refreshlinks  →  re-fetch all invite links from WhatsApp
+• setlink [n] [url]  →  replace one link by hand, no redeploy
 • groupcheck [phone]
 
 💰 RENEWALS
@@ -993,14 +1004,11 @@ Example: R1 R2 S3
     const newMembers     = all.filter(m => isPaidJoinRow(m) && isIn(m.joinDate) && !renewedPhonesM.has(m.phone) && hasForwardBilling(m));
     const autoRenewed    = allRenewed.filter(m => Number(m.paidLast) === 0);
     const paidRenewed    = allRenewed.filter(m => Number(m.paidLast) > 0);
-    const fullRenewals   = paidRenewed.filter(m => Number(m.paidLast) === config.renewal.fullAmount);
-    const halfRenewals   = paidRenewed.filter(m => Number(m.paidLast) === config.renewal.referralAmount);
+    const { full: fullRenewals, referral: halfRenewals, revenue: renewRevenue } = splitRenewals(paidRenewed);
     const removedMembers = all.filter(m => m.status === 'REMOVED' && isIn(m.lastUpdated));
     const skippedMembers = all.filter(m => m.status === 'SKIPPED' && isIn(m.lastUpdated));
 
     const joinRevenue    = newMembers.length * config.joining.fee;
-    const renewRevenue   = fullRenewals.length * config.renewal.fullAmount
-                         + halfRenewals.length * config.renewal.referralAmount;
     const totalRevenue   = joinRevenue + renewRevenue;
     const net = newMembers.length - removedMembers.length;
 

@@ -31,6 +31,10 @@ reminder-state.json
 drip-state.json
 bots/*/overdue-state.json
 bots/*/removal-state.json
+# Invite links, written by the bot itself (refreshlinks/setlink). Committing them would put
+# the cache back under deploy, which is exactly what moving it out of config.json avoided.
+bots/*/links.json
+links.json
 
 # Logs
 logs/
