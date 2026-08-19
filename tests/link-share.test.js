@@ -23,18 +23,36 @@ test('12 links split into two batches of six', () => {
   assert.ok(!b[0].includes('PATIALA ONLY'));
 });
 
-test('no written numbering — WhatsApp adds its own', () => {
-  // A line starting "7. PATIALA ONLY" is auto-formatted by WhatsApp as an ordered list item,
-  // and it renders its own counter in front, so the operator saw "1. 7. PATIALA ONLY".
+test('numbering runs 1-12 across batches, not 1-6 twice', () => {
   const b = buildLinkBatches({ links, batchSize: 6 });
-  assert.ok(b[1].includes('PATIALA ONLY'));
-  assert.ok(!/^\s*\d+\.\s/m.test(b[0]), 'no batch line starts with a number and a dot');
-  assert.ok(!/^\s*\d+\.\s/m.test(b[1]));
+  assert.ok(b[0].includes('1. DELHI ONLY'));
+  assert.ok(b[1].includes('7. PATIALA ONLY'));
+  assert.ok(!b[1].includes('1. PATIALA ONLY'), 'the second batch must not restart at 1');
 });
 
-// The whole reason for splitting. WhatsApp collapses a message behind "Read more" at
-// roughly 700-800 chars, and 12 links plus a greeting is ~880 — so a single message would
-// hide most of the links from someone who has just paid.
+test("a group whose own name starts with a number is not numbered twice", () => {
+  // nitin's real WhatsApp subjects are "6.LUDHIANA ONLY (Punjab Taxi Group)". Prefixing the
+  // position onto that produced "6. 6.LUDHIANA ONLY" in every link message the operator sent.
+  const named = [
+    { groupName: '1.PUNJAB TAXI (Mix Duty)', link: 'https://chat.whatsapp.com/AAAA' },
+    { groupName: '6.LUDHIANA ONLY (Punjab Taxi Group)', link: 'https://chat.whatsapp.com/BBBB' },
+    { groupName: '12) GURGAON ONLY', link: 'https://chat.whatsapp.com/CCCC' },
+  ];
+  const [batch] = buildLinkBatches({ links: named, batchSize: 6 });
+  assert.ok(batch.includes('1. PUNJAB TAXI (Mix Duty)'), batch);
+  assert.ok(batch.includes('2. LUDHIANA ONLY (Punjab Taxi Group)'), batch);
+  assert.ok(batch.includes('3. GURGAON ONLY'), batch);
+  assert.ok(!/\d+\.\s*\d+[.)]/.test(batch), `doubled numbering in:
+${batch}`);
+});
+
+test('a name that merely begins with digits keeps them', () => {
+  const [batch] = buildLinkBatches({
+    links: [{ groupName: '24x7 DUTY GROUP', link: 'https://chat.whatsapp.com/AAAA' }],
+  });
+  assert.ok(batch.includes('1. 24x7 DUTY GROUP'), batch);
+});
+
 test('each batch stays under the ~800 char Read more fold', () => {
   for (const part of buildLinkBatches({ links, batchSize: 6, greeting: 'Namaste Rajesh ji 🙏' })) {
     assert.ok(part.length < 800, `batch was ${part.length} chars`);

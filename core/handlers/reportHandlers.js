@@ -539,7 +539,7 @@ This bot has NO scheduled jobs — it only acts when you send a command.`;
 • approve / approveall  /  rejectall
 • sendlinks [phone]  /  links [phone]
 • links  →  cached invite links (what the bot actually sends)
-• refreshlinks  →  re-fetch all invite links from WhatsApp
+• refreshlinks  →  re-fetch all invite links (~2 min — paced, run it once)
 • setlink [n] [url]  →  replace one link by hand, no redeploy
 • groupcheck [phone]
 

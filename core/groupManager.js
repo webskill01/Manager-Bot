@@ -166,23 +166,55 @@ export function createGroupManager(sock, config, log) {
   // Every group's invite code in one pass, for the links cache. Deliberately does NOT call
   // groupMetadata: names come from config.groupNames, so this is one round trip per group
   // instead of two, and it runs once a month rather than once per add.
-  async function getAllInviteLinks() {
+  //
+  // Paced by gapBetweenOps like every other group loop. The first version fired all twelve
+  // back to back — twelve calls in about four seconds — and WhatsApp answered rate-overlimit
+  // for the tail. Its limiter is also stateful across commands: a refresh a few minutes after
+  // a twelve-group approve run starts already warm, so a call that trips it gets one retry
+  // after a longer wait before the group is given up on and left with its previous link.
+  async function _getAllInviteLinks() {
     const fetched = [];
     const failed = [];
 
     for (let i = 0; i < paidGroups.length; i++) {
+      if (_aborted) { failed.push({ groupId: paidGroups[i], index: i + 1, error: 'session ended' }); continue; }
       const groupId = paidGroups[i];
-      try {
-        const inviteCode = await sock.groupInviteCode(groupId);
-        fetched.push({ groupId, index: i + 1, link: `https://chat.whatsapp.com/${inviteCode}` });
-      } catch (err) {
-        log.warn(`❌ Invite code failed ${groupId}: ${err.message}`);
-        failed.push({ groupId, index: i + 1, error: err.message });
+      if (i > 0) await gapBetweenOps();
+
+      let lastErr;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const inviteCode = await sock.groupInviteCode(groupId);
+          fetched.push({ groupId, index: i + 1, link: `https://chat.whatsapp.com/${inviteCode}` });
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          const rateLimited = /rate.?overlimit|429/i.test(err.message || '');
+          if (attempt === 1 && rateLimited) {
+            const backoff = randomBetween(20000, 30000);
+            log.warn(`⏳ ${groupId} rate-limited — retrying in ${(backoff / 1000).toFixed(0)}s`);
+            await sleep(backoff);
+            continue;
+          }
+          break;
+        }
+      }
+
+      if (lastErr) {
+        log.warn(`❌ Invite code failed ${groupId}: ${lastErr.message}`);
+        failed.push({ groupId, index: i + 1, error: lastErr.message });
+      } else {
+        log.info(`🔗 Invite code ${i + 1}/${paidGroups.length} ok`);
       }
     }
 
     return { fetched, failed };
   }
+
+  // Queued so a refresh cannot interleave with an add/approve loop and double the call rate
+  // WhatsApp sees — which is what tripped the limiter in the first place.
+  function getAllInviteLinks() { return enqueue(_getAllInviteLinks); }
 
   async function checkMembership(phone) {
     const jid = toJid(phone);

@@ -21,10 +21,19 @@ export function buildLinkBatches({ links, batchSize = 6, welcome = null, greetin
   const size = Math.max(1, Number(batchSize) || 6);
   const batches = [];
   for (let i = 0; i < links.length; i += size) {
-    // No "1. " prefix: WhatsApp auto-formats a line starting with a digit and a dot as an
-    // ordered list and renders its OWN number, so the written one showed up twice ("1. 1.").
-    // Each batch restarts WhatsApp's numbering at 1 anyway, which is what the operator wants.
-    const lines = links.slice(i, i + size).map(l => `${l.groupName}\n${l.link}`);
+    // Numbered 1..N across all batches, matching config.paidGroups order — the same numbers
+    // `setlink [n]` takes, so what the member sees and what the operator edits line up.
+    //
+    // The number is stripped from the NAME first. nitin's real WhatsApp subjects already
+    // begin with their own ("6.LUDHIANA ONLY (Punjab Taxi Group)"), and the live fallback
+    // path reads those subjects straight off groupMetadata, so prefixing blindly produced
+    // "6. 6.LUDHIANA ONLY". Position wins over whatever the group was christened, because
+    // position is what the rest of the system counts by. Requires a . or ) after the digits,
+    // so a group genuinely called "24x7 DUTY" keeps its name.
+    const lines = links.slice(i, i + size).map((l, j) => {
+      const name = String(l.groupName || '').replace(/^\s*\d+\s*[.)]\s*/, '');
+      return `${i + j + 1}. ${name}\n${l.link}`;
+    });
     batches.push(lines.join('\n\n'));
   }
   if (batches.length === 0) return welcome ? [welcome] : [];

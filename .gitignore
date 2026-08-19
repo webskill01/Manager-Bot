@@ -36,6 +36,9 @@ bots/*/removal-state.json
 bots/*/links.json
 links.json
 
+# Billing-date backups from scripts/reset-backlog.js (real names and phone numbers)
+backups/
+
 # Logs
 logs/
 *.log

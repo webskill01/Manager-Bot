@@ -404,6 +404,7 @@ export function createMemberHandlers(store, groupManager, config, log) {
   // gets pushed to the server.
   async function handleRefreshLinks() {
     let result;
+    const started = Date.now();
     try { result = await groupManager.getAllInviteLinks(); }
     catch (err) {
       return `❌ Cannot refresh: ${err.message}\n` +
@@ -414,11 +415,13 @@ export function createMemberHandlers(store, groupManager, config, log) {
     if (fetched.length === 0) return `❌ No invite codes could be fetched. Links unchanged.`;
     if (!linkStore.saveMany(fetched)) return `❌ Fetched ${fetched.length} links but could not save them.`;
 
-    let msg = `✅ Cached ${fetched.length}/${config.paidGroups.length} invite links.`;
+    const mins = Math.round((Date.now() - started) / 1000 / 6) / 10;
+    let msg = `✅ Cached ${fetched.length}/${config.paidGroups.length} invite links (${mins} min).`;
     if (failed.length > 0) {
       msg += `\n\n⚠️ ${failed.length} failed (previous link kept):\n` +
         failed.map(f => `   ${f.index}. ${linkStore.nameOf(f.groupId, f.index - 1)} — ${f.error}`).join('\n') +
-        `\nFix one by hand with: setlink [n] [url]`;
+        `\nFix one by hand with: setlink [n] [url]` +
+        `\n⚠️ Do NOT re-run refreshlinks straight away — WhatsApp's limiter is still hot. setlink is instant and has no limit.`;
     }
     return msg;
   }
