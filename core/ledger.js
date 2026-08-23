@@ -65,6 +65,15 @@ export function createLedger(config, store, log) {
   const tab = settings.tab || TAB;
   let sheets = null;
 
+  // A config.json that asks for a ledger but has no id to write to means the .env is missing
+  // LEDGER_SHEET_ID — the one part of this that `git pull` cannot deliver, because .env is
+  // gitignored. Left quiet, the 10 PM and 6 AM jobs would run, no-op and report nothing, and
+  // the first sign of trouble would be an empty sheet a week later. Say it at boot instead.
+  if (config.ledger && !enabled) {
+    log?.warn?.('📒 Ledger configured but DISABLED — LEDGER_SHEET_ID is missing from ' +
+                `${config.botDir || 'this bot'}/.env. Nothing will be written.`);
+  }
+
   async function client() {
     if (sheets) return sheets;
     const auth = new google.auth.GoogleAuth({
@@ -118,7 +127,10 @@ export function createLedger(config, store, log) {
   // Sync the given dates. Refreshes the member sheet first (someone added since the last
   // refresh must count), computes every date, and writes only what actually differs.
   async function sync(dates) {
-    if (!enabled) return { skipped: 'no ledger.spreadsheetId configured' };
+    if (!enabled) {
+      log?.warn?.('📒 Ledger skipped — no LEDGER_SHEET_ID in this bot’s .env');
+      return { skipped: 'no LEDGER_SHEET_ID configured', dates: 0, appended: 0, updated: 0 };
+    }
     if (dates.length === 0) return { appended: 0, updated: 0, dates: 0 };
 
     await store.refresh();
