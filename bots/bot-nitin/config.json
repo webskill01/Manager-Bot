@@ -162,6 +162,9 @@
     "tab": "LOG",
     "startDate": "17-08-2026",
     "summaryTab": "SUMMARY",
-    "totalColumn": "L"
+    "summaryColumns": {
+      "From friends' bots": "J",
+      "Total per person": "L"
+    }
   }
 }

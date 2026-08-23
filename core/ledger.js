@@ -1,6 +1,6 @@
 import { google } from 'googleapis';
 import { dailyBreakdown } from './handlers/reportHandlers.js';
-import { formatDate, parseDate, todayStr, normalizeDateCell, yesterdayStr, columnIndex } from './globalConfig.js';
+import { todayStr, normalizeDateCell, yesterdayStr, columnIndex, datesBetween } from './globalConfig.js';
 
 // The shared daily ledger: every bot writes its own day's counts into ONE spreadsheet the
 // operator keeps their revenue formulas in.
@@ -20,18 +20,6 @@ import { formatDate, parseDate, todayStr, normalizeDateCell, yesterdayStr, colum
 
 const TAB = 'LOG';
 const HEADER = ['DATE', 'BOT', 'NEW', 'RENEWED'];
-
-// Every date from `from` to `to` inclusive, as DD-MM-YYYY. Returns [] when the range is
-// backwards or either end is unparseable, so a typo'd startDate writes nothing rather than
-// looping forever.
-export function datesBetween(from, to) {
-  const start = parseDate(from);
-  const end = parseDate(to);
-  if (!start || !end || start > end) return [];
-  const out = [];
-  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) out.push(formatDate(d));
-  return out;
-}
 
 // What the ledger should say for each date, given the member sheet as it stands right now.
 // Pure — no I/O — so the diffing below is testable without touching Google.
@@ -184,28 +172,44 @@ export function createLedger(config, store, log) {
   // members, and only DIFFERING rows are written. Cap the window if it ever gets slow.
   const reconcile = () => sync(datesBetween(settings.startDate || yesterdayStr(), yesterdayStr()));
 
-  // Read one figure back OUT of the operator's own summary tab — the day's total per person,
-  // as their formulas computed it. Deliberately a read: the bots write counts and never
-  // rupees, so this reports their arithmetic rather than re-deriving it and disagreeing.
+  // Read figures back OUT of the operator's own summary tab, summed over a set of dates —
+  // one date for `summary`, seven for `weekly`, a month for `revenue`. Deliberately a read:
+  // the bots write counts and the sheet owns what a count is worth, so this reports the
+  // operator's own arithmetic rather than re-deriving it and disagreeing with their sheet.
   //
-  // Returns null when unconfigured or when that date has no row yet, which is the normal
-  // state on every bot except the one whose operator owns the sheet.
-  async function totalFor(dateStr) {
-    const tab = settings.summaryTab;
-    const col = columnIndex(settings.totalColumn);
-    if (!enabled || !tab || col < 0) return null;
+  // Which figures is config, not code: ledger.summaryColumns maps a label to a column letter,
+  // so adding or renaming one is a config edit. Returns null when unconfigured or when not one
+  // of the dates has a row — the normal state on every bot but the one that owns the sheet,
+  // and on a day the sheet does not reach yet.
+  async function sumFor(dates) {
+    const tabName = settings.summaryTab;
+    const columns = settings.summaryColumns;
+    if (!enabled || !tabName || !columns || dates.length === 0) return null;
+
     const api = await client();
     const res = await api.spreadsheets.values.get({
       spreadsheetId: settings.spreadsheetId,
-      range: `${tab}!A2:Z`,
-      // UNFORMATTED: a real date cell comes back as a serial that normalizeDateCell turns
-      // into DD-MM-YYYY, so a column displaying "1 July" still matches. A column of plain
-      // TEXT dates would not — it would need to be typed as dates, or written DD-MM-YYYY.
+      range: `${tabName}!A2:Z`,
+      // UNFORMATTED: a real date cell comes back as a serial that normalizeDateCell turns into
+      // DD-MM-YYYY, so a column displaying "1 July" still matches. A column of plain TEXT dates
+      // only matches if it is already written DD-MM-YYYY — which is how setup-ledger-sheet
+      // writes it.
       valueRenderOption: 'UNFORMATTED_VALUE',
     });
-    const row = (res.data.values || []).find(r => normalizeDateCell(r[0]).slice(0, 10) === dateStr);
-    const value = row?.[col];
-    return Number.isFinite(Number(value)) && value !== '' ? Number(value) : null;
+    const want = new Set(dates);
+    const rows = (res.data.values || [])
+      .filter(r => want.has(normalizeDateCell(r[0]).slice(0, 10)));
+    if (rows.length === 0) return null;
+
+    const out = {};
+    for (const [label, letter] of Object.entries(columns)) {
+      const col = columnIndex(letter);
+      if (col < 0) continue;
+      // Round to 2dp: a half-price renewal makes these fractional and floating-point addition
+      // would otherwise report ₹1022.4999999999999.
+      out[label] = Math.round(rows.reduce((sum, r) => sum + (Number(r[col]) || 0), 0) * 100) / 100;
+    }
+    return Object.keys(out).length > 0 ? out : null;
   }
 
   async function status() {
@@ -217,5 +221,5 @@ export function createLedger(config, store, log) {
       (last ? `Last row: ${last.date} — ${last.newJoined} new, ${last.renewed} renewed` : 'No rows yet.');
   }
 
-  return { enabled, sync, writeToday, reconcile, status, totalFor };
+  return { enabled, sync, writeToday, reconcile, status, sumFor };
 }

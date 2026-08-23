@@ -341,7 +341,7 @@ test('revenue counts joining fees only and applies the configured split', async 
     { name: 'K1', phone: '9000000004', status: 'CALLED', joinDate: dayOffset(-200), paidLast: 100, billingDate: dayOffset(-170), callResult: 'interested' },
   ]);
   const r = createReportHandlers(store, trackerConfig(tmp()), Date.now(), log);
-  const out = r.handleRevenue();
+  const out = await r.handleRevenue();
 
   assert.match(out, /Total: ₹200/, 'two paid joins at 100; silent add excluded');
   assert.match(out, /joins only — this bot collects no renewals/);

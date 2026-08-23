@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { datesBetween, ledgerRowsFor, diffRows } from '../core/ledger.js';
-import { yesterdayStr, columnIndex } from '../core/globalConfig.js';
+import { ledgerRowsFor, diffRows } from '../core/ledger.js';
+import { yesterdayStr, columnIndex, datesBetween, datesInMonth } from '../core/globalConfig.js';
 import { dailyBreakdown } from '../core/handlers/reportHandlers.js';
 
 const CFG = {

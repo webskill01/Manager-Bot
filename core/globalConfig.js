@@ -326,6 +326,24 @@ export function todayStr() {
   return formatDate(new Date());
 }
 
+// Every date from `from` to `to` inclusive, as DD-MM-YYYY. Returns [] when the range is
+// backwards or either end is unparseable, so a typo'd date writes nothing rather than looping
+// forever.
+export function datesBetween(from, to) {
+  const start = parseDate(from);
+  const end = parseDate(to);
+  if (!start || !end || start > end) return [];
+  const out = [];
+  for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) out.push(formatDate(d));
+  return out;
+}
+
+// Every date in a given month, as DD-MM-YYYY. `month` is 1-12.
+export function datesInMonth(month, year) {
+  const last = new Date(year, month, 0).getDate();
+  return datesBetween(`01-${String(month).padStart(2, '0')}-${year}`, `${last}-${String(month).padStart(2, '0')}-${year}`);
+}
+
 export function yesterdayStr(now = new Date()) {
   const d = new Date(now);
   d.setDate(d.getDate() - 1);

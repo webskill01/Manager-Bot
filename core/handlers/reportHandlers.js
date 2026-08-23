@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, todayStr, getReferralsInBillingPeriod, parseDate, formatDate, normalizePhone, formatSplit, isPaidJoin, isTracker, isCallDue, needsFollowUp, yesterdayStr } from '../globalConfig.js';
+import { daysFromToday, todayStr, getReferralsInBillingPeriod, parseDate, formatDate, normalizePhone, formatSplit, isPaidJoin, isTracker, isCallDue, needsFollowUp, yesterdayStr, datesInMonth } from '../globalConfig.js';
 
 // Silent/existing-member adds (addsilent) store paidLast = 0 and must never be counted as
 // a new member or as join revenue. Real joins (add/rejoin) store the joining fee.
@@ -107,6 +107,36 @@ export function dailyBreakdown(all, config, dateStr) {
 
 export function createReportHandlers(store, config, botStartTime, log, ledger = null) {
 
+  // The cross-bot block appended to every revenue report on the bot whose config names a
+  // summaryTab — in practice bot-nitin, the one whose operator owns the revenue sheet. The
+  // friend bots name no summaryTab, so this returns '' and each of them keeps reporting its
+  // own money and nothing else, which is exactly what their operators should see.
+  //
+  // Figures come from the operator's sheet, never recomputed here: there is one answer to
+  // what a day earned and it is the one their formulas give. Returns '' rather than throwing
+  // on any failure — a Sheets hiccup must never cost someone their whole revenue report.
+  async function allBotsBlock(label, dates) {
+    try {
+      const sums = await ledger?.sumFor(dates);
+      if (!sums) return '';
+      const width = Math.max(...Object.keys(sums).map(k => k.length)) + 1;
+      const lines = Object.entries(sums)
+        .map(([k, v]) => `   ${`${k}:`.padEnd(width)} ₹${v}`)
+        .join('\n');
+      // These figures come from the shared sheet, which every bot writes at 10 PM and again
+      // at 6 AM — so for TODAY, and for yesterday before the morning pass, they legitimately
+      // read ₹0 while this bot's own revenue above is already non-zero. Unexplained that
+      // looks broken, so say where the number comes from exactly when it is all zeroes.
+      const pending = Object.values(sums).every(v => v === 0)
+        ? '\n   (the shared sheet fills at 10 PM and 6 AM — not written for this window yet)'
+        : '';
+      return `\n\n🌐 ALL BOTS — ${label}\n${lines}${pending}`;
+    } catch (err) {
+      log?.warn?.(`⚠️  Cross-bot totals unavailable: ${err.message}`);
+      return '';
+    }
+  }
+
   function isUpdatedToday(lastUpdated) {
     return isUpdatedOn(lastUpdated, todayStr());
   }
@@ -190,17 +220,8 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
     // Silent on every bot but the one whose config names a summaryTab, and silent on the
     // first morning of a new sheet. try/catch like every block around it: a Sheets hiccup
     // must never cost the operator the whole digest.
-    try {
-      const y = yesterdayStr();
-      const perPerson = await ledger?.totalFor(y);
-      if (perPerson !== null && perPerson !== undefined) {
-        msg += `
-
-💵 YESTERDAY (${y}): ₹${perPerson} per person`;
-      }
-    } catch (err) {
-      log?.warn?.(`⚠️  Ledger total unavailable: ${err.message}`);
-    }
+    const y = yesterdayStr();
+    msg += await allBotsBlock(`yesterday, ${y}`, [y]);
 
     // Catch-up progress is deliberately NOT here. `catchup` prints its own status on
     // demand, and the digest is a money view — a line about a group broadcast the operator
@@ -283,6 +304,7 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
         msg += skippedOnDay.map(m => `   • ${m.name} • ${m.phone}${m.skipReason ? ` (${m.skipReason})` : ''}`).join('\n') + '\n';
       }
       msg += `👥 Total in groups: ${inGroups}`;
+      msg += await allBotsBlock(targetDateStr, [targetDateStr]);
 
       return msg;
     }
@@ -370,6 +392,7 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
 
     msg += `⚠️ Overdue (${consolidatedDays}+ days): ${overdue.length}\n`;
     msg += `👥 Total Active: ${totalActive}`;
+    msg += await allBotsBlock(targetDateStr, [targetDateStr]);
 
     return msg;
   }
@@ -388,7 +411,7 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
     return `📊 STATS\n\n👥 Active: ${active}\n❌ Removed: ${removed}\n⏭️ Skipped: ${skipped}\n⚠️ Overdue: ${overdue}\n📅 Due today: ${dueToday}\n📁 Total rows in sheet: ${all.length} (+1 header = ${all.length + 1} Excel rows)`;
   }
 
-  function handleRevenue() {
+  async function handleRevenue() {
     const all = store.getAll();
     const now = new Date();
     const mm = String(now.getMonth() + 1).padStart(2, '0');
@@ -411,7 +434,8 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
         `${formatSplit(total, config, '')}\n\n` +
         `➕ New joins: ${joins.length} @ ₹${config.joining.fee}\n` +
         `   (joins only — this bot collects no renewals)\n\n` +
-        `✅ Interested in the app, all time: ${interested}`;
+        `✅ Interested in the app, all time: ${interested}` +
+        await allBotsBlock(`${monthLabel} ${yyyy}`, datesInMonth(now.getMonth() + 1, now.getFullYear()));
     }
 
     // Renewals: only count entries where the "renewed" command was actually run this month.
@@ -445,6 +469,7 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
       msg += `   • ${referralRenewals.length} referral @ ₹${config.renewal.referralAmount}\n`;
     if (joinsThisMonth.length > 0)
       msg += `\n➕ New joins: ${joinsThisMonth.length} (₹${joinRevenue})`;
+    msg += await allBotsBlock(`${monthName} ${yyyy}`, datesInMonth(now.getMonth() + 1, now.getFullYear()));
 
     return msg;
   }
@@ -969,7 +994,7 @@ Example: R1 R2 S3
   }
 
   // ─── WEEKLY ──────────────────────────────────────────────────────────────────
-  function handleWeekly() {
+  async function handleWeekly() {
     const all = store.getAll();
     const now = new Date();
 
@@ -1004,11 +1029,12 @@ Example: R1 R2 S3
     msg += `\n💰 Revenue: ₹${totalRevenue}`;
     if (joinRevenue > 0 || renewalRevenue > 0)
       msg += `\n   Joins ₹${joinRevenue} + Renewals ₹${renewalRevenue}`;
+    msg += await allBotsBlock(`${last7[0]} → ${last7[6]}`, last7);
     return msg;
   }
 
   // ─── MONTHLY SUMMARY ─────────────────────────────────────────────────────────
-  function handleMonthly(args = []) {
+  async function handleMonthly(args = []) {
     const all = store.getAll();
     const now = new Date();
     let targetMonth, targetYear;
@@ -1081,6 +1107,7 @@ Example: R1 R2 S3
     msg += `\n💰 Revenue: ₹${totalRevenue}`;
     if (totalRevenue > 0) msg += `\n   Joins ₹${joinRevenue} + Renewals ₹${renewRevenue}\n${formatSplit(totalRevenue, config)}`;
     msg += `\n📊 Net change: ${net >= 0 ? '+' : ''}${net} members`;
+    msg += await allBotsBlock(monthLabel, datesInMonth(targetMonth, targetYear));
 
     return msg;
   }
