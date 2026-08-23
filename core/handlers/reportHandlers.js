@@ -134,14 +134,9 @@ export function createReportHandlers(store, config, botStartTime, log) {
       }
     } catch (_) {}
 
-    // Catch-up cycle progress (if one is running)
-    try {
-      const cState = JSON.parse(fs.readFileSync(path.join(config.botDir, 'catchup-state.json'), 'utf8'));
-      if (cState?.cohort) {
-        msg += `\n\n📣 Catch-up running — stage ${Math.min(cState.stage + 1, 3)}/3, ` +
-          `${cState.cohort.length} in cohort, delayed until ${cState.delayUntil}`;
-      }
-    } catch (_) {}
+    // Catch-up progress is deliberately NOT here. `catchup` prints its own status on
+    // demand, and the digest is a money view — a line about a group broadcast the operator
+    // started themselves is noise every morning of a cycle.
 
     // Trial removal schedule (if active)
     try {

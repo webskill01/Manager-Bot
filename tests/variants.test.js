@@ -136,3 +136,21 @@ test('no config still carries the "knra" misspelling of "krna"', () => {
     assert.ok(!/knra/i.test(raw), `${bot}: "knra" should be "krna"`);
   }
 });
+
+test('no two bots share a group name — that is how abhi\'s groups ended up in sachin\'s kick prompt', () => {
+  // bot-sachin2 shipped with "SINGH TRAVELS (PAID) ( ONLY DELHI // GURGAON // NOIDA -
+  // PICK-DROP)" pasted in from bot-abhi, so every "remove them from these groups"
+  // instruction named a group sachin does not run. Nothing in the code could catch it —
+  // the list was the right LENGTH. This is the check that would have.
+  const seen = new Map();
+  for (const bot of BOTS) {
+    const cfg = JSON.parse(fs.readFileSync(`bots/${bot}/config.json`, 'utf8'));
+    assert.equal((cfg.groupNames || []).length, (cfg.paidGroups || []).length,
+      `${bot}: groupNames and paidGroups have drifted — kick would name a vague fallback list`);
+    for (const name of cfg.groupNames || []) {
+      const owner = seen.get(name);
+      assert.ok(!owner, `"${name}" is in both ${owner} and ${bot} — one of them is a copy-paste`);
+      seen.set(name, bot);
+    }
+  }
+});

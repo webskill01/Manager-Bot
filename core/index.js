@@ -849,6 +849,7 @@ export async function startBot(config, log, authDir) {
       allowedIds: config.allowedTelegramIds,
       bootstrapMode: config.bootstrapMode,
       botName: config.botName,
+      profile: config.profile,
       log,
       onCommand: async (text, reply) => {
         // The parser is built as soon as connectToWhatsApp() constructs a socket object,

@@ -98,6 +98,7 @@ export async function startBot(config, log) {
     allowedIds: config.allowedTelegramIds,
     bootstrapMode: config.bootstrapMode,
     botName: config.botName,
+    profile: config.profile,
     log,
     onCommand: async (text, reply) => {
       try {

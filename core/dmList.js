@@ -17,11 +17,12 @@ export function pickStage(overdueDays, config) {
 }
 
 // Each message may be a string or an array of variants — see pickVariant. The pick is keyed
-// on the member's phone so it is stable for them within the day, which matters because the
-// drip re-renders this list before every push.
-function templateFor(stage, config, { referral, phone }) {
+// keyed on the row's position in the list, so the wordings rotate 1-2-3-1-2-3 instead of
+// two neighbours drawing the same one. Stable across re-renders because the row order is
+// — the drip rebuilds this list before every push and must not swap the text under it.
+function templateFor(stage, config, { referral, phone, seq }) {
   const m = config.messages || {};
-  const pick = (v) => pickVariant(v, phone);
+  const pick = (v) => pickVariant(v, phone, undefined, seq);
   if (stage === 'msg3') return pick(m.finalReminder) || pick(m.overdue) || 'Renewal pending — please repay.';
   if (stage === 'msg2') return pick(m.overdue) || 'Your renewal date has passed — please repay.';
   return (referral && m.referralReminder) ? pick(m.referralReminder) : (pick(m.reminder) || 'Your renewal is due today.');
@@ -49,6 +50,7 @@ export function buildDmList({ members, config, cohort = 'due', billingDay = null
   const final = config.overdue?.finalReminderDays ?? 6;
   const all = members;
   const rows = [];
+  let seq = 0;   // rotation counter, advanced only for members who actually make the list
 
   for (const m of all) {
     if (m.status !== 'ACTIVE') continue;
@@ -78,7 +80,7 @@ export function buildDmList({ members, config, cohort = 'due', billingDay = null
     // {date} is the member's OWN billing date, not today. On a backlog run today's date is
     // simply wrong — telling someone billed on the 20th that their date is the 28th reads
     // as a mistake and invites an argument about what they actually owe.
-    const text = templateFor(stage, config, { referral, phone: m.phone })
+    const text = templateFor(stage, config, { referral, phone: m.phone, seq: seq++ })
       // Global, not first-occurrence. A plain-string .replace() swaps only the first match,
       // so a template mentioning the member twice would send the second one as the literal
       // text "{name}". Cheap to get wrong now that operators write several variants each.

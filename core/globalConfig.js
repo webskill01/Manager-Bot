@@ -149,10 +149,17 @@ export function loadConfig(botDir) {
 // byte-identical text is a stronger signal to WhatsApp than any gap between sends can
 // offset. A plain string is returned untouched, so nothing changes until an operator
 // actually writes alternate wordings into their config.
-export function pickVariant(value, phone, date = todayStr()) {
+// `seq` is the message's position in the batch being built. Given one, the pick is a plain
+// round robin — variant 1, 2, 3, 1, 2, 3 straight down the list. The hash below spreads
+// evenly across hundreds of members but says nothing about any two ADJACENT ones, so a
+// 12-person list could and did hand out the same wording four times running, which is the
+// exact pattern the variants exist to break. Callers without a batch (none today) keep the
+// hash.
+export function pickVariant(value, phone, date = todayStr(), seq = null) {
   if (!Array.isArray(value)) return value;
   if (value.length === 0) return '';
   if (value.length === 1) return value[0];
+  if (Number.isInteger(seq)) return value[((seq % value.length) + value.length) % value.length];
   const seed = `${phone}|${date}`;
   let h = 0;
   for (let i = 0; i < seed.length; i++) h = (Math.imul(h, 31) + seed.charCodeAt(i)) >>> 0;
