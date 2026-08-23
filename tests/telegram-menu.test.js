@@ -121,7 +121,7 @@ test('an argument means a different question — no follow-ups', () => {
 });
 
 test('commands with no fixed follow-up get none', () => {
-  for (const cmd of ['help', 'digest', 'find', 'add', 'kick', 'renewed', 'cloudapi', 'setlink', 'monthly']) {
+  for (const cmd of ['digest', 'find', 'add', 'kick', 'renewed', 'cloudapi', 'setlink', 'monthly']) {
     assert.equal(followUps(cmd), null, `${cmd} should have no buttons`);
   }
 });

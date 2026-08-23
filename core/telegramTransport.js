@@ -1,4 +1,5 @@
 import { isSlowCommand } from './commandParser.js';
+import { HELP_CATEGORIES } from './helpText.js';
 
 // The Telegram Bot API half of a bot, with nothing above it: no sheet, no store, no
 // command parser. Give it a token, the operator allow-list, and a function to call when
@@ -135,7 +136,7 @@ const FOLLOW_UPS = {
 // no fixed follow-up. Commands whose next step needs a phone or a name (cloudapi test,
 // setlink, remind, the `moved`/`addnew` retirement hints) are deliberately absent — a
 // button cannot supply an argument, so it would only ever produce a format error.
-export function followUps(text) {
+export function followUps(text, profile = 'full') {
   const parts = String(text || '').trim().split(/\s+/);
   const cmd = parts[0].toLowerCase();
 
@@ -145,6 +146,20 @@ export function followUps(text) {
   // a format error is a trap.
   if (cmd === 'delayall' && parts.length === 2 && /^\d{1,2}$/.test(parts[1])) {
     return [[[`delayall ${parts[1]} confirm`, `✅ confirm ${parts[1]}d`]]];
+  }
+
+  // `help` is an index of sections, and the sections ARE the buttons — so nobody has to know
+  // the section names to reach them. Two per row: the labels carry an emoji and a word, and
+  // three across wraps badly on a phone. Built from the same HELP_CATEGORIES the text uses,
+  // so a button can never point at a section that does not exist.
+  if (cmd === 'help' && parts.length === 1) {
+    const cats = HELP_CATEGORIES[profile] || HELP_CATEGORIES.full;
+    const rows = [];
+    for (let i = 0; i < cats.length; i += 2) {
+      rows.push(cats.slice(i, i + 2).map(([key, label]) => [`help ${key}`, label]));
+    }
+    rows.push([['help all', '📖 Everything']]);
+    return rows;
   }
 
   // start / stop / test all leave the same three useful next steps, so the drip keeps its
@@ -305,7 +320,7 @@ export function createTelegramListener({ token, allowedIds = [], bootstrapMode =
       // No follow-up buttons under a refusal. `drip` answers "⚠️ Drip unavailable" on a bot
       // with no Telegram listener, and offering start/stop/test under that is just three
       // more ways to read the same message.
-      const buttons = /^\s*[❌⚠️]/.test(String(parts[0] || '')) ? null : followUps(text);
+      const buttons = /^\s*[❌⚠️]/.test(String(parts[0] || '')) ? null : followUps(text, profile);
       for (const [i, part] of parts.entries()) {
         if (i > 0) await new Promise(res => setTimeout(res, 800));
         await send(chatId, part, { buttons: i === parts.length - 1 ? buttons : null });

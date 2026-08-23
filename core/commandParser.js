@@ -657,7 +657,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'removed':    return reportH.handleRemovedList();
         case 'skipped':    return reportH.handleSkippedList();
         case 'ping':       return reportH.handlePing(sock);
-        case 'help':       return reportH.handleHelp();
+        case 'help':       return reportH.handleHelp(args);
 
         case 'upcoming':   return reportH.handleUpcoming(args);
         case 'toprefs':    return reportH.handleTopRefs();

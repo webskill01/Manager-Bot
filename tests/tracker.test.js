@@ -381,7 +381,7 @@ test('tracker summary is a money report only — joins, revenue, split, never ca
 
 test('tracker help lists the funnel and no renewal commands', () => {
   const r = createReportHandlers(fakeStore([]), trackerConfig(tmp()), Date.now(), log);
-  const out = r.handleHelp();
+  const out = r.handleHelp(['all']);
   assert.match(out, /BOT COMMANDS — tracker/);
   assert.match(out, /add → \(30 days pass\) → pending → call them → log what they said/);
   assert.ok(!/renewed \[phone\]/.test(out), 'no renewal commands offered');
@@ -392,7 +392,7 @@ test('tracker help lists the funnel and no renewal commands', () => {
 test('full-profile help is unchanged and still lists renewals', () => {
   const fullConfig = { ...trackerConfig(tmp()), profile: 'full' };
   const r = createReportHandlers(fakeStore([]), fullConfig, Date.now(), log);
-  const out = r.handleHelp();
+  const out = r.handleHelp(['all']);
   assert.match(out, /💰 RENEWALS/);
   assert.match(out, /renewed \[phone\]/);
   assert.ok(!/BOT COMMANDS — tracker/.test(out));
@@ -400,7 +400,7 @@ test('full-profile help is unchanged and still lists renewals', () => {
 
 test('full-profile help documents dmlist and drops the retired commands', () => {
   const fullConfig = { ...trackerConfig(tmp()), profile: 'full' };
-  const out = createReportHandlers(fakeStore([]), fullConfig, Date.now(), log).handleHelp();
+  const out = createReportHandlers(fakeStore([]), fullConfig, Date.now(), log).handleHelp(['all']);
 
   assert.match(out, /• dmlist2\s+→\s+5 days overdue/, 'the 2nd-message command is documented');
   assert.match(out, /• dmlist3\s+→\s+6\+ days overdue/, 'the final-notice command is documented');
@@ -415,7 +415,7 @@ test('full-profile help documents dmlist and drops the retired commands', () => 
 });
 
 test('tracker help documents the three call outcomes and the log command', () => {
-  const out = createReportHandlers(fakeStore([]), trackerConfig(tmp()), Date.now(), log).handleHelp();
+  const out = createReportHandlers(fakeStore([]), trackerConfig(tmp()), Date.now(), log).handleHelp(['all']);
   assert.match(out, /called \[phone\] interested/);
   assert.match(out, /called \[phone\] not interested/);
   assert.match(out, /logs the call \+ date, no answer yet/, 'the empty outcome is documented');

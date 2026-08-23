@@ -260,7 +260,7 @@ test('sheet commands still work untouched on a Telegram bot', async () => {
 
 test('tracker help does not advertise commands a Telegram bot refuses', () => {
   const reportH = createReportHandlers(fakeStore(), tgConfig(), Date.now(), log);
-  const help = reportH.handleHelp();
+  const help = reportH.handleHelp(['all']);
   for (const gone of ['approve / approveall', 'rejectall', 'groupcheck [phone]']) {
     assert.ok(!help.includes(gone), `help still offers "${gone}" on a Telegram bot`);
   }
@@ -270,7 +270,7 @@ test('tracker help does not advertise commands a Telegram bot refuses', () => {
 
 test('tracker help on a WhatsApp bot is unchanged', () => {
   const reportH = createReportHandlers(fakeStore(), tgConfig({ transport: 'whatsapp' }), Date.now(), log);
-  const help = reportH.handleHelp();
+  const help = reportH.handleHelp(['all']);
   assert.ok(help.includes('approve / approveall'));
   assert.ok(help.includes('groupcheck [phone]'));
   assert.ok(!help.includes('tap-to-send'));
