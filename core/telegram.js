@@ -173,8 +173,17 @@ export async function startBot(config, log) {
 
   // Only after the listener is confirmed up: a job that fires into a dead token would burn
   // its work and report nothing. Tracker bots register nothing at all.
+  // The ledger writes to a Google Sheet and messages nobody, so it is registered on EVERY
+  // profile. The tracker gate below exists to stop a bot sending on a timer — the reasoning
+  // that makes it right for reminders and digests simply does not reach a sheet write, and
+  // leaving the ledger inside it would silently stop a bot's revenue row the day its profile
+  // changed.
   if (isTracker(config)) {
-    log.info('📋 Tracker profile — no scheduled jobs registered (command-driven only)');
+    log.info('📋 Tracker profile — only the ledger is scheduled (everything else is command-driven)');
+    scheduler.start({
+      ledgerWrite: () => ledger.writeToday(),
+      ledgerReconcile: () => ledger.reconcile(),
+    });
   } else {
     scheduler.start({
       morningDigest:  async () => { await notifyTelegram(await commandParser.runReport('digest')); },

@@ -72,6 +72,11 @@ export function createLedger(config, store, log) {
   if (config.ledger && !enabled) {
     log?.warn?.('📒 Ledger configured but DISABLED — LEDGER_SHEET_ID is missing from ' +
                 `${config.botDir || 'this bot'}/.env. Nothing will be written.`);
+  } else if (enabled) {
+    // A healthy ledger used to log nothing at all until its first 10 PM write, so the only
+    // way to know it was on was the ABSENCE of the warning above — which is no way to check
+    // anything. One line, so `grep 📒 logs/<bot>-out.log` answers the question either way.
+    log?.info?.(`📒 Ledger ON → "${tab}" tab, since ${settings.startDate || 'yesterday'}`);
   }
 
   async function client() {
