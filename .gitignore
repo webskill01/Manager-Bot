@@ -6,6 +6,9 @@ scripts/*
 # …except the watchdog — it runs on the VPS as a pm2 app
 !scripts/watchdog.js
 !scripts/check-sheets.js
+# Ledger tooling: reads configs, writes formulas. No member data passes through either.
+!scripts/setup-ledger-sheet.js
+!scripts/ledger-backfill.js
 
 # Raw member data exports (contain real phone numbers — keep local only)
 *.xlsx

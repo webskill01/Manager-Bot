@@ -23,7 +23,7 @@
   },
   "renewal": {
     "fullAmount": 100,
-    "referralAmount": 50,
+    "referralAmount": 100,
     "billingCycleDays": 30
   },
   "joining": {
@@ -132,5 +132,9 @@
   "groupNames": [
     "Malwa Travels (PAID) Delhi Duty Group",
     "Malwa Travels (PAID) Mix Duty Group"
-  ]
+  ],
+  "ledger": {
+    "tab": "LOG",
+    "startDate": "17-08-2026"
+  }
 }

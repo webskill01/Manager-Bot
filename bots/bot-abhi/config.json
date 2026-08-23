@@ -132,5 +132,9 @@
     "SINGH TRAVELS (PAID) ( ONLY DELHI // GURGAON // NOIDA - PICK-DROP)",
     "SINGH TRAVELS (PAID) (Chandigarh//mohali//zirakpur)",
     "SINGH TRAVELS (PAID) (MIX DUTY)"
-  ]
+  ],
+  "ledger": {
+    "tab": "LOG",
+    "startDate": "17-08-2026"
+  }
 }

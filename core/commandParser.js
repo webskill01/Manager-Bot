@@ -20,7 +20,7 @@ const SLOW_COMMANDS = new Set([
   'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
   'kick', 'rejoin', 'sendlinks', 'links', 'refreshlinks', 'groupcheck', 'remind', 'renewed',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
-  'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip',
+  'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip', 'ledger',
 ]);
 
 // A Sheets 403 is a Google-side problem, not a bot problem, but its raw message ("The
@@ -68,11 +68,11 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null) {
   const memberH = createMemberHandlers(store, groupManager, config, log);
   const renewalH = createRenewalHandlers(store, config, log);
   const lookupH = createLookupHandlers(store, config, log);
-  const reportH = createReportHandlers(store, config, botStartTime, log);
+  const reportH = createReportHandlers(store, config, botStartTime, log, ledger);
   const trackerH = createTrackerHandlers(store, groupManager, config, log);
   const tracker = isTracker(config);
   // True when this bot has no WhatsApp socket at all — the operator commands it over
@@ -731,6 +731,20 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           if (sub === 'start') return dripEngine.start();
           if (sub === 'test')  return dripEngine.test();
           return dripEngine.status();
+        }
+
+        // The shared revenue ledger. It writes itself at 10 PM and again at 6 AM, so these
+        // are for checking on it and for the first backfill — not part of anyone's routine.
+        case 'ledger': {
+          if (!ledger?.enabled) {
+            return `📒 Ledger is off — add a "ledger" block with a spreadsheetId and startDate\n` +
+                   `to bots/${config.botName}/config.json, restart, and share that sheet with this bot's service account.`;
+          }
+          const sub = (args[0] || '').toLowerCase();
+          const report = (r) => `✅ Ledger synced — ${r.dates} date(s): ${r.appended} added, ${r.updated} corrected.`;
+          if (sub === 'now')  return report(await ledger.writeToday());
+          if (sub === 'sync' || sub === 'backfill') return report(await ledger.reconcile());
+          return ledger.status();
         }
 
         case 'removal':    return removalEngine.handleRemoval();

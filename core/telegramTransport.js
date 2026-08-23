@@ -79,6 +79,7 @@ const MENUS = {
     ['links', 'the cached group invite links'],
     ['revenue', 'joining fees this month + split'],
     ['stats', 'the numbers'],
+    ['ledger', 'the shared revenue sheet — it fills itself'],
     ['ping', 'is the bot alive'],
     ['help', 'every command'],
   ],
@@ -100,6 +101,7 @@ const MENUS = {
     ['skipped', 'everyone parked'],
     ['revenue', 'joining fees this month + split'],
     ['stats', 'the numbers'],
+    ['ledger', 'the shared revenue sheet — it fills itself'],
     ['ping', 'is the bot alive'],
     ['help', 'every command'],
   ],
@@ -126,6 +128,7 @@ const FOLLOW_UPS = {
   due:        [[['due tomorrow', 'tomorrow']]],
   upcoming:   [[['upcoming 7', '7 days'], ['upcoming 14', '14 days'], ['upcoming 30', '30 days']]],
   links:      [[['refreshlinks', '🔄 refresh all links']]],
+  ledger:     [[['ledger now', '📝 write today'], ['ledger sync', '🔄 backfill + fix']]],
 };
 
 // Which buttons belong under the answer to `text`, or null for the ~45 commands that have

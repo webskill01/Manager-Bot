@@ -157,5 +157,11 @@
     "NOIDA ONLY ( Punjab Taxi Group)",
     "GURGAON ONLY (Punjab Taxi Service)",
     "PUNJAB TAXI (Mix Duty)"
-  ]
+  ],
+  "ledger": {
+    "tab": "LOG",
+    "startDate": "17-08-2026",
+    "summaryTab": "SUMMARY",
+    "totalColumn": "L"
+  }
 }

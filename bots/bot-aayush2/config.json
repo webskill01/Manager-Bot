@@ -139,5 +139,9 @@
   "groupNames": [
     "MAHADEV TRAVELS (PAID) ( UK / HP / ALL INDIA )",
     "MAHADEV TRAVELS (PAID) ( ALL PUNJAB DUTY )"
-  ]
+  ],
+  "ledger": {
+    "tab": "LOG",
+    "startDate": "17-08-2026"
+  }
 }

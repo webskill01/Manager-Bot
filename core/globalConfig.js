@@ -26,6 +26,13 @@ export function loadConfig(botDir) {
   config.sheetId = process.env.SHEET_ID || '';
   config.botName = process.env.BOT_NAME || config.botName;
   config.statsPort = parseInt(process.env.STATS_PORT || '3010', 10);
+  // The shared ledger's spreadsheet id comes from the .env like SHEET_ID does, never from
+  // config.json — this repo is public and config.json is committed. Everything else about
+  // the ledger (tab names, start date, which column holds the total) is layout, not access,
+  // and stays in config.json where it can be read in a diff.
+  if (config.ledger && process.env.LEDGER_SHEET_ID) {
+    config.ledger.spreadsheetId = process.env.LEDGER_SHEET_ID;
+  }
   config.serviceAccountPath = path.join(botDir, 'service-account.json');
   config.botDir = botDir;
 
@@ -317,6 +324,20 @@ export function daysFromToday(dateStr) {
 
 export function todayStr() {
   return formatDate(new Date());
+}
+
+export function yesterdayStr(now = new Date()) {
+  const d = new Date(now);
+  d.setDate(d.getDate() - 1);
+  return formatDate(d);
+}
+
+// "A" → 0, "L" → 11, "AA" → 26. Only ever fed a config value, so a nonsense one yields -1
+// and the caller reports nothing rather than silently reading the wrong column.
+export function columnIndex(letter) {
+  const m = String(letter || '').trim().toUpperCase();
+  if (!/^[A-Z]{1,2}$/.test(m)) return -1;
+  return [...m].reduce((n, ch) => n * 26 + (ch.charCodeAt(0) - 64), 0) - 1;
 }
 
 // True when a once-a-day cron ("m h * * *") would already have fired earlier today, in the

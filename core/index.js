@@ -38,6 +38,7 @@ import { createScheduler } from './scheduler.js';
 import { createReminderSender, renderSendLog } from './reminderSender.js';
 import { createOverdueEngine } from './overdueEngine.js';
 import { createDripEngine } from './dripEngine.js';
+import { createLedger } from './ledger.js';
 import { createTrialRemovalEngine } from './trialRemovalEngine.js';
 import { createRemovalEngine } from './removalEngine.js';
 import { createGhostRemovalEngine } from './ghostRemovalEngine.js';
@@ -115,6 +116,7 @@ export async function startBot(config, log, authDir) {
   log.info('📊 Connecting to Google Sheets...');
   const sheetClient = await createSheetClient(config.serviceAccountPath, config.sheetId, log);
   const store = createMemberStore(sheetClient, config.botName);
+  const ledger = createLedger(config, store, log);
 
   // Built here, not inside the connection handler: the drip sends nothing over WhatsApp, so
   // it must not be coupled to whether a socket ever comes up. On a flagged number the drip
@@ -380,7 +382,7 @@ export async function startBot(config, log, authDir) {
       sock.ev.on('groups.update', (updates) => { for (const u of updates || []) groupMetaCache.delete(u?.id); });
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine, ledger);
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {
@@ -549,6 +551,11 @@ export async function startBot(config, log, authDir) {
                 // quiet, and the drip never transmits on it.
                 dripArm: () => dripEngine.arm(),
               } : {}),
+              // Outside the usesTelegram gate on purpose: the ledger only writes to a Google
+              // Sheet. It transmits nothing to any member, so the ban-risk reasoning that
+              // gates the reports above simply does not apply to it.
+              ledgerWrite: () => ledger.writeToday(),
+              ledgerReconcile: () => ledger.reconcile(),
             });
           }
         }

@@ -8,6 +8,7 @@ import { createTelegramListener } from './telegramTransport.js';
 import { createScheduler } from './scheduler.js';
 import { createReminderSender } from './reminderSender.js';
 import { createDripEngine } from './dripEngine.js';
+import { createLedger } from './ledger.js';
 import { isTracker } from './globalConfig.js';
 
 // Telegram-only transport — the operator-facing half of a tracker bot, replacing core/index.js.
@@ -88,9 +89,10 @@ export async function startBot(config, log) {
   // The socket and group-engine slots stay null: a Telegram bot constructs none of them, and
   // commandParser refuses every command that would have reached one. dripEngine is the one
   // engine that works here, because it transmits over Telegram rather than WhatsApp.
+  const ledger = createLedger(config, store, log);
   const commandParser = createCommandParser(
     store, groupManager, config, log, null, BOT_START_TIME,
-    null, null, null, new Set(), reminderSender, null, dripEngine,
+    null, null, null, new Set(), reminderSender, null, dripEngine, ledger,
   );
 
   const telegram = createTelegramListener({
@@ -178,6 +180,10 @@ export async function startBot(config, log) {
       morningDigest:  async () => { await notifyTelegram(await commandParser.runReport('digest')); },
       eveningSummary: async () => { await notifyTelegram(await commandParser.runReport('summary')); },
       dripArm: () => dripEngine.arm(),
+      // Sheet writes only — nothing is sent to any member, so these are safe on every
+      // transport and need none of the WhatsApp gating the reports above carry.
+      ledgerWrite: () => ledger.writeToday(),
+      ledgerReconcile: () => ledger.reconcile(),
     });
     // Picks up a window this bot restarted across; no-ops outside it. `pushed` is persisted,
     // so nothing is ever re-sent.

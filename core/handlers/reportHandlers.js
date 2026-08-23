@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, todayStr, getReferralsInBillingPeriod, parseDate, formatDate, normalizePhone, formatSplit, isPaidJoin, isTracker, isCallDue, needsFollowUp } from '../globalConfig.js';
+import { daysFromToday, todayStr, getReferralsInBillingPeriod, parseDate, formatDate, normalizePhone, formatSplit, isPaidJoin, isTracker, isCallDue, needsFollowUp, yesterdayStr } from '../globalConfig.js';
 
 // Silent/existing-member adds (addsilent) store paidLast = 0 and must never be counted as
 // a new member or as join revenue. Real joins (add/rejoin) store the joining fee.
@@ -33,31 +33,79 @@ function inMonth(dateStr, mm, yyyy) {
   return dateStr.startsWith(`${yyyy}-${mm}`);
 }
 
-export function createReportHandlers(store, config, botStartTime, log) {
+// Splits paid renewals into MUTUALLY EXCLUSIVE full/referral buckets. Some bots price both tiers
+// the same (abhi/aayush2: full == referral), and a plain two-filter split then put every renewal
+// in BOTH lists — duplicate names and double-counted revenue. When the amounts are equal there is
+// no referral tier to report, so everything paid lands in `full`.
+// Revenue is summed from what was actually paid, so an off-tier amount is never silently dropped.
+export function splitRenewals(paidRenewals, config) {
+  const { fullAmount, referralAmount } = config.renewal;
+  const hasReferralTier = referralAmount !== fullAmount;
+  return {
+    full: paidRenewals.filter(m => !hasReferralTier || Number(m.paidLast) !== referralAmount),
+    referral: hasReferralTier ? paidRenewals.filter(m => Number(m.paidLast) === referralAmount) : [],
+    revenue: paidRenewals.reduce((s, m) => s + (Number(m.paidLast) || 0), 0),
+  };
+}
 
-  // Splits paid renewals into MUTUALLY EXCLUSIVE full/referral buckets. Some bots price both tiers
-  // the same (abhi/aayush2: full == referral), and a plain two-filter split then put every renewal
-  // in BOTH lists — duplicate names and double-counted revenue. When the amounts are equal there is
-  // no referral tier to report, so everything paid lands in `full`.
-  // Revenue is summed from what was actually paid, so an off-tier amount is never silently dropped.
-  function splitRenewals(paidRenewals) {
-    const { fullAmount, referralAmount } = config.renewal;
-    const hasReferralTier = referralAmount !== fullAmount;
+// Checks lastUpdated against a given date string ("DD-MM-YYYY") — handles both storage formats
+function isUpdatedOn(lastUpdated, dateStr) {
+  if (!lastUpdated) return false;
+  if (lastUpdated.startsWith(dateStr)) return true;
+  // Old ISO format: convert DD-MM-YYYY → YYYY-MM-DD for comparison
+  const [d, m, y] = dateStr.split('-');
+  return lastUpdated.startsWith(`${y}-${m}-${d}`);
+}
+
+// One day's money, as DATA rather than as a rendered report.
+//
+// `summary` used to compute this inline and bake it straight into a string, which was fine
+// while the string was the only consumer. The nightly ledger is a second consumer, and two
+// places computing "how many joined today" is exactly the drift that once made `digest` and
+// its own cron disagree about who was due. So both read this.
+//
+// `weightedRenewals` counts a full-price renewal as 1 and a half-price referral renewal as
+// 0.5 — the number the operator's revenue sheet expects. Ref-free auto-renewals (₹0, earned
+// with 2 referrals) are listed but NOT counted: they bring in nothing.
+export function dailyBreakdown(all, config, dateStr) {
+  // A member explicitly renewed on this date is a RENEWAL, never a new join — even when they
+  // were also added that day (an existing member re-added via `add`, then `renewed`).
+  //
+  // Keyed on lastRenewed, which ONLY the `renewed` command and auto-renew set. lastUpdated is
+  // bumped by every write (kickall's status→REMOVED included), so keying on that would make a
+  // previously-renewed member who was removed today wrongly appear as renewed today.
+  const renewedOnDate = m => m.lastRenewed && isUpdatedOn(m.lastRenewed, dateStr) && m.renewals > 0;
+
+  if (isTracker(config)) {
+    // No renewal machinery on a tracker bot — these operators collect a joining fee and
+    // nothing else. Matches the tracker branch of `summary` exactly, hasForwardBilling
+    // included: a hand-edited joinDate must not read as a new join here either.
+    const joined = all.filter(m => isPaidJoin(m, dateStr) && hasForwardBilling(m));
     return {
-      full: paidRenewals.filter(m => !hasReferralTier || Number(m.paidLast) !== referralAmount),
-      referral: hasReferralTier ? paidRenewals.filter(m => Number(m.paidLast) === referralAmount) : [],
-      revenue: paidRenewals.reduce((s, m) => s + (Number(m.paidLast) || 0), 0),
+      newToday: joined, renewedToday: [], autoRenewedToday: [],
+      fullRenewals: [], referralRenewals: [], weightedRenewals: 0,
+      joinRevenue: joined.length * config.joining.fee, renewalRevenue: 0,
+      totalRevenue: joined.length * config.joining.fee,
     };
   }
 
-  // Checks lastUpdated against a given date string ("DD-MM-YYYY") — handles both storage formats
-  function isUpdatedOn(lastUpdated, dateStr) {
-    if (!lastUpdated) return false;
-    if (lastUpdated.startsWith(dateStr)) return true;
-    // Old ISO format: convert DD-MM-YYYY → YYYY-MM-DD for comparison
-    const [d, m, y] = dateStr.split('-');
-    return lastUpdated.startsWith(`${y}-${m}-${d}`);
-  }
+  const newToday = all.filter(m => isPaidJoin(m, dateStr) && !renewedOnDate(m) && hasForwardBilling(m));
+  const byRenewedAt = (a, b) => (a.lastRenewed || '').localeCompare(b.lastRenewed || '');
+  const renewedToday = all.filter(m => renewedOnDate(m) && Number(m.paidLast) !== 0).sort(byRenewedAt);
+  const autoRenewedToday = all.filter(m => renewedOnDate(m) && Number(m.paidLast) === 0).sort(byRenewedAt);
+
+  const { full, referral, revenue: renewalRevenue } = splitRenewals(renewedToday, config);
+  const joinRevenue = newToday.length * config.joining.fee;
+
+  return {
+    newToday, renewedToday, autoRenewedToday,
+    fullRenewals: full, referralRenewals: referral,
+    weightedRenewals: full.length + referral.length * 0.5,
+    joinRevenue, renewalRevenue, totalRevenue: joinRevenue + renewalRevenue,
+  };
+}
+
+export function createReportHandlers(store, config, botStartTime, log, ledger = null) {
 
   function isUpdatedToday(lastUpdated) {
     return isUpdatedOn(lastUpdated, todayStr());
@@ -133,6 +181,26 @@ export function createReportHandlers(store, config, botStartTime, log) {
         msg += free.map(a => `   • ${a.name}  ${a.phone}`).join('\n');
       }
     } catch (_) {}
+
+    // Yesterday's take, read straight off the operator's own revenue sheet. Not having to
+    // open that sheet is the entire point of the ledger, and the morning digest is the first
+    // thing they read anyway. Reported, never re-derived — the bots write counts and the
+    // sheet owns the money maths, so there is only ever one answer.
+    //
+    // Silent on every bot but the one whose config names a summaryTab, and silent on the
+    // first morning of a new sheet. try/catch like every block around it: a Sheets hiccup
+    // must never cost the operator the whole digest.
+    try {
+      const y = yesterdayStr();
+      const perPerson = await ledger?.totalFor(y);
+      if (perPerson !== null && perPerson !== undefined) {
+        msg += `
+
+💵 YESTERDAY (${y}): ₹${perPerson} per person`;
+      }
+    } catch (err) {
+      log?.warn?.(`⚠️  Ledger total unavailable: ${err.message}`);
+    }
 
     // Catch-up progress is deliberately NOT here. `catchup` prints its own status on
     // demand, and the digest is a money view — a line about a group broadcast the operator
@@ -219,21 +287,14 @@ export function createReportHandlers(store, config, botStartTime, log) {
       return msg;
     }
 
-    // Detect renewals via lastRenewed (set ONLY by the "renewed" command / auto-renew), NOT
-    // lastUpdated — lastUpdated is bumped by every write (incl. kickall's status→REMOVED), which
-    // would otherwise make a previously-renewed member who was removed today wrongly appear as
-    // "renewed today".
-    const renewedOnTarget = m =>
-      m.lastRenewed && isUpdatedOn(m.lastRenewed, targetDateStr) && m.renewals > 0;
-    // A member explicitly renewed today is a RENEWAL, never a new join — even when they were also
-    // added today (e.g. an existing member re-added via `add`, then `renewed`). Previously the
-    // renewal filters excluded joinDate===today, so such a member fell through to "New Members".
-    // Honour the explicit renewed action as the classifier and keep them out of newToday.
-    const newToday = all.filter(m => isPaidJoin(m, targetDateStr) && !renewedOnTarget(m) && hasForwardBilling(m));
-    const renewedToday = all.filter(m => renewedOnTarget(m) && Number(m.paidLast) !== 0)
-      .sort((a, b) => (a.lastRenewed || '').localeCompare(b.lastRenewed || ''));
-    const autoRenewedToday = all.filter(m => renewedOnTarget(m) && Number(m.paidLast) === 0)
-      .sort((a, b) => (a.lastRenewed || '').localeCompare(b.lastRenewed || ''));
+    // Every count and every rupee below comes from dailyBreakdown, which the nightly ledger
+    // also reads. Two implementations of "how many joined today" is how `digest` and its own
+    // cron once ended up disagreeing about who was due.
+    const {
+      newToday, renewedToday, autoRenewedToday, fullRenewals, referralRenewals,
+      weightedRenewals, joinRevenue, renewalRevenue, totalRevenue,
+    } = dailyBreakdown(all, config, targetDateStr);
+
     const removedToday = all.filter(m =>
       m.status === 'REMOVED' && isUpdatedOn(m.lastUpdated, targetDateStr)
     );
@@ -246,11 +307,6 @@ export function createReportHandlers(store, config, botStartTime, log) {
       return m.status === 'ACTIVE' && days !== null && days <= -consolidatedDays;
     });
     const totalActive = all.filter(m => m.status === 'ACTIVE').length;
-
-    const joinRevenue = newToday.length * config.joining.fee;
-    const { full: fullRenewals, referral: referralRenewals, revenue: renewalRevenue } =
-      splitRenewals(renewedToday);
-    const totalRevenue = joinRevenue + renewalRevenue;
 
     const dateStr = targetDateObj.toLocaleDateString('en-IN', {
       day: 'numeric', month: 'long', year: 'numeric',
@@ -269,10 +325,6 @@ export function createReportHandlers(store, config, botStartTime, log) {
     }
 
     const totalRenewals = renewedToday.length + autoRenewedToday.length;
-    // Headline count weights half-payment (referral) renewals as 0.5 and full renewals as 1.
-    // Ref-free auto-renewals (₹0, earned via 2 referrals) are still LISTED below but are NOT
-    // counted in this total — they bring in no revenue. e.g. 4 full + 1 referral + 3 ref-free → 4.5.
-    const weightedRenewals = fullRenewals.length + referralRenewals.length * 0.5;
     const renewalCountLabel = Number.isInteger(weightedRenewals)
       ? String(weightedRenewals) : weightedRenewals.toFixed(1);
     if (totalRenewals > 0) {
@@ -366,7 +418,7 @@ export function createReportHandlers(store, config, botStartTime, log) {
     // Uses lastRenewed (set exclusively by handleRenewed) so kicks/skips/other ops don't pollute the count.
     const renewedThisMonth = all.filter(m => m.lastRenewed && isUpdatedThisMonth(m.lastRenewed));
     const { full: fullRenewals, referral: referralRenewals, revenue: renewalRevenue } =
-      splitRenewals(renewedThisMonth.filter(m => Number(m.paidLast) !== 0));
+      splitRenewals(renewedThisMonth.filter(m => Number(m.paidLast) !== 0), config);
 
     // New joins this month (by joinDate) — excludes silent adds (paidLast 0) and anyone already
     // counted as a renewal this month, so a same-month add+renew isn't billed twice (matches monthly).
@@ -999,7 +1051,7 @@ Example: R1 R2 S3
     const newMembers     = all.filter(m => isPaidJoinRow(m) && isIn(m.joinDate) && !renewedPhonesM.has(m.phone) && hasForwardBilling(m));
     const autoRenewed    = allRenewed.filter(m => Number(m.paidLast) === 0);
     const paidRenewed    = allRenewed.filter(m => Number(m.paidLast) > 0);
-    const { full: fullRenewals, referral: halfRenewals, revenue: renewRevenue } = splitRenewals(paidRenewed);
+    const { full: fullRenewals, referral: halfRenewals, revenue: renewRevenue } = splitRenewals(paidRenewed, config);
     const removedMembers = all.filter(m => m.status === 'REMOVED' && isIn(m.lastUpdated));
     const skippedMembers = all.filter(m => m.status === 'SKIPPED' && isIn(m.lastUpdated));
 

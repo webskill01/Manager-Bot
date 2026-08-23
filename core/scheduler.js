@@ -60,6 +60,11 @@ export function createScheduler(config, log) {
     register(schedule.morningDigest,  'morning-digest',  tasks.morningDigest);
     register(schedule.eveningSummary, 'evening-summary', tasks.eveningSummary);
     register(schedule.dripArm || '0 9 * * *', 'drip-arm', tasks.dripArm);
+    // The daily ledger, written twice on purpose. 10 PM captures the day while it is still
+    // the day; 6 AM the next morning corrects it (anything logged after 10) and backfills any
+    // date the bot was down for. Defaults inline so adding a ledger needs no schedule edit.
+    register(schedule.ledgerWrite || '0 22 * * *', 'ledger-write', tasks.ledgerWrite);
+    register(schedule.ledgerReconcile || '0 6 * * *', 'ledger-reconcile', tasks.ledgerReconcile);
     log.info(`⏰ Scheduler started — ${jobs.length} jobs active`);
   }
 
