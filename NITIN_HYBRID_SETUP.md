@@ -507,6 +507,73 @@ Cross-check the count against `due` the same morning.
 
 ---
 
+## The shared revenue ledger (added 24 Aug 2026)
+
+One spreadsheet, four bots, no spreadsheet visits. Each bot appends its own daily row and
+your own formulas turn those counts into money.
+
+**Two tabs.** `LOG` is what the bots write — one `(DATE, BOT, NEW, RENEWED)` row per bot per
+day, created automatically on first run. `SUMMARY` is yours: one row per date, every figure a
+`SUMIFS` over LOG. `scripts/setup-ledger-sheet.js` builds it (372 rows, a year ahead) and
+refuses to overwrite existing rows without `--force`.
+
+**When it writes.** 10 PM captures the day while it is still the day. 6 AM the next morning
+recomputes every date back to `startDate` and rewrites only the rows that DIFFER — that one
+pass is the correction (anything you logged after 10 PM), the backfill, and the self-heal for
+a bot that was offline. Steady state it writes one row or none.
+
+**Setup per bot.** In `bots/<bot>/.env` — never `config.json`, this repo is public:
+
+```env
+LEDGER_SHEET_ID=<the shared sheet id — the SAME on all four bots>
+```
+
+Share that sheet as **Editor** with the service account in `service-account.json`
+(`client_email`). All four bots use the same one, so it is a single share, not four.
+
+`config.json` carries layout only:
+
+```json
+"ledger": {
+  "tab": "LOG",
+  "startDate": "17-08-2026",
+  "summaryTab": "SUMMARY",
+  "summaryColumns": { "From friends' bots": "J", "Total per person": "L" }
+}
+```
+
+`summaryTab` and `summaryColumns` are **bot-nitin only**. They make its `summary`, `revenue`,
+`weekly`, `monthly` and `digest` end with the group's figures, read back from your SUMMARY
+tab. The friend bots have neither, so each keeps reporting only its own money — their
+operators must not see the group total.
+
+**Checking it.** A healthy bot says so at boot:
+
+```bash
+grep 📒 logs/bot-nitin-out.log
+# 📒 Ledger ON → "LOG" tab, since 17-08-2026
+```
+
+A bot missing the id says `📒 Ledger configured but DISABLED` and names the exact `.env`.
+`git pull` cannot deliver `.env`, so this is the step that gets forgotten on a new box.
+
+**Commands.** `ledger` (status), `ledger now` (write today), `ledger sync` (backfill and
+correct everything since `startDate`). Or `node scripts/ledger-backfill.js` for bots that are
+not running — it forks a child per bot, because `loadConfig()` copies each `.env` into
+`process.env` and never overwrites, so a loop in one process would read the FIRST bot's sheet
+under the first bot's name and report success.
+
+**Two traps already paid for.** `LOG` is also a Sheets function, so every tab reference in a
+generated formula must be quoted (`'LOG'!$C:$C`) or SUMIFS returns `#N/A`. And SUMMARY's DATE
+column must stay TEXT — the bots write `DD-MM-YYYY` text and SUMIFS only matches text against
+text; let Sheets turn it into real dates and every formula silently returns 0.
+
+**Why counts and not rupees.** Fees, renewal amounts and the split live in your sheet's
+formulas. If the bots wrote money too there would be two answers to "what did we earn on the
+3rd" the first time a price changed.
+
+---
+
 ## Until the Cloud API is live: the drip
 
 Cloud API is blocked on billing, so reminders are still sent **by hand**. The drip removes the

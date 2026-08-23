@@ -240,6 +240,59 @@ All sends use patterns from the taxi bot codebase:
 > running config and differs between the two profiles. The sections below predate the
 > July 2026 rework and are kept for background; where they disagree with `help`, `help` wins.
 
+### Added 24 Aug 2026 — Telegram UX + the shared revenue ledger
+
+**`help` is an index now, not a wall.** Nine sections with a one-line hint each, rendered as
+buttons underneath. `help reports` (or a prefix — `help rem`) prints one section; `help all`
+still prints everything. Text lives in `core/helpText.js`; the same category list builds both
+the text and the buttons, so a dead button or an unreachable section fails a test.
+
+**Phone numbers are tap-to-copy.** Applied once in `telegramTransport.send()`, so every list,
+lookup, digest and kick prompt on every bot copies a number when you tap it. Requires
+`parse_mode: HTML` — escaping is three characters and cannot fail, where Markdown rejects a
+whole message over a `*` in someone's name. `wa.me` links and JIDs are left alone.
+
+**A `/` menu, a button keyboard, and follow-up buttons.** All three are pure Telegram UI over
+the same text commands, so `commandParser` never learned about any of it. Follow-ups appear
+where a reply was already a menu written as prose: `drip` → start/stop/test, `kickghosts` →
+confirm/stop, `stop` → removal/kickall/kickghosts, `delayall 7` → confirm, plus `summary`,
+`due`, `upcoming`, `links`, `ledger`. `callback_data` is the LITERAL command, so a button is
+indistinguishable from typing it — no pending state, nothing to expire.
+
+> No inline Yes/No on `kick` / `kickall` / `removal`, on purpose. Those remove people from 12
+> groups; one accidental tap is a downgrade from having to type the word.
+
+**`ledger` — one shared daily revenue sheet.** Every bot appends its own `(DATE, BOT, NEW,
+RENEWED)` row at 10 PM, then at 6 AM recomputes every date back to `startDate` and rewrites
+only the rows that differ. That morning pass is the correction, the backfill and the
+self-heal at once: a bot down for a week fills its own gap with no intervention.
+
+Four bots share one tab with no locking. A bot only ever touches rows carrying its OWN name,
+so two can never target the same row; appends use `INSERT_ROWS`, which allocates server-side
+and cannot clobber a row another bot added a millisecond earlier.
+
+The bots write **counts, never rupees** — the operator's own sheet formulas own what a count
+is worth. Duplicating fees into four configs would give two answers to "what did we earn on
+the 3rd" the first time a price changed.
+
+Commands: `ledger` (status), `ledger now`, `ledger sync` (backfill + correct).
+
+**Cross-bot totals** on the sheet-owning bot only. `summary`, `revenue`, `weekly`, `monthly`
+and `digest` end with what the friend bots remitted and the actual profit, READ back from the
+operator's SUMMARY tab rather than recomputed. Bots with no `ledger.summaryTab` in their
+config — the three friend bots — keep reporting their own money and nothing else.
+
+**Message variants rotate round-robin** down a list instead of hashing on phone+date. The
+hash spread evenly across hundreds of members but said nothing about any two *adjacent* ones,
+so a 12-person list could hand out the same wording four times running.
+
+**Setup:** `LEDGER_SHEET_ID` goes in `bots/*/.env` (same value on every bot), never in
+`config.json` — this repo is public and config.json is committed. `config.json` carries only
+layout: `ledger.tab`, `ledger.startDate`, and on the sheet owner `ledger.summaryTab` +
+`ledger.summaryColumns`. A bot missing the id says so at boot; `grep 📒 logs/<bot>-out.log`.
+
+---
+
 ### Added 18 Aug 2026 — the drip, full friend bots, link rework
 
 **`drip`** — the bot paces your MANUAL reminders instead of you remembering to run `dmlist`.

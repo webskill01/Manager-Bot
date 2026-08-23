@@ -32,7 +32,14 @@ BOT_NAME=bot-aayush2
 OWNER_NUMBER=91XXXXXXXXXX
 SHEET_ID=<paste the new sheet ID here>
 STATS_PORT=3006
+TELEGRAM_TOKEN=<from @BotFather>
+LEDGER_SHEET_ID=<the SHARED revenue sheet — same value on every bot>
 ```
+> Ids live in `.env`, never in `config.json`: this repo is public and config.json is
+> committed. `LEDGER_SHEET_ID` is identical on all four bots — one shared daily sheet
+> they each write their own row into. `git pull` cannot deliver it, so a bot missing it
+> warns at boot; check with `grep 📒 logs/bot-aayush2-out.log`.
+
 
 ## 5. Start + scan
 ```bash
