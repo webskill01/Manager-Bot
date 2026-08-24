@@ -118,14 +118,20 @@ export async function startBot(config, log, authDir) {
   const store = createMemberStore(sheetClient, config.botName);
   const ledger = createLedger(config, store, log);
 
-  // Built here, not inside the connection handler: the drip sends nothing over WhatsApp, so
-  // it must not be coupled to whether a socket ever comes up. On a flagged number the drip
-  // is the ONLY thing still reminding anyone, which is exactly when it matters most.
-  // notifyTelegram is a hoisted function declaration, so referencing it this early is fine.
+  // Built here, not inside the connection handler: in manual mode the drip sends nothing over
+  // WhatsApp, so it must not be coupled to whether a socket ever comes up. On a flagged
+  // number the drip is the ONLY thing still reminding anyone, which is exactly when it
+  // matters most. notifyTelegram is a hoisted function declaration, so referencing it this
+  // early is fine, and getSock is a getter — resolved per send, never captured here, so a
+  // reconnect swaps the socket underneath it with nothing to rewire.
+  //
+  // The fourth argument is what unlocks "mode": "auto". core/telegram.js passes nothing in
+  // its place, which is why a Telegram-only bot cannot auto-send however its config reads.
   if (!isTracker(config)) {
     dripEngine = createDripEngine(
       config, log, store, reminderSender,
       (text) => notifyTelegram(text, config.dripIds),
+      { getSock, warmingUp },
     );
   }
 
