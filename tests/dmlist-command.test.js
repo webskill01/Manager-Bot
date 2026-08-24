@@ -135,9 +135,9 @@ test('the three daily commands split the round by stage, end-to-end', async () =
   assert.match(decodeURIComponent(nudge), /Harjit ji, date nikal gyi/);
 
   const final = await run('dmlist3');
-  assert.match(final, /· 6\+ days overdue/);
-  assert.match(final, /2 person\(s\)/, '6d and 30d both land here');
-  assert.ok(final.indexOf('Balwinder') < final.indexOf('Jaswinder'), 'sorted most-overdue first');
+  assert.match(final, /· 6 days overdue/);
+  assert.match(final, /1 person\(s\)/, 'the 30d member is past the ladder, not on it');
+  assert.doesNotMatch(final, /Balwinder/, 'day 7 onward is the removal list, not another notice');
   assert.match(decodeURIComponent(final), /Jaswinder ji, aaj last din/);
   assert.match(final, /wa\.me\/919000000002\?text=/);
 });

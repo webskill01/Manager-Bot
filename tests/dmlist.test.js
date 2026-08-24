@@ -5,7 +5,7 @@ import { todayStr, friendlyDate } from '../core/globalConfig.js';
 
 const cfg = {
   joining: { fee: 90 },
-  overdue: { autoReminderDays: 5, finalReminderDays: 6 },
+  overdue: { autoReminderDays: 5, finalReminderDays: 6, consolidatedListDays: 7 },
   messages: {
     reminder: 'DUE {name} {date}',
     referralReminder: 'REF {name}',
@@ -42,8 +42,7 @@ test('pickStage buckets by overdue days when nothing is forced', () => {
 // ── Cohorts: one command per wording ──────────────────────────────────────────
 
 // The three cohorts must not overlap and must not leak. If 'due' widened by even a day,
-// people would get the same first message twice; if 'final' were exact instead of 6+,
-// everyone past day 6 would fall off the list entirely and never be chased again.
+// people would get the same first message twice.
 test('each cohort selects only its own slice', () => {
   const members = [
     member('9000000000', todayStr()),   // 0d
@@ -56,7 +55,41 @@ test('each cohort selects only its own slice', () => {
 
   assert.deepEqual(phones('due'), ['9000000000']);
   assert.deepEqual(phones('nudge'), ['9000000005']);
-  assert.deepEqual(phones('final').sort(), ['9000000006', '9000000030'], 'final is 6+, not exactly 6');
+  assert.deepEqual(phones('final'), ['9000000006'], 'final is day 6 only');
+});
+
+// The bug this replaces: 'final' was `overdueDays >= final`, so day 7, day 8 and day 30 kept
+// matching and the drip re-sent the FINAL notice every single morning, forever. At
+// consolidatedListDays the ladder ends — they belong to `overdue` and `kickall` from then on.
+test('nobody past the removal threshold is messaged again', () => {
+  const members = [
+    member('9000000006', daysAgo(6)),
+    member('9000000007', daysAgo(7)),
+    member('9000000008', daysAgo(8)),
+    member('9000000030', daysAgo(30)),
+  ];
+  for (const cohort of ['due', 'nudge', 'final']) {
+    const phones = buildDmList({ members, config: cfg, cohort }).rows.map(r => r.phone);
+    for (const stale of ['9000000007', '9000000008', '9000000030']) {
+      assert.ok(!phones.includes(stale), `${cohort} still chases a ${stale.slice(-2)}d member`);
+    }
+  }
+});
+
+// A bot that pushes finalReminderDays out must not grow silent days or a repeating notice:
+// the ceiling follows the config, and defaults to "the day after the final notice".
+test('the final cohort ceiling follows consolidatedListDays, and defaults to final + 1', () => {
+  const members = [6, 7, 8, 9].map(n => member(`900000000${n}`, daysAgo(n)));
+  const wide = { ...cfg, overdue: { autoReminderDays: 5, finalReminderDays: 6, consolidatedListDays: 9 } };
+  assert.deepEqual(
+    buildDmList({ members, config: wide, cohort: 'final' }).rows.map(r => r.overdueDays),
+    [8, 7, 6],
+  );
+  const noThreshold = { ...cfg, overdue: { autoReminderDays: 5, finalReminderDays: 6 } };
+  assert.deepEqual(
+    buildDmList({ members, config: noThreshold, cohort: 'final' }).rows.map(r => r.overdueDays),
+    [6],
+  );
 });
 
 test('each cohort lands on its own wording with no force', () => {
@@ -73,11 +106,12 @@ test('each cohort lands on its own wording with no force', () => {
 });
 
 test('cohort boundaries come from config, not hardcoded 5 and 6', () => {
-  const fast = { ...cfg, overdue: { autoReminderDays: 3, finalReminderDays: 4 } };
+  const fast = { ...cfg, overdue: { autoReminderDays: 3, finalReminderDays: 4, consolidatedListDays: 6 } };
   const members = [
     member('9000000003', daysAgo(3)),
     member('9000000004', daysAgo(4)),
     member('9000000005', daysAgo(5)),
+    member('9000000006', daysAgo(6)),
   ];
   assert.deepEqual(
     buildDmList({ members, config: fast, cohort: 'nudge' }).rows.map(r => r.phone),
@@ -201,7 +235,12 @@ test('{date} renders each member\'s own billing date, never today', () => {
     member('9000000002', daysAgo(8)),
     member('9000000003', todayStr()),
   ];
-  const { rows } = buildDmList({ members, config: cfg, cohort: 'final', force: 'msg1' });
+  // billingDay is left null and the cohort filter widened for this one: the subject is
+  // {date} rendering, and the 6-day ceiling would otherwise drop the backdated members the
+  // test exists to check.
+  const wide = { ...cfg, overdue: { ...cfg.overdue, consolidatedListDays: 999 } };
+  const { rows } = buildDmList({ members, config: wide, cohort: 'final', force: 'msg1' });
+  assert.equal(rows.length, 2, 'the two backdated members are the subject here');
   for (const r of rows) {
     const billed = members.find(m => m.phone === r.phone).billingDate;
     assert.equal(r.text, `DUE ${r.name} ${friendlyDate(billed)}`, `${r.phone} got the wrong date`);
@@ -217,7 +256,8 @@ test('rows are sorted most-overdue first', () => {
     member('9000000030', daysAgo(30)),
     member('9000000009', daysAgo(9)),
   ];
-  const { rows } = buildDmList({ members, config: cfg, cohort: 'final' });
+  const wide = { ...cfg, overdue: { ...cfg.overdue, consolidatedListDays: 999 } };
+  const { rows } = buildDmList({ members, config: wide, cohort: 'final' });
   assert.deepEqual(rows.map(r => r.overdueDays), [30, 9, 6]);
 });
 
@@ -240,7 +280,7 @@ test('each mode has its own header label', () => {
   const head = o => renderDmList({ rows, stageForced: false, config: cfg, ...o })[0];
   assert.match(head({ cohort: 'due' }), /· due today/);
   assert.match(head({ cohort: 'nudge' }), /· 5 days overdue/);
-  assert.match(head({ cohort: 'final' }), /· 6\+ days overdue/);
+  assert.match(head({ cohort: 'final' }), /· 6 days overdue/);
   assert.match(head({ billingDay: 27 }), /· billed on the 27th/);
   assert.match(head({ billingDay: 1 }), /· billed on the 1st/);
 });
@@ -249,14 +289,14 @@ test('each mode says who is missing when the list is empty', () => {
   const empty = o => renderDmList({ rows: [], stageForced: false, config: cfg, ...o })[0];
   assert.match(empty({ cohort: 'due' }), /Nobody is due today/);
   assert.match(empty({ cohort: 'nudge' }), /Nobody is 5 days overdue/);
-  assert.match(empty({ cohort: 'final' }), /Nobody is 6\+ days overdue/);
+  assert.match(empty({ cohort: 'final' }), /Nobody is 6 days overdue/);
   assert.match(empty({ billingDay: 27 }), /Nobody billed on the 27th is due right now/);
 });
 
 test('empty-state day counts follow config too', () => {
-  const fast = { ...cfg, overdue: { autoReminderDays: 3, finalReminderDays: 4 } };
+  const fast = { ...cfg, overdue: { autoReminderDays: 3, finalReminderDays: 4, consolidatedListDays: 6 } };
   assert.match(renderDmList({ rows: [], stageForced: false, cohort: 'nudge', config: fast })[0], /3 days overdue/);
-  assert.match(renderDmList({ rows: [], stageForced: false, cohort: 'final', config: fast })[0], /4\+ days overdue/);
+  assert.match(renderDmList({ rows: [], stageForced: false, cohort: 'final', config: fast })[0], /4-5 days overdue/);
 });
 
 test('renderDmList splits a big list into numbered parts, all under the cap', () => {

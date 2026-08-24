@@ -32,11 +32,19 @@ function templateFor(stage, config, { referral, phone, seq }) {
 // before their month is up reads as wrong and invites a report.
 //
 // `cohort` slices by how overdue someone is, one command per wording:
-//   'due'    exactly 0d over  → msg1   (dmlist)
-//   'nudge'  exactly Nd over  → msg2   (dmlist2, N = config.overdue.autoReminderDays)
-//   'final'  Nd or more over  → msg3   (dmlist3, N = config.overdue.finalReminderDays)
+//   'due'    exactly 0d over        → msg1   (dmlist)
+//   'nudge'  exactly Nd over        → msg2   (dmlist2, N = config.overdue.autoReminderDays)
+//   'final'  Nd over, up to Rd      → msg3   (dmlist3, N = finalReminderDays, R = consolidatedListDays)
 // The stage falls out of pickStage on its own — a cohort's overdue days already map to the
 // wording it wants, so there is no cohort→stage table to keep in sync.
+//
+// The 'final' cohort is BOUNDED at the top, and that bound is the point of the ladder. It
+// used to read `overdueDays >= final`, so a member 6 days overdue got the final notice, then
+// got it again on day 7, day 8 and every day after — the drip re-sent it because they never
+// stopped matching. Chasing someone daily forever is what earns a spam report, and it also
+// made the final notice a lie: it is only final if something happens next. At
+// consolidatedListDays (7) they leave the message ladder entirely and appear on the removal
+// list, which `overdue` prints and `kickall` acts on. No more messages — a decision instead.
 //
 // `billingDay` (1–31) instead slices by day of the month, across every month: the way to
 // work a backlog down in ~15-person batches rather than one 115-person dump.
@@ -48,6 +56,10 @@ export function buildDmList({ members, config, cohort = 'due', billingDay = null
   const fee = config.joining?.fee ?? 90;
   const nudge = config.overdue?.autoReminderDays ?? 5;
   const final = config.overdue?.finalReminderDays ?? 6;
+  // One past the last day anyone is messaged on. Defaults to final + 1 rather than a bare 7
+  // so a bot that moves finalReminderDays does not silently grow a gap of silent days, or a
+  // window where the final notice repeats.
+  const stopAt = config.overdue?.consolidatedListDays ?? (final + 1);
   const all = members;
   const rows = [];
   let seq = 0;   // rotation counter, advanced only for members who actually make the list
@@ -65,7 +77,7 @@ export function buildDmList({ members, config, cohort = 'due', billingDay = null
     } else if (cohort === 'nudge') {
       if (overdueDays !== nudge) continue;
     } else if (cohort === 'final') {
-      if (overdueDays < final) continue;
+      if (overdueDays < final || overdueDays >= stopAt) continue;
     } else {
       if (overdueDays !== 0) continue;
     }
@@ -90,6 +102,9 @@ export function buildDmList({ members, config, cohort = 'due', billingDay = null
     rows.push({
       name: m.name,
       phone: m.phone,
+      // Carried so the auto-sender can tell one billing cycle from the next: it attaches the
+      // QR to the first message of each cycle, and "which cycle" is exactly this string.
+      billingDate: m.billingDate,
       overdueDays,
       stage,
       fee: referral ? Math.round(fee / 2) : fee,
@@ -118,7 +133,11 @@ function describe({ cohort, billingDay, config }) {
   }
   if (cohort === 'final') {
     const n = config?.overdue?.finalReminderDays ?? 6;
-    return { label: `${n}+ days overdue`, empty: `✅ Nobody is ${n}+ days overdue.` };
+    const stop = config?.overdue?.consolidatedListDays ?? (n + 1);
+    // "6 days overdue", not "6+": past `stop` they are on the removal list, not this one, and
+    // a header promising 6+ while the rows stop at 6 is how the day-7 bug stayed invisible.
+    const label = stop - n <= 1 ? `${n} days overdue` : `${n}-${stop - 1} days overdue`;
+    return { label, empty: `✅ Nobody is ${label} — final notice.` };
   }
   return { label: 'due today', empty: '✅ Nobody is due today.' };
 }
