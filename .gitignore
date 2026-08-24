@@ -9,6 +9,9 @@ scripts/*
 # Ledger tooling: reads configs, writes formulas. No member data passes through either.
 !scripts/setup-ledger-sheet.js
 !scripts/ledger-backfill.js
+# QR variant maker — must run ON the VPS, because the QR images it reads are gitignored and
+# so never arrive by deploy.
+!scripts/make-qr-variants.js
 
 # Raw member data exports (contain real phone numbers — keep local only)
 *.xlsx
@@ -23,11 +26,17 @@ bots/*/baileys_auth/
 bots/*/.env
 bots/*/service-account.json
 bots/*/qr-payment.jpg
+# The rotated copies from scripts/make-qr-variants.js. Same reason as the original: this
+# repo is public and the image has the UPI ID printed on it. Regenerate them on the VPS.
+bots/*/qr-[0-9].jpg
+bots/*/qr-[0-9][0-9].jpg
 bots/*/trial-image.jpeg
 bots/*/trial-video.mp4
 
 # Per-bot runtime state (transient, contains member phone numbers — keep local only)
 bots/*/reminder-state.json
+# Which members already have this cycle's QR (real phone numbers)
+bots/*/qr-sent.json
 # Root-level too: tests used botDir '.', so a suite run wrote real reminder state
 # (including a member's phone) into the repo and it got committed once already.
 reminder-state.json
