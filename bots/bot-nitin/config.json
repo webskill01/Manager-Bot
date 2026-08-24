@@ -5,10 +5,12 @@
     "5332135237"
   ],
   "drip": {
-    "startHour": 9,
+    "mode": "auto",
+    "startHour": 6,
     "endHour": 21,
-    "gapMinMs": 1080000,
-    "gapMaxMs": 1500000
+    "gapMinMs": 900000,
+    "gapCapMs": 7200000,
+    "firstDelayMaxMs": 2400000
   },
   "allowedTelegramIds": [
     "5332135237",
@@ -29,7 +31,16 @@
     "120363406228877039@g.us",
     "120363423042952422@g.us"
   ],
-  "upiQrPath": "./qr-payment.jpg",
+  "upiQrPath": [
+    "./qr-1.jpg",
+    "./qr-2.jpg",
+    "./qr-3.jpg",
+    "./qr-4.jpg",
+    "./qr-5.jpg",
+    "./qr-6.jpg",
+    "./qr-7.jpg",
+    "./qr-8.jpg"
+  ],
   "renewal": {
     "fullAmount": 90,
     "referralAmount": 45,
@@ -116,7 +127,8 @@
     "overdueCheck": "0 10 * * *",
     "eveningSummary": "0 22 * * *",
     "timezone": "Asia/Kolkata",
-    "jitterMaxMinutes": 20
+    "jitterMaxMinutes": 20,
+    "dripArm": "0 6 * * *"
   },
   "messages": {
     "groupReminder": "Sat Sri Akal ji 🙏🏻 Aaj {date} nu ehna members da ik mahina pura ho gya — upar dite QR te 90 pay karke dss deyo ji 🙏🏻:",
@@ -125,22 +137,46 @@
     "reminder": [
       "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\niss mahine lyi iste 90 pay krdo ji 🙏🏻",
       "{name} paaji Sat Sri Akal 🙏🏻\nTohada mahina {date} nu pura ho gya si ji\nIss mahine lyi 90 pay krdo ji 🙏🏻",
-      "Sat Sri Akal ji {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya hai\nKirpa krke iss mahine de 90 pay kr deyo ji 🙏🏻"
+      "Sat Sri Akal ji {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya hai\nKirpa krke iss mahine de 90 pay kr deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nTohada group da mahina {date} nu pura ho gya si\nAgle mahine lyi 90 iste pay kr deyo ji 🙏🏻",
+      "{name} veerji Sat Sri Akal 🙏🏻\nTohadi renew di date aa gyi ji ({date})\nUpar dite QR te 90 pay krke dss deyo ji 🙏🏻",
+      "Sat Sri Akal ji {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya\nIss mahine da 90 pay kr deyo, group chalu rahega ji 🙏🏻",
+      "{name} paaji 🙏🏻 Sat Sri Akal\nTohadi date {date} di si ji, mahina pura ho gya\n90 pay krke dss deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nIk mahina pura ho gya ji ({date})\nIste 90 pay kr deyo, main note kr lawanga ji 🙏🏻",
+      "{name} veerji Sat Sri Akal 🙏🏻\n{date} nu tohada mahina pura ho gya si ji\nRenew lyi 90 iste pay kr deyo 🙏🏻",
+      "Sat Sri Akal ji {name} paaji 🙏🏻\nRenew da time aa gya ji ({date})\nQR te 90 pay krke dss deyo ji 🙏🏻"
     ],
     "referralReminder": [
       "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\nTusi ik banda add kraya si, iss lyi iste sirf ₹45/- pay krdo ji 🙏🏻",
       "{name} paaji Sat Sri Akal 🙏🏻\nTohada mahina {date} nu pura ho gya si ji\nTusi ik banda add kraya si, iss lyi sirf ₹45/- pay krdo ji 🙏🏻",
-      "Sat Sri Akal ji {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya hai\nIk banda add karan karke tohada sirf ₹45/- banda hai ji 🙏🏻"
+      "Sat Sri Akal ji {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya hai\nIk banda add karan karke tohada sirf ₹45/- banda hai ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nTohada mahina {date} nu pura ho gya si\nIk banda add kraya si, iss lyi 45 hi banda hai ji 🙏🏻",
+      "{name} veerji Sat Sri Akal 🙏🏻\nRenew di date aa gyi ji ({date})\nTusi ik member add kraya si, iss lyi sirf 45 pay krdo ji 🙏🏻",
+      "Sat Sri Akal ji {name} paaji 🙏🏻\n{date} nu ik mahina pura ho gya ji\nIk referral karke tohada ₹45 ghat gya — 45 pay kr deyo ji 🙏🏻",
+      "{name} paaji 🙏🏻 Sat Sri Akal\nTohadi date {date} di si ji\nIk banda add karan karke iss mahine sirf 45 ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nIk mahina pura ho gya ({date})\nTusi ik veer add kraya si — 45 iste pay kr deyo ji 🙏🏻",
+      "{name} veerji Sat Sri Akal 🙏🏻\n{date} nu mahina pura ho gya si ji\nReferral da fayda — iss vaari sirf 45 ji 🙏🏻",
+      "Sat Sri Akal ji {name} paaji 🙏🏻\nRenew da din aa gya ji ({date})\nIk banda add kraya si, iss lyi 45 QR te pay kr deyo 🙏🏻"
     ],
     "overdue": [
       "Sat Sri Akal {name} paaji 🙏🏻\n🚨🚨 Aaj last date aaji renew krke dss deyo. 🙏🏻",
       "{name} paaji 🙏🏻\n🚨🚨 Aaj last date hai ji, renew krke dss deyo.",
-      "Sat Sri Akal {name} paaji\n🚨 Renew di last date aaj hai ji, kirpa krke kr deyo 🙏🏻"
+      "Sat Sri Akal {name} paaji\n🚨 Renew di last date aaj hai ji, kirpa krke kr deyo 🙏🏻",
+      "{name} veerji 🙏🏻\n🚨 Tohadi renew di date nikal gyi ji, ajj kr deyo 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\n🚨 Kuch din ho gye ne date nikli nu — renew kr deyo ji",
+      "{name} paaji 🙏🏻 renew rehnda ji\n🚨 Ajj kr deyo ta group chalu rahega 🙏🏻",
+      "Sat Sri Akal ji {name} paaji\n🚨🚨 Renew pending aa ji, kirpa krke ajj kr deyo 🙏🏻",
+      "{name} veerji Sat Sri Akal 🙏🏻\n🚨 Payment ajj tak ni aayi ji — renew kr deyo 🙏🏻"
     ],
     "finalReminder": [
       "Hnji Veerji krna ji renew ?",
       "Hnji {name} paaji, renew krna hai ji ?",
-      "{name} veerji, group chalu rakhna hai ji ?"
+      "{name} veerji, group chalu rakhna hai ji ?",
+      "{name} paaji renew krna hai ji ? dss deyo 🙏🏻",
+      "Hnji {name} veerji, ajj last din hai ji renew da",
+      "{name} paaji 🙏🏻 renew da ki krna ji ?",
+      "Hnji veerji, group ch rehna hai ji ? dss deyo 🙏🏻",
+      "{name} paaji, ajj tak renew ni hoyi — krna hai ji ?"
     ],
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
   },

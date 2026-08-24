@@ -403,15 +403,31 @@ test('full-profile help documents dmlist and drops the retired commands', () => 
   const out = createReportHandlers(fakeStore([]), fullConfig, Date.now(), log).handleHelp(['all']);
 
   assert.match(out, /• dmlist2\s+→\s+5 days overdue/, 'the 2nd-message command is documented');
-  assert.match(out, /• dmlist3\s+→\s+6\+ days overdue/, 'the final-notice command is documented');
+  assert.match(out, /• dmlist3\s+→\s+6 days overdue/, 'the final-notice command is documented');
+  assert.match(out, /Day 7 they stop getting messages/, 'the end of the ladder is documented');
   assert.match(out, /dmlist \[1-31\] msg2\|msg3/, 'the forced-stage form is documented');
   assert.match(out, /BILLING DATE, not a window/, 'the changed meaning of the number is called out');
   assert.match(out, /Day 1:\s+dmlist 27\b/, 'the backlog recipe is spelled out');
   assert.match(out, /final notice as\n?\s*their first ever message/, 'says WHY forcing matters');
   assert.match(out, /Nothing goes out on a timer/, 'operator must know the crons are idle');
+  assert.match(out, /you send them, the bot never does/, 'a manual bot must not claim to send');
 
   assert.ok(!/remindall/.test(out), 'remindall is gone');
   assert.ok(!/catchup/.test(out), 'catchup is gone');
+});
+
+// The same section on an auto-send bot. Whoever edits one wording has to edit both, which
+// is the point: "you send them, the bot never does" printed on bot-nitin would be a lie
+// about the single most consequential thing this system does.
+test('auto-send help says the bot sends, and never tells the operator to tap a link', () => {
+  const cfg = { ...trackerConfig(tmp()), profile: 'full', drip: { mode: 'auto', startHour: 6, endHour: 18 } };
+  const out = createReportHandlers(fakeStore([]), cfg, Date.now(), log).handleHelp(['all']);
+
+  assert.match(out, /the bot sends them itself/);
+  assert.match(out, /wakes at 6 AM and sends ONE reminder at a time until 6 PM/);
+  assert.match(out, /never\n?\s*more than 3 an hour/, 'the ceiling must be stated');
+  assert.ok(!/Tap a link → the message is already typed/.test(out), 'auto mode still tells them to tap');
+  assert.ok(!/you send them, the bot never does/.test(out), 'auto mode claims the operator sends');
 });
 
 test('tracker help documents the three call outcomes and the log command', () => {

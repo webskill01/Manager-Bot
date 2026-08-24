@@ -38,6 +38,14 @@ export const categoriesFor = (config) => HELP_CATEGORIES[isTracker(config) ? 'tr
 function fullBodies(config) {
   const nudge = config.overdue?.autoReminderDays ?? 5;
   const final = config.overdue?.finalReminderDays ?? 6;
+  // Auto-send bots and manual-drip bots disagree about the single most important sentence
+  // in this file — who actually presses send. One config read rather than two help files.
+  const auto = config.drip?.mode === 'auto';
+  const dripStart = config.drip?.startHour ?? (auto ? 6 : 9);
+  const dripEnd = config.drip?.endHour ?? (auto ? 18 : 21);
+  // Derived, never written down: the ceiling is one over the floor, and a help text that
+  // says "3 an hour" while the config says 15 minutes is worse than no help text.
+  const perHour = Math.round(60 / ((config.drip?.gapMinMs ?? (auto ? 1200000 : 1080000)) / 60000));
   const fee = config.renewal.fullAmount;
 
   return {
@@ -88,24 +96,49 @@ function fullBodies(config) {
 • notinsheet [n]  →  only group #n
 • leftmembers  →  ACTIVE in sheet but not in any group
 • stillin  →  REMOVED in sheet but still in a group
-• ledger  →  the shared revenue sheet (it fills itself at 10 PM and 6 AM)`,
+• ledger  →  the shared revenue sheet (it fills itself at 10 PM and 5 AM)`,
 
-    reminders: `📤 SENDING REMINDERS  (you send them, the bot never does)
-  Your daily round — one command per message, run all three:
+    reminders: `📤 SENDING REMINDERS  ${auto ? '(the bot sends them itself)' : '(you send them, the bot never does)'}
+  The ladder — every member gets at most three, then they are done:
 • dmlist   →  due TODAY  →  1st msg, one tap-to-send link each
 • dmlist2  →  ${nudge} days overdue  →  2nd msg
-• dmlist3  →  ${final}+ days overdue  →  3rd msg (final notice)
+• dmlist3  →  ${final} days overdue  →  3rd msg (final notice, the LAST one)
 
-  Tap a link → the message is already typed → hit send. Attach the QR
-  yourself on the ₹${fee} round.
+  Day ${(config.overdue?.consolidatedListDays ?? final + 1)} they stop getting messages and move to the removal
+  list — see \`overdue\` and \`kickall\`. Nobody is chased forever.
 
+  ${auto
+    ? 'The three commands above still work by hand — use them to chase\n  someone off-schedule, or if you stop the drip for the day.'
+    : `Tap a link → the message is already typed → hit send. Attach the QR\n  yourself on the ₹${fee} round.`}
+${auto ? `
+  This bot does not wait for your thumb:
+• drip        →  how many it has sent today and what is left
+• drip test   →  preview the next one in Telegram (sends nothing, records nothing)
+• drip stop   →  stop sending for today   ·   drip start  →  resume
+  It wakes at ${dripStart} AM and sends ONE reminder at a time until ${dripEnd > 12 ? dripEnd - 12 : dripEnd} PM, never
+  more than ${perHour} an hour, and stretches the gap out on a quiet day so ten
+  reminders spread across the whole window instead of finishing by 9.
+  It re-reads the sheet before every send, so anyone who pays drops off.
+  The first message of the day lands at a random time, never on the hour.
+  The QR goes with the FIRST message each member gets in a billing cycle,
+  whichever one that is — so somebody missed on their due date still gets
+  it with their day-${nudge} message. It is not re-sent later in the same cycle.
+
+  Before each send it checks the member is still IN one of your groups.
+  Anyone who left is skipped and listed at day end — \`kick\` them so they
+  stop coming round. If the group list can't be read, it sends anyway.
+
+  If more people are queued than the day has room for, it says so at ${dripStart} AM.
+  The overflow rolls to tomorrow; clear it by hand with dmlist if you'd
+  rather it went out today. Five failed sends in a row stop the day.
+` : `
   Or let the bot pace it for you — same links, pushed a few at a time:
 • drip        →  what's been pushed today and what's left
 • drip test   →  push one batch NOW to check it works (records nothing)
 • drip stop   →  pause for today   ·   drip start  →  resume
-  It wakes at 9 AM, sends up to 3 links every 18-25 min until 9 PM, and
+  It wakes at ${dripStart} AM, sends up to 3 links every 18-25 min until ${dripEnd > 12 ? dripEnd - 12 : dripEnd} PM, and
   re-reads the sheet each time so anyone who pays drops off the rest.
-
+`}
 • dmlist [1-31]  →  everyone billed on that day of the month, still unpaid
 • dmlist [1-31] msg2|msg3  →  same batch, escalated wording
 
@@ -121,8 +154,8 @@ function fullBodies(config) {
      Day 5:  dmlist 27 msg3    the final notice
   Each run re-reads the sheet, so payers drop off by themselves.
 
-  Nothing goes out on a timer any more. The 6:30/7:30/10:00 jobs stay
-  registered but do nothing until reminders move to the official API.
+  The 6:30/7:30/10:00 jobs stay registered but do nothing until reminders
+  move to the official API.${auto ? ' The drip above is what sends.' : ' Nothing goes out on a timer.'}
 
 • sent  →  what actually went out today, with Meta's message id per member
   Once reminders run on the official API they leave from a number you can't
@@ -223,7 +256,7 @@ Once kicked, they vanish from "pending" and "log" for good.`,
 • revenue  →  joining fees this month + split
 • weekly / monthly / growth / trend
 • stats / groups / ping
-• ledger  →  the shared revenue sheet (it fills itself at 10 PM and 6 AM)`,
+• ledger  →  the shared revenue sheet (it fills itself at 10 PM and 5 AM)`,
 
     audits: `🔍 GROUP AUDITS
 • notinsheet  →  in a group but missing from the sheet

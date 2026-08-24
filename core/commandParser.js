@@ -173,7 +173,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   // how far they got — any "stage" it recorded would be a guess.
   //
   // One command per wording, so each round is exactly the people who need that message:
-  //   dmlist   due today   → msg1     dmlist2  5d overdue → msg2     dmlist3  6d+ → msg3
+  //   dmlist   due today   → msg1     dmlist2  5d overdue → msg2     dmlist3  6d only → msg3
   // The number is a DAY OF THE MONTH, not a window: `dmlist 27` is everyone billed on a 27th
   // and still unpaid, which is how a backlog gets worked in ~15-person batches. It used to
   // mean "the last N days" and returned 115+ people in one dump.
@@ -188,7 +188,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
       else return `❌ Unknown argument "${a}".\nUse: dmlist [1-31] [msg1|msg2|msg3]\n` +
         `  dmlist            due today\n` +
         `  dmlist2           ${config.overdue?.autoReminderDays ?? 5} days overdue (2nd message)\n` +
-        `  dmlist3           ${config.overdue?.finalReminderDays ?? 6}+ days overdue (final notice)\n` +
+        `  dmlist3           ${config.overdue?.finalReminderDays ?? 6} days overdue (final notice)\n` +
         `  dmlist 27         everyone billed on the 27th, still unpaid\n` +
         `  dmlist 27 msg2    same batch, escalated wording`;
     }
@@ -733,7 +733,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           return dripEngine.status();
         }
 
-        // The shared revenue ledger. It writes itself at 10 PM and again at 6 AM, so these
+        // The shared revenue ledger. It writes itself at 10 PM and again at 5 AM, so these
         // are for checking on it and for the first backfill — not part of anyone's routine.
         case 'ledger': {
           if (!ledger?.enabled) {
