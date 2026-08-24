@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate, renewedOn, pickSurplusReferrals, surplusCreditDate, cronTimePassedToday, beforeCatchUpCutoff, isDelayActive } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate, renewedOn, pickSurplusReferrals, surplusCreditDate, cronTimePassedToday, beforeCatchUpCutoff, isDelayActive, pickVariant } from './globalConfig.js';
 import { usesCloudApi, createCloudApiSender } from './cloudApiSender.js';
 
 // ── Group digest builder (pure, exported for tests) ──────────────────────────
@@ -219,9 +219,13 @@ export function createReminderSender(config, log, { fetchImpl } = {}) {
     }
 
     const jid = `91${normalizePhone(phone)}@s.whatsapp.net`;
-    const template = type === 'referral' && config.messages.referralReminder
+    // pickVariant, not the raw config value: every bot's messages.reminder is an ARRAY of
+    // wordings, and calling .replace on an array throws. Only the drip's tap-to-send path
+    // rotated them, so this — the socket auto-send path — was one send away from a
+    // TypeError the moment a bot ran reminders itself instead of by hand.
+    const template = pickVariant(type === 'referral' && config.messages.referralReminder
       ? config.messages.referralReminder
-      : config.messages.reminder;
+      : config.messages.reminder, phone);
     const caption = template.replace('{name}', name).replace('{date}', date);
 
     try {

@@ -183,3 +183,21 @@ test('referral rollover: >2 refs auto-renews and re-pins surplus into next windo
 
   fs.rmSync(botDir, { recursive: true, force: true });
 });
+
+// Every real bot's config stores messages.reminder as an ARRAY of wordings — the anti-spam
+// variants. This path used to call .replace on it directly, which throws on an array, so the
+// socket auto-send was broken for every bot that had variants configured (i.e. all of them).
+test('a config with message variants sends one of them, not a TypeError', async () => {
+  const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rem-'));
+  const config = makeConfig();
+  config.messages.reminder = ['A {name} {date}', 'B {name} {date}', 'C {name} {date}'];
+  const store = makeStore([
+    { name: 'Avtar', phone: '9000000001', status: 'ACTIVE', billingDate: formatDate(new Date()), renewals: 1, paidLast: 90, reference: '' },
+  ]);
+  const { sock, sent } = makeSock();
+  const r = await createReminderSender(config, log).sendReminders(store, () => sock, botDir);
+
+  assert.equal(r.sent, 1);
+  assert.match(sent[0].msg.text, /^[ABC] Avtar /);
+  fs.rmSync(botDir, { recursive: true, force: true });
+});
