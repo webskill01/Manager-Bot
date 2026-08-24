@@ -52,31 +52,23 @@ test('a bad setMyCommands does not stop the bot from starting', async () => {
   assert.deepEqual(await tg.connect(), { username: 'test_bot' });
 });
 
-test('replies carry the button keyboard on the first chunk only', async () => {
+test('no reply carries a persistent keyboard — it was retired for eating the screen', async () => {
   const { tg, calls } = listener();
   await tg.send(1, 'x'.repeat(4000));
   const sends = calls.filter(c => c.method === 'sendMessage');
   assert.equal(sends.length, 2);
-  assert.ok(sends[0].body.reply_markup?.keyboard, 'first chunk lost the keyboard');
-  assert.equal(sends[1].body.reply_markup, undefined, 'keyboard repeated on a continuation chunk');
+  for (const s of sends) assert.equal(s.body.reply_markup?.keyboard, undefined);
 });
 
-test('every keyboard button is a command that takes no arguments', async () => {
-  // A button sending a bare `find` would answer with a usage error — a worse button
-  // than no button at all.
-  const parser = fs.readFileSync('core/commandParser.js', 'utf8');
-  for (const profile of ['full', 'tracker']) {
-    const { tg, calls } = listener({ profile });
-    await tg.send(1, 'hi');
-    for (const row of calls[0].body.reply_markup.keyboard) {
-      for (const { text } of row) {
-        assert.ok(parser.includes(`case '${text}'`), `${profile}: button "${text}" is not a command`);
-      }
-    }
-  }
+test('the first chunk clears the keyboard operators are still stuck with', async () => {
+  const { tg, calls } = listener();
+  await tg.send(1, 'x'.repeat(4000));
+  const sends = calls.filter(c => c.method === 'sendMessage');
+  assert.equal(sends[0].body.reply_markup?.remove_keyboard, true);
+  assert.equal(sends[1].body.reply_markup, undefined, 'removal repeated on a continuation chunk');
 });
 
-test('bootstrap mode shows no keyboard — nobody there can run anything yet', async () => {
+test('bootstrap mode sends no reply_markup at all — nobody there can run anything yet', async () => {
   const { tg, calls } = listener({ bootstrapMode: true });
   await tg.send(1, 'hi');
   assert.equal(calls[0].body.reply_markup, undefined);
@@ -180,7 +172,7 @@ test('buttons ride the LAST chunk, never a middle one', async () => {
   // `drip` is a slow command, so the ⏳ ack precedes the answer — it is not part of it.
   const sends = calls.filter(c => c.method === 'sendMessage' && !c.body.text.startsWith('⏳'));
   assert.equal(sends.length, 2);
-  assert.ok(sends[0].body.reply_markup?.keyboard, 'first chunk should still refresh the keyboard');
+  assert.equal(sends[0].body.reply_markup?.remove_keyboard, true, 'first chunk should still clear the old keyboard');
   assert.ok(sends[1].body.reply_markup?.inline_keyboard, 'last chunk lost its follow-up buttons');
 });
 

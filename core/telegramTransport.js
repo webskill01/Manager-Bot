@@ -48,13 +48,16 @@ export function tapToCopy(text) {
     .join('');
 }
 
-// ── The `/` menu and the button keyboard ─────────────────────────────────────
+// ── The `/` menu ─────────────────────────────────────────────────────────────
 //
-// Both are pure Telegram UI over the SAME text commands: setMyCommands fills the "/"
-// autocomplete, and a reply keyboard renders the daily round as buttons whose press sends
-// the plain word "dmlist". Nothing new reaches onCommand, so commandParser is untouched
-// and can stay transport-blind. That is the whole reason it's these two and not inline
-// callback buttons — those need a second update type and per-message pending state.
+// setMyCommands fills the "/" autocomplete. Pure Telegram UI over the SAME text commands:
+// nothing new reaches onCommand, so commandParser is untouched and stays transport-blind.
+//
+// There WAS a persistent reply keyboard here too, showing the daily round as buttons above
+// the input box. Removed: it ate a third of the phone screen on every chat, and because it
+// was re-sent on the first chunk of every reply, hiding it with Telegram's own control only
+// lasted until the next command. The `/` menu and the inline follow-up buttons below cover
+// the same ground without occupying the screen.
 //
 // Not the full ~50-command help, deliberately: a menu you scroll past is a menu you stop
 // opening. `help` still prints everything.
@@ -62,7 +65,7 @@ const MENUS = {
   full: [
     ['dmlist', 'due today → 1st message, one tap-to-send link each'],
     ['dmlist2', 'the 5-day-overdue round → 2nd message'],
-    ['dmlist3', 'the 6+ day round → final notice'],
+    ['dmlist3', 'the day-6 round → final notice, the last one'],
     ['digest', "today's due / overdue / auto-renewed"],
     ['summary', "the day's money: joins, revenue, split"],
     ['due', 'who is due today'],
@@ -175,29 +178,26 @@ export function followUps(text, profile = 'full') {
 const inlineKeyboard = (rows) =>
   rows.map(row => row.map(([callback_data, text]) => ({ text, callback_data })));
 
-// Only commands that work with NO arguments. A button that sends a bare `find` would answer
-// with a usage error, which is a worse button than no button.
-const KEYBOARDS = {
-  full: [['dmlist', 'dmlist2', 'dmlist3'], ['digest', 'summary', 'due'], ['overdue', 'links', 'help']],
-  tracker: [['pending', 'log', 'digest'], ['summary', 'revenue', 'stats'], ['removed', 'links', 'help']],
-};
-
 // onCommand(text, reply) — `reply` sends back to the chat the command came from, chunked.
 // Return value is ignored: replying is the callback's job, so a caller can send progress
 // mid-command rather than only at the end.
 export function createTelegramListener({ token, allowedIds = [], bootstrapMode = false, botName, profile = 'full', log, onCommand, fetchImpl = globalThis.fetch }) {
   const allowed = new Set(allowedIds);
   const menu = MENUS[profile] || MENUS.full;
-  const keyboard = KEYBOARDS[profile] || KEYBOARDS.full;
   let offset = 0;
   let stopped = false;
   let me = null;
 
+  // 70s, not none: getUpdates holds for 50s by design, but a connection that dies silently
+  // (VPS NAT timeout, a network blip) leaves fetch waiting FOREVER with no error to catch —
+  // the poll loop stops, and the bot goes quiet until it is restarted, with nothing in the
+  // log to say so. An abort throws, the caller's catch logs it and retries in 5s.
   async function api(method, body) {
     const res = await fetchImpl(`${API}${token}/${method}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body || {}),
+      signal: AbortSignal.timeout(70000),
     });
     const data = await res.json();
     if (!data.ok) {
@@ -211,19 +211,18 @@ export function createTelegramListener({ token, allowedIds = [], bootstrapMode =
     return data.result;
   }
 
-  // Telegram allows ONE reply_markup per message, and the persistent keyboard and the inline
-  // follow-up buttons are two mutually exclusive kinds of it. Follow-ups belong at the bottom
-  // of the answer, so the LAST chunk carries them and the keyboard steps aside for that one
-  // message — it persists from the previous message regardless, so nothing is lost.
+  // Telegram allows ONE reply_markup per message, so follow-up buttons go on the LAST chunk,
+  // where they belong anyway — at the bottom of the answer.
   //
-  // The keyboard is otherwise re-sent on the first chunk of every reply rather than once at
-  // startup: Telegram keeps the last keyboard per chat, so an operator who hid it, or one
-  // enrolled after boot, gets it back on their next command. Re-setting the same keyboard is
-  // invisible to them. Withheld entirely in bootstrap mode — nobody there can run anything.
+  // remove_keyboard on the first chunk clears the retired persistent keyboard. Telegram keeps
+  // the last keyboard per chat forever, so operators who already have it would stare at it
+  // until they wiped the chat; sending the removal costs nothing and is a no-op once it is
+  // gone, which is why there is no "have I already done this" bookkeeping. A single-chunk
+  // reply that carries buttons skips it and the next button-less reply clears it instead.
   function replyMarkup({ first, last, buttons }) {
     if (bootstrapMode) return {};
     if (last && buttons) return { reply_markup: { inline_keyboard: inlineKeyboard(buttons) } };
-    if (first) return { reply_markup: { keyboard: keyboard.map(row => row.map(text => ({ text }))), resize_keyboard: true, is_persistent: true } };
+    if (first) return { reply_markup: { remove_keyboard: true } };
     return {};
   }
 
