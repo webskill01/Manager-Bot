@@ -61,10 +61,17 @@ export function createScheduler(config, log) {
     register(schedule.eveningSummary, 'evening-summary', tasks.eveningSummary);
     register(schedule.dripArm || '0 9 * * *', 'drip-arm', tasks.dripArm);
     // The daily ledger, written twice on purpose. 10 PM captures the day while it is still
-    // the day; 6 AM the next morning corrects it (anything logged after 10) and backfills any
-    // date the bot was down for. Defaults inline so adding a ledger needs no schedule edit.
+    // the day; the morning pass corrects it (anything logged after 10) and backfills any date
+    // the bot was down for. Defaults inline so adding a ledger needs no schedule edit.
+    //
+    // 5 AM, not 6: the reconcile used to share 6:00 with morning-digest, and with ≤20m of
+    // independent jitter on each the digest won the race about half the time and printed
+    // ₹0 for a day the sheet was about to be told about. Worse, the friend bots reconcile on
+    // their own VPS, so bot-nitin's "ALL BOTS" line needs THEIR rows written too — a gate no
+    // amount of ordering inside one process can give. An hour of clearance covers all four.
+    // Keep any digest at least jitter+jitter after this one.
     register(schedule.ledgerWrite || '0 22 * * *', 'ledger-write', tasks.ledgerWrite);
-    register(schedule.ledgerReconcile || '0 6 * * *', 'ledger-reconcile', tasks.ledgerReconcile);
+    register(schedule.ledgerReconcile || '0 5 * * *', 'ledger-reconcile', tasks.ledgerReconcile);
     log.info(`⏰ Scheduler started — ${jobs.length} jobs active`);
   }
 

@@ -55,7 +55,7 @@ export function createLedger(config, store, log) {
 
   // A config.json that asks for a ledger but has no id to write to means the .env is missing
   // LEDGER_SHEET_ID — the one part of this that `git pull` cannot deliver, because .env is
-  // gitignored. Left quiet, the 10 PM and 6 AM jobs would run, no-op and report nothing, and
+  // gitignored. Left quiet, the 10 PM and 5 AM jobs would run, no-op and report nothing, and
   // the first sign of trouble would be an empty sheet a week later. Say it at boot instead.
   if (config.ledger && !enabled) {
     log?.warn?.('📒 Ledger configured but DISABLED — LEDGER_SHEET_ID is missing from ' +

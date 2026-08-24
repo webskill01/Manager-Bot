@@ -127,7 +127,7 @@ test('an all-zero block says why, instead of looking broken', async () => {
   // above is already non-zero. Unexplained, that reads as a bug.
   const zero = { enabled: true, sumFor: async () => ({ "From friends' bots": 0, 'Total per person': 0 }) };
   const out = await createReportHandlers(store(), cfg(), Date.now(), log, zero).handleSummary([]);
-  assert.match(out, /shared sheet fills at 10 PM and 6 AM/);
+  assert.match(out, /shared sheet fills at 10 PM and 5 AM/);
 
   const nonzero = fakeLedger();
   const out2 = await createReportHandlers(store(), cfg(), Date.now(), log, nonzero).handleSummary([]);

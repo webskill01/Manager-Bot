@@ -125,11 +125,11 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
         .map(([k, v]) => `   ${`${k}:`.padEnd(width)} ₹${v}`)
         .join('\n');
       // These figures come from the shared sheet, which every bot writes at 10 PM and again
-      // at 6 AM — so for TODAY, and for yesterday before the morning pass, they legitimately
+      // at 5 AM — so for TODAY, and for yesterday before the morning pass, they legitimately
       // read ₹0 while this bot's own revenue above is already non-zero. Unexplained that
       // looks broken, so say where the number comes from exactly when it is all zeroes.
       const pending = Object.values(sums).every(v => v === 0)
-        ? '\n   (the shared sheet fills at 10 PM and 6 AM — not written for this window yet)'
+        ? '\n   (the shared sheet fills at 10 PM and 5 AM — not written for this window yet)'
         : '';
       return `\n\n🌐 ALL BOTS — ${label}\n${lines}${pending}`;
     } catch (err) {
