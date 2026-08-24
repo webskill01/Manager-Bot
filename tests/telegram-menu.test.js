@@ -187,3 +187,15 @@ test('no follow-up buttons under a refusal', async () => {
   const send = calls.find(c => c.method === 'sendMessage');
   assert.equal(send.body.reply_markup?.inline_keyboard, undefined);
 });
+
+// Twenty phone numbers would never fit callback_data's 64 bytes, so the button carries only
+// the verb and the phones stay in drip-state. Every dmlist form gets it — the date batches
+// are exactly the ones the operator runs to clear an overflow by hand.
+test('every dmlist form offers "I sent these", and the claim itself does not', () => {
+  for (const cmd of ['dmlist', 'dmlist2', 'dmlist3', 'dmlist 27', 'dmlist 27 msg2']) {
+    const rows = followUps(cmd);
+    assert.deepEqual(allButtons(rows).map(b => b[0]), ['dmlist done'], `${cmd} lost its button`);
+    assert.ok(Buffer.byteLength(rows[0][0][0]) <= 64, 'callback_data over Telegram cap');
+  }
+  assert.equal(followUps('dmlist done'), null, 'the claim offered to claim itself again');
+});

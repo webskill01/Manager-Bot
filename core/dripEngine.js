@@ -545,6 +545,40 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     await tick();
   }
 
+  // ── Handing a batch to the operator ────────────────────────────────────────
+  //
+  // `dmlist` prints tap-to-send links and writes nothing, because printing is not sending and
+  // the bot cannot know how far a thumb got. Fine while the bot sent nothing itself; not fine
+  // now, because the operator clearing an overflow by hand at noon and the auto-sender
+  // reaching the same person at 4 PM is a double message — the exact thing this whole rework
+  // exists to avoid.
+  //
+  // So: dmlist records who it SHOWED, and `dmlist done` promotes that list to "handled
+  // today". Two steps rather than one because merely looking at the list must not silence
+  // the bot for those people — running dmlist to check who is due would otherwise cost a
+  // day-0 member their only message, the day-1-to-4 range matching no cohort at all.
+  function rememberShown(phones) {
+    const state = loadState();
+    state.shown = [...new Set(phones.map(String))];
+    saveState(state);
+  }
+
+  function markShownHandled() {
+    const state = loadState();
+    const shown = state.shown || [];
+    if (shown.length === 0) {
+      return 'ℹ️ Nothing to mark — run `dmlist`, `dmlist2` or `dmlist3` first, then send them.';
+    }
+    const already = new Set(state.pushed.map(String));
+    const fresh = shown.filter(p => !already.has(p));
+    state.pushed = [...state.pushed, ...fresh];
+    state.shown = [];
+    saveState(state);
+    const rest = countRemaining({ members: store.getAll(), config, pushed: state.pushed });
+    return `✅ ${fresh.length} marked as sent by you today — ${auto ? 'the bot' : 'the drip'} ` +
+      `will skip them.\n${rest} still queued.`;
+  }
+
   function stop() {
     const state = loadState();
     state.stopped = true;
@@ -619,5 +653,5 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     scheduleNext(auto ? countRemaining({ members: store.getAll(), config, pushed: state.pushed }) : 0);
   }
 
-  return { arm, start, stop, status, resume, tick, test };
+  return { arm, start, stop, status, resume, tick, test, rememberShown, markShownHandled };
 }

@@ -179,6 +179,14 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   // mean "the last N days" and returned 115+ people in one dump.
   async function handleDmList(args, cohort = 'due') {
     const cmd = cohort === 'nudge' ? 'dmlist2' : cohort === 'final' ? 'dmlist3' : 'dmlist';
+
+    // `dmlist done` — "I have sent that batch, don't send to them again today". Checked
+    // before the argument loop, which would otherwise reject `done` as a bad billing day.
+    if (String(args[0] || '').toLowerCase() === 'done') {
+      if (!dripEngine) return '❌ Nothing tracks the day on this bot.';
+      return dripEngine.markShownHandled();
+    }
+
     let billingDay = null;
     let force = null;
     for (const a of args) {
@@ -190,7 +198,8 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         `  dmlist2           ${config.overdue?.autoReminderDays ?? 5} days overdue (2nd message)\n` +
         `  dmlist3           ${config.overdue?.finalReminderDays ?? 6} days overdue (final notice)\n` +
         `  dmlist 27         everyone billed on the 27th, still unpaid\n` +
-        `  dmlist 27 msg2    same batch, escalated wording`;
+        `  dmlist 27 msg2    same batch, escalated wording\n` +
+        `  dmlist done       mark the last list as sent by you today`;
     }
 
     // A date batch is its own thing — combining it with a cohort would ask for "billed on
@@ -209,6 +218,10 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     await store.refresh();
     const { rows, stageForced } = buildDmList({ members: store.getAll(), config, cohort, billingDay, force });
     const parts = renderDmList({ rows, stageForced, cohort, billingDay, config });
+
+    // Recorded as SHOWN, never as sent — printing is not sending. `dmlist done` is what
+    // promotes this to "handled today" and stops the bot messaging the same people.
+    if (rows.length > 0) dripEngine?.rememberShown?.(rows.map(r => r.phone));
 
     if (renewed.length > 0) {
       parts[0] = `🎁 Auto-renewed (2 refs, no payment due): ` +

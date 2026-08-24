@@ -165,6 +165,14 @@ export function followUps(text, profile = 'full') {
     return rows;
   }
 
+  // Every dmlist form gets the same one next step: you have just been handed links, and the
+  // only thing to tell the bot afterwards is that you sent them. `dmlist done` fits in
+  // callback_data with room to spare, whereas a list of twenty phone numbers never would —
+  // which is why the phones live in drip-state and the button carries only the verb.
+  if (cmd.startsWith('dmlist') && parts[1]?.toLowerCase() !== 'done') {
+    return [[['dmlist done', '✅ Sent these — skip them today']]];
+  }
+
   // start / stop / test all leave the same three useful next steps, so the drip keeps its
   // buttons whichever one you pressed.
   if (cmd === 'drip') return FOLLOW_UPS.drip;

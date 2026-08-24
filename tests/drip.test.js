@@ -762,3 +762,58 @@ test('a roster too small to be believed is ignored, not obeyed', async () => {
   for (let i = 0; i < 6; i++) await engine.tick();
   assert.equal(sent.length, 6, 'a thin roster was trusted and muted five paying members');
 });
+
+// ── handing a batch to the operator ───────────────────────────────────────────
+//
+// The operator clearing an overflow with dmlist at noon and the bot reaching the same person
+// at 4 PM is a double message — the exact thing this whole rework exists to prevent.
+
+test('a batch the operator claims is not sent again the same day', async () => {
+  const { sock, sent } = fakeSock();
+  const members = [1, 2, 3].map(n => member('M' + n, '900000000' + n, 0));
+  const engine = createDripEngine(
+    engineCfg({ drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } }),
+    quietLog, { refresh: async () => {}, getAll: () => members },
+    { autoRenewDue: async () => [] }, async () => {},
+    { getSock: () => sock, warmingUp: () => false },
+  );
+
+  engine.rememberShown(['9000000001', '9000000002']);
+  const out = engine.markShownHandled();
+  assert.match(out, /2 marked as sent by you today/);
+
+  for (let i = 0; i < 3; i++) await engine.tick();
+  assert.equal(sent.length, 1, 'the bot re-sent to someone the operator had already messaged');
+  assert.equal(sent[0].jid, '919000000003@s.whatsapp.net');
+});
+
+// Looking must not silence. dmlist is also how the operator checks who is due, and a day-0
+// member skipped today is a member who gets NOTHING until day 5 — days 1 to 4 match no cohort.
+test('printing a list changes nothing until it is claimed', async () => {
+  const { sock, sent } = fakeSock();
+  const members = [1, 2].map(n => member('M' + n, '900000000' + n, 0));
+  const engine = createDripEngine(
+    engineCfg({ drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } }),
+    quietLog, { refresh: async () => {}, getAll: () => members },
+    { autoRenewDue: async () => [] }, async () => {},
+    { getSock: () => sock, warmingUp: () => false },
+  );
+
+  engine.rememberShown(['9000000001', '9000000002']);
+  for (let i = 0; i < 2; i++) await engine.tick();
+  assert.equal(sent.length, 2, 'merely printing a list muted the bot');
+});
+
+test('claiming twice does not double-count, and claiming nothing says so', () => {
+  const engine = createDripEngine(
+    engineCfg({ drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } }),
+    quietLog, { refresh: async () => {}, getAll: () => [member('A', '9000000001', 0)] },
+    { autoRenewDue: async () => [] }, async () => {},
+    { getSock: () => null, warmingUp: () => false },
+  );
+  assert.match(engine.markShownHandled(), /Nothing to mark/);
+
+  engine.rememberShown(['9000000001']);
+  assert.match(engine.markShownHandled(), /1 marked/);
+  assert.match(engine.markShownHandled(), /Nothing to mark/, 'the same list was claimed twice');
+});

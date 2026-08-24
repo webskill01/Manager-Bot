@@ -130,7 +130,9 @@ ${auto ? `
 
   If more people are queued than the day has room for, it says so at ${dripStart} AM.
   The overflow rolls to tomorrow; clear it by hand with dmlist if you'd
-  rather it went out today. Five failed sends in a row stop the day.
+  rather it went out today — then hit "✅ Sent these" (or send
+  \`dmlist done\`) so the bot skips them and nobody gets it twice.
+  Five failed sends in a row stop the day.
 ` : `
   Or let the bot pace it for you — same links, pushed a few at a time:
 • drip        →  what's been pushed today and what's left
@@ -141,6 +143,10 @@ ${auto ? `
 `}
 • dmlist [1-31]  →  everyone billed on that day of the month, still unpaid
 • dmlist [1-31] msg2|msg3  →  same batch, escalated wording
+• dmlist done  →  "I sent that batch myself" — today only
+
+  Printing a list changes nothing on its own, so you can run dmlist just
+  to look. \`dmlist done\` is what marks the last one as handled by you.
 
   The number is a BILLING DATE, not a window: dmlist 27 is everyone whose
   billing date is a 27th, in any month. That is how you dig out of a
