@@ -33,6 +33,11 @@ function fakeTelegram(updates = []) {
         return { json: async () => ({ ok: true, result: { message_id: sent.length } }) };
       }
       if (method === 'getUpdates') {
+        // offset -1 is the startup backlog drain: Telegram returns only the most recent
+        // update, and the listener uses its id to skip everything queued while the process
+        // was down. A fresh test has no backlog, so this is empty — modelled here because
+        // without it the drain would eat the very updates the test is about to assert on.
+        if (body.offset === -1) return { json: async () => ({ ok: true, result: [] }) };
         if (served) { api.listener?.stop(); return { json: async () => ({ ok: true, result: [] }) }; }
         served = true;
         return { json: async () => ({ ok: true, result: updates }) };
@@ -340,4 +345,46 @@ test('an unslashed command is passed through untouched', async () => {
   const { listener, seen } = listenerOn(api, { allowedIds: [777] });
   await listener.start();
   assert.deepEqual(seen, ['renewed 9855112233']);
+});
+
+// A command is an instruction to act NOW. Telegram holds undelivered updates for 24 hours,
+// and the listener used to start at offset 0 — so every restart replayed everything queued
+// since. On 25-08-2026 that re-ran a `checksend` on each of several restarts, sending one
+// member four real WhatsApp messages, on an account already restricted for reaching out.
+test('commands queued while the bot was down are discarded, not replayed', async () => {
+  const seen = [];
+  let drained = false;
+  const stale = update(1, 5332135237, 'checksend 9816291178');
+  const api = {
+    listener: null,
+    impl: async (url, opts) => {
+      const method = url.split('/').pop();
+      const body = JSON.parse(opts.body);
+      if (method === 'getMe') {
+        return { json: async () => ({ ok: true, result: { id: 1, username: 'b' } }) };
+      }
+      if (method === 'sendMessage') {
+        return { json: async () => ({ ok: true, result: { message_id: 1 } }) };
+      }
+      if (method === 'getUpdates') {
+        // The backlog drain asks with offset -1 and gets the newest queued update back.
+        if (body.offset === -1) { drained = true; return { json: async () => ({ ok: true, result: [stale] }) }; }
+        // A real poll must now start ABOVE that id, so the stale command is never handed over.
+        assert.ok(body.offset > stale.update_id, `poll resumed at ${body.offset}, replaying the backlog`);
+        api.listener?.stop();
+        return { json: async () => ({ ok: true, result: [] }) };
+      }
+      throw new Error(`unexpected method ${method}`);
+    },
+  };
+  const listener = createTelegramListener({
+    token: '123:FAKE', botName: 'bot-nitin', log, fetchImpl: api.impl,
+    allowedIds: ['5332135237'],
+    onCommand: async (text) => { seen.push(text); },
+  });
+  api.listener = listener;
+  await listener.start();
+
+  assert.ok(drained, 'the backlog was never drained');
+  assert.deepEqual(seen, [], 'a command queued while the bot was down was executed again');
 });

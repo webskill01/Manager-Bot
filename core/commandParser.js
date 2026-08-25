@@ -12,6 +12,10 @@ import { renderSendLog } from './reminderSender.js';
 
 let activeOverdueList = [];
 
+// phone -> when checksend last messaged them. Module scope so it survives the parser being
+// rebuilt on every reconnect, which is exactly when a replayed command would land.
+const checksendAt = new Map();
+
 // Commands that do real work (network calls / sheet writes / multi-group loops) BEFORE
 // replying. handleMessage sends an instant "received" ack for these so the operator knows
 // the command actually reached the bot during reconnect churn. Instant lookups
@@ -834,6 +838,20 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           const live = getSock?.() || sock;
           if (!live?.user) return '❌ Bot not connected.';
 
+          // Every run of this sends a REAL message to a real person. Repeats are therefore
+          // not free: on 25-08-2026 a replayed command sent the same member four messages in
+          // ninety seconds, on an account already restricted for reaching out. A diagnostic
+          // that can spam someone is a bad diagnostic, so the same number cannot be probed
+          // twice inside ten minutes however many times the command arrives.
+          const last = checksendAt.get(phone);
+          if (last && Date.now() - last < 10 * 60 * 1000) {
+            const wait = Math.ceil((10 * 60 * 1000 - (Date.now() - last)) / 60000);
+            return `⏳ Already tested ${phone} in the last 10 minutes.\n` +
+              `Each run sends them a real message, so this is on hold for ~${wait} more minute(s).\n` +
+              `Test a different number, or wait.`;
+          }
+          checksendAt.set(phone, Date.now());
+
           let jid = `91${phone}@s.whatsapp.net`;
           try {
             const found = await resolveWhatsAppJid(live, phone);
@@ -850,33 +868,35 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           const id = receipt?.key?.id;
           if (!id) return '⚠️ WhatsApp returned no message id — the send did not even start.';
 
-          // 45s: a delivery receipt for an online recipient comes back in a second or two.
-          // Long enough to be conclusive, short enough that the operator waits for it.
-          await sleep(45000);
+          // 15s, not 45. A server REJECTION comes back almost immediately — it is a NACK on
+          // the send, not a timeout — and a delivery receipt from an online recipient takes a
+          // second or two. The old 45 bought nothing and blocked the whole Telegram poll loop
+          // for the duration, which stalled every other command behind it.
+          const WAIT_MS = 15000;
+          await sleep(WAIT_MS);
           const v = deliveryTracker.verdict(id);
+          const name = who?.name || phone;
+
           // A named rejection code is the whole answer — say it and stop guessing.
           if (!v.ok && v.code) {
-            return `${v.fatal ? '🛑' : '⚠️'} NOT delivered to ${who?.name || phone}.
-` +
-              `WhatsApp said: *${v.why}*
-
-${v.detail || ''}` +
+            return `${v.fatal ? '🛑' : '⚠️'} NOT delivered to ${name}.\n` +
+              `WhatsApp said: *${v.why}*\n\n${v.detail || ''}` +
               (v.fatal
-                ? `
-
-This is an ACCOUNT-level block, not a problem with this member. ` +
-                  `Stop the bot sending (\`drip stop\`) and use \`dm [phone]\` instead.`
+                ? `\n\nThis is an ACCOUNT-level block, not a problem with this member. ` +
+                  `\`drip stop\` and use \`dm [phone]\` instead — do NOT keep retrying, ` +
+                  `every rejected attempt makes the restriction worse.`
                 : '');
           }
           if (v.ok) {
-            return `✅ DELIVERED to ${who?.name || phone}.\n\n` +
+            return `✅ DELIVERED to ${name}.\n\n` +
               `A plain text message gets through. If reminders with the QR do not, the ` +
-              `problem is the image, not the number — try \`drip\` with media off.`;
+              `problem is the image, not the number.`;
           }
-          return `${v.hard ? '❌' : '⚠️'} NOT delivered to ${who?.name || phone} after 45s.\n` +
+          return `${v.hard ? '❌' : '⚠️'} NOT delivered to ${name} after ${WAIT_MS / 1000}s.\n` +
             `${v.why}\n\n` +
             (v.hard
-              ? 'The message never left the bot. That is a socket or session fault, not filtering.'
+              ? 'The message never left the bot — a socket or session fault, or a rejection ' +
+                'WhatsApp gave no code for. Do not keep retrying blind.'
               : 'WhatsApp accepted it and no device confirmed it. Either their phone is off, ' +
                 'or this number is being filtered. Try a member you know is online to tell ' +
                 'the two apart.');

@@ -377,7 +377,36 @@ export function createTelegramListener({ token, allowedIds = [], bootstrapMode =
   // Resolves when stop() is called; rejects only on a revoked token. Callers decide what
   // that means: telegram.js dies (Telegram is its only transport), index.js logs and keeps
   // the WhatsApp socket serving.
+  // Throw away anything Telegram queued while this process was not running.
+  //
+  // offset started at 0, which means "give me everything you still hold" — and Telegram holds
+  // undelivered updates for 24 HOURS. So every restart replayed every command that had not
+  // been confirmed, and the bot re-executed them for real. On 25-08-2026 that re-ran a
+  // `checksend` on each of several restarts, sending the same member a real WhatsApp message
+  // every time, at a moment when the account was already restricted for reaching out.
+  //
+  // A command is an instruction to act NOW. Replaying `kickall` or `warnall` from yesterday
+  // because the process happened to restart is not recovery, it is a second unasked-for
+  // execution. Anything genuinely missed can be typed again; nothing here is worth
+  // re-running blind.
+  //
+  // `offset: -1` asks for just the most recent update without consuming the rest; taking its
+  // id + 1 as the starting offset discards the whole backlog in one call.
+  async function dropBacklog() {
+    try {
+      const [last] = await api('getUpdates', { offset: -1, timeout: 0 });
+      if (last) {
+        offset = last.update_id + 1;
+        log.info('📥 Telegram: discarded commands queued while the bot was down');
+      }
+    } catch (err) {
+      // Non-fatal: worst case the old behaviour returns for this one boot.
+      log.warn(`⚠️  Could not clear the Telegram backlog: ${err.message}`);
+    }
+  }
+
   async function poll() {
+    await dropBacklog();
     while (!stopped) {
       try {
         const updates = await api('getUpdates', { offset, timeout: 50, allowed_updates: ['message', 'callback_query'] });
