@@ -77,6 +77,79 @@ export function createRenewalHandlers(store, config, log) {
     return `✅ ${member.name} renewed @ ₹${amount} (${type})\n📅 Next billing: ${newBillingDate}\n🔄 Total renewals: ${member.renewals + 1}`;
   }
 
+  // `advance [phone] [months]` — someone pays several months up front.
+  //
+  // Deliberately NOT `renewed ... force` repeated N times. That path resets the billing day
+  // to today whenever the member is overdue, so paying 6 months ahead on the 3rd would move
+  // a 27th-of-the-month member to the 3rd forever. Here the anniversary day never moves: N
+  // months are added to the date they already have, in ONE step.
+  //
+  // One step matters for short months. 31 Jan + 1 + 1 clamps to 28 Feb and then to 28 Mar,
+  // losing three days permanently; 31 Jan + 2 in one go is 31 Mar, which is what the member
+  // paid for.
+  //
+  // Money: paidLast is the WHOLE amount handed over (fee × months), which is what the
+  // operator actually banked today. dailyBreakdown divides it back out by the monthly fee, so
+  // one 6-month advance reports as ₹540 and as 6 renewals on the day it was taken, and as
+  // nothing at all for the five months it covers. That is the honest shape — the cash arrived
+  // once — and it keeps the local `summary` and the shared ledger telling the same story.
+  async function handleAdvance(args) {
+    if (args.length < 2) {
+      return '❌ Format: advance [phone] [months]\nExample: advance 9855112233 3  → billing +3 months, ' +
+             `₹${config.renewal.fullAmount * 3} recorded today`;
+    }
+    const phone = normalizePhone(args[0]);
+    if (phone.length !== 10) return '❌ Invalid number. Use 10 digits: advance 98551XXXXX 3';
+
+    // Digits only, checked BEFORE parseInt: parseInt('2.5') is 2 and parseInt('3 months') is
+    // 3, so a typo would be silently rounded into a real payment rather than questioned.
+    // Capped at 24 because the only thing a three-digit typo can do here is push a paying
+    // member's billing date out of reach and silence their reminders for a decade — and
+    // nobody ever notices a member who quietly stops being asked for money.
+    const months = /^\d+$/.test(String(args[1]).trim()) ? parseInt(args[1], 10) : NaN;
+    if (!Number.isInteger(months) || months < 1 || months > 24) {
+      return '❌ Months must be a whole number 1–24.\nExample: advance 9855112233 3';
+    }
+
+    const member = store.findByPhone(phone);
+    if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
+
+    const from = parseDate(member.billingDate);
+    if (!from) return `❌ ${member.name} has no readable billing date (${member.billingDate || 'blank'}). Fix that first with: renewed ${phone} [1-31]`;
+
+    const newBillingDate = formatDate(
+      clampedBillingDate(from.getFullYear(), from.getMonth() + months, from.getDate())
+    );
+    const amount = config.renewal.fullAmount * months;
+    const wasOverdue = (daysFromToday(member.billingDate) ?? 0) < 0;
+    // Read off before the write. store.update() refreshes from the sheet, so `member` is a
+    // pre-update snapshot today — but that is a property of the store, not of this handler,
+    // and a "20-11-2026 → 20-11-2026" receipt is a confusing thing to hand someone who just
+    // paid ₹270.
+    const wasBilling = member.billingDate;
+    const nowRenewals = (member.renewals || 0) + months;
+
+    await store.update(phone, {
+      status: 'ACTIVE',
+      billingDate: newBillingDate,
+      renewals: nowRenewals,
+      paidLast: amount,
+      lastRenewed: formatDateTime(new Date()),
+      delayUntil: '',
+    });
+
+    // Same belt-and-suspenders as `renewed`: a member who just paid must not be caught by
+    // today's reminder batch or by the drip an hour later.
+    if (config.botDir) markPhoneReminded(config.botDir, phone);
+
+    return `✅ ${member.name} — ${months} month${months !== 1 ? 's' : ''} paid in advance @ ₹${amount}\n` +
+      `📦 Billing ${wasBilling} → ${newBillingDate}\n` +
+      (wasOverdue
+        ? `ℹ️ They were overdue, so the first of those ${months} clears the arrears.\n`
+        : '') +
+      `🔄 Total renewals: ${nowRenewals}`;
+  }
+
   function handleDue(args) {
     // Resolve the time arg tolerantly. A strict `=== 'tomorrow'` silently fell back to
     // "today" on any typo (tommorow / tmrw / Tomorrow / kal), making `due tomorrow` look
@@ -158,5 +231,5 @@ export function createRenewalHandlers(store, config, log) {
     return `⏳ PENDING RENEWALS (${pending.length}):\n\n${lines}`;
   }
 
-  return { handleRenewed, handleDue, handleOverdue, handlePending };
+  return { handleRenewed, handleAdvance, handleDue, handleOverdue, handlePending };
 }

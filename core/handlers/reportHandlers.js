@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { buildDmList } from '../dmList.js';
 import { renderHelp } from '../helpText.js';
 import path from 'path';
 import { daysFromToday, todayStr, getReferralsInBillingPeriod, parseDate, formatDate, normalizePhone, formatSplit, isPaidJoin, isTracker, isCallDue, needsFollowUp, yesterdayStr, datesInMonth } from '../globalConfig.js';
@@ -98,10 +99,19 @@ export function dailyBreakdown(all, config, dateStr) {
   const { full, referral, revenue: renewalRevenue } = splitRenewals(renewedToday, config);
   const joinRevenue = newToday.length * config.joining.fee;
 
+  // Renewals in MONTHS, not in people. Was `full.length + referral.length * 0.5`, which is
+  // the same answer for both ordinary tiers (₹90 → 1, ₹45 → 0.5) and the wrong one the moment
+  // `advance` exists: a 6-month advance is one person and ₹540, and a ledger counting it as
+  // one renewal told the operator's sheet to bill it as ₹90. Dividing the cash actually taken
+  // by the monthly fee covers every tier and every future one with no table to keep in sync.
+  const fee = config.renewal.fullAmount || 1;
+  const weightedRenewals =
+    Math.round(renewedToday.reduce((s, m) => s + (Number(m.paidLast) || 0), 0) / fee * 100) / 100;
+
   return {
     newToday, renewedToday, autoRenewedToday,
     fullRenewals: full, referralRenewals: referral,
-    weightedRenewals: full.length + referral.length * 0.5,
+    weightedRenewals,
     joinRevenue, renewalRevenue, totalRevenue: joinRevenue + renewalRevenue,
   };
 }
@@ -169,8 +179,21 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
       return m.status === 'ACTIVE' && d !== null && d < 0;
     }).sort((a, b) => (daysFromToday(a.billingDate) || 0) - (daysFromToday(b.billingDate) || 0));
 
+    // Who actually gets chased TODAY — not "everyone 5+ days overdue", which is what this
+    // used to say and was wrong in the way that matters: it swept in the 20- and 40-day
+    // backlog too, so a line promising warnings were going out named ~100 people the bot
+    // will never message. Past consolidatedListDays a member leaves the message ladder
+    // entirely and lands on the removal list instead (`removal` / `kickall`).
+    //
+    // Same source as the sends themselves — buildDmList, one cohort each — so this line and
+    // the drip cannot drift apart. `overdue` above stays the raw running count.
     const warnDays = config.overdue?.autoReminderDays ?? 5;
-    const warnToday = overdue.filter(m => Math.abs(daysFromToday(m.billingDate) || 0) >= warnDays);
+    const finalDay = config.overdue?.finalReminderDays ?? 6;
+    const nudgeRows = buildDmList({ members: all, config, cohort: 'nudge' }).rows;
+    const finalRows = buildDmList({ members: all, config, cohort: 'final' }).rows;
+    const warnToday = [...nudgeRows, ...finalRows];
+    const stopAt = config.overdue?.consolidatedListDays ?? (finalDay + 1);
+    const forRemoval = overdue.filter(m => Math.abs(daysFromToday(m.billingDate) || 0) >= stopAt);
     const totalActive = all.filter(m => m.status === 'ACTIVE').length;
     const totalSkipped = all.filter(m => m.status === 'SKIPPED').length;
 
@@ -197,8 +220,21 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
     }
 
     if (warnToday.length > 0) {
-      msg += `\n🚨 AUTO-WARN TODAY (${warnDays}+ days): ${warnToday.length} member${warnToday.length !== 1 ? 's' : ''}\n`;
-      msg += warnToday.map(m => `   • ${m.name}  (${Math.abs(daysFromToday(m.billingDate))}d)`).join('\n') + '\n';
+      msg += `\n🚨 GETTING CHASED TODAY: ${warnToday.length} member${warnToday.length !== 1 ? 's' : ''}\n`;
+      if (nudgeRows.length > 0) {
+        msg += `   msg2 · ${warnDays}d overdue (${nudgeRows.length}):\n`;
+        msg += nudgeRows.map(r => `      • ${r.name}  ${r.phone}`).join('\n') + '\n';
+      }
+      if (finalRows.length > 0) {
+        msg += `   msg3 · final notice, ${finalDay}d overdue (${finalRows.length}):\n`;
+        msg += finalRows.map(r => `      • ${r.name}  ${r.phone}`).join('\n') + '\n';
+      }
+    }
+
+    // Named apart because it is a different action, not a louder warning: these people are
+    // done being messaged and are waiting on a yes/no from the operator.
+    if (forRemoval.length > 0) {
+      msg += `\n🛑 PAST THE LADDER — no more messages (${forRemoval.length}) — run \`removal\`.\n`;
     }
 
     msg += `\n📊 Active: ${totalActive}  |  Overdue: ${overdue.length}  |  Due today: ${dueToday.length}  |  Skipped: ${totalSkipped}`;
