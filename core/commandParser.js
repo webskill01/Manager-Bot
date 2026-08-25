@@ -18,7 +18,7 @@ let activeOverdueList = [];
 // (find/status/summary/stats/due/pending/refs/help/…) reply immediately and need no ack.
 const SLOW_COMMANDS = new Set([
   'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
-  'kick', 'rejoin', 'sendlinks', 'links', 'refreshlinks', 'groupcheck', 'remind', 'renewed',
+  'kick', 'rejoin', 'sendlinks', 'links', 'refreshlinks', 'groupcheck', 'remind', 'renewed', 'advance',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
   'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip', 'ledger',
 ]);
@@ -82,7 +82,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   // Renewal-era commands a tracker bot must never run — its operators don't collect
   // renewals at all, so silently doing nothing would be worse than saying so.
   const RENEWAL_ONLY = new Set([
-    'renewed', 'remind', 'dmlist', 'dmlist2', 'dmlist3', 'sent', 'due', 'overdue', 'refs', 'ref',
+    'renewed', 'advance', 'remind', 'dmlist', 'dmlist2', 'dmlist3', 'sent', 'due', 'overdue', 'refs', 'ref',
     'warnall', 'kickall', 'removal', 'forecast', 'collection',
     'norenew', 'toprefs', 'loyal', 'churn', 'upcoming', 'drip',
   ]);
@@ -648,6 +648,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
             `See everything:      log`;
 
         case 'renewed':    return renewalH.handleRenewed(mergePhoneFromStart(args));
+        case 'advance':    return renewalH.handleAdvance(mergePhoneFromStart(args));
         case 'due':        return renewalH.handleDue(args);
         case 'overdue': {
           const result = renewalH.handleOverdue();
@@ -743,6 +744,9 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           if (sub === 'stop')  return dripEngine.stop();
           if (sub === 'start') return dripEngine.start();
           if (sub === 'test')  return dripEngine.test();
+          // `plan` / `today` / `schedule` — the day in advance, so a healthy run and a stuck
+          // one stop looking the same from the outside. Read-only.
+          if (sub === 'plan' || sub === 'today' || sub === 'schedule') return dripEngine.plan();
           return dripEngine.status();
         }
 

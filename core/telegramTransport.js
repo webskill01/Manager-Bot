@@ -77,6 +77,7 @@ const MENUS = {
     ['rejoin', '[phone] → reactivate an old member'],
     ['kick', '[phone] → remove from all groups'],
     ['renewed', '[phone] → log a renewal payment'],
+    ['advance', '[phone] [months] → paid several months up front'],
     ['remind', '[phone] → send reminder + QR by hand'],
     ['delay', '[phone] [days] → hide from the removal list'],
     ['skip', '[phone] [reason] → park them'],
@@ -125,7 +126,10 @@ const MENUS = {
 // Rows of [callback_data, label]. Telegram caps callback_data at 64 bytes; the longest here
 // is "stop kickghosts".
 const FOLLOW_UPS = {
-  drip:       [[['drip start', '▶️ start'], ['drip stop', '⏸ stop'], ['drip test', '🧪 test']]],
+  // `plan` first: the day ahead is the thing you check, the other three are what you do
+  // about it. Two rows so the labels stay readable on a phone.
+  drip:       [[['drip plan', '📋 today’s plan']],
+               [['drip start', '▶️ start'], ['drip stop', '⏸ stop'], ['drip test', '🧪 test']]],
   kickghosts: [[['kickghosts confirm', '✅ confirm'], ['stop kickghosts', '✖️ stop']]],
   stop:       [[['stop removal', 'removal'], ['stop kickall', 'kickall'], ['stop kickghosts', 'kickghosts']]],
   summary:    [[['summary 1', 'yesterday'], ['summary 2', '2 days ago']]],

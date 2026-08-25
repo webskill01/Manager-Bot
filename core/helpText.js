@@ -13,7 +13,7 @@ import { isTracker } from './globalConfig.js';
 export const HELP_CATEGORIES = {
   full: [
     ['members',   '👤 Members',   'add, kick, rejoin, skip, links'],
-    ['renewals',  '💰 Renewals',  'renewed, remind, due, overdue'],
+    ['renewals',  '💰 Renewals',  'renewed, advance, remind, due, overdue'],
     ['referrals', '👥 Referrals', 'ref, refs'],
     ['lookup',    '🔍 Lookup',    'find, status'],
     ['reports',   '📊 Reports',   'digest, summary, weekly, monthly'],
@@ -46,6 +46,7 @@ function fullBodies(config) {
   // Derived, never written down: the ceiling is one over the floor, and a help text that
   // says "3 an hour" while the config says 15 minutes is worse than no help text.
   const perHour = Math.round(60 / ((config.drip?.gapMinMs ?? (auto ? 1200000 : 1080000)) / 60000));
+  const nudgeDay = config.overdue?.autoReminderDays ?? 5;
   const fee = config.renewal.fullAmount;
 
   return {
@@ -71,6 +72,7 @@ function fullBodies(config) {
 • renewed [phone] force  →  override same-month block
 • renewed [phone] 45  →  ₹${config.renewal.referralAmount}
 • renewed [phone] [day]  /  [day] 45
+• advance [phone] [months]  →  billing +N months, ₹${fee}×N banked today
 • remind [phone]  →  send reminder + QR manually
 • due / due tomorrow
 • upcoming [days]  →  who's due in next N days (default 7)
@@ -113,6 +115,7 @@ function fullBodies(config) {
 ${auto ? `
   This bot does not wait for your thumb:
 • drip        →  how many it has sent today and what is left
+• drip plan   →  the WHOLE day up front — who, in what order, roughly when
 • drip test   →  preview the next one in Telegram (sends nothing, records nothing)
 • drip stop   →  stop sending for today   ·   drip start  →  resume
   It wakes at ${dripStart} AM and sends ONE reminder at a time until ${dripEnd > 12 ? dripEnd - 12 : dripEnd} PM, never
@@ -120,6 +123,9 @@ ${auto ? `
   reminders spread across the whole window instead of finishing by 9.
   It re-reads the sheet before every send, so anyone who pays drops off.
   The first message of the day lands at a random time, never on the hour.
+  Order is due-today first, then the ${nudgeDay}-day nudge, then the final notice —
+  renewals before follow-ups, so a full day drops chase-ups and not money.
+  The QR rides the due-today message only, once per member per month.
   The QR goes with the FIRST message each member gets in a billing cycle,
   whichever one that is — so somebody missed on their due date still gets
   it with their day-${nudge} message. It is not re-sent later in the same cycle.
@@ -136,6 +142,7 @@ ${auto ? `
 ` : `
   Or let the bot pace it for you — same links, pushed a few at a time:
 • drip        →  what's been pushed today and what's left
+• drip plan   →  the WHOLE day up front — who, in what order, roughly when
 • drip test   →  push one batch NOW to check it works (records nothing)
 • drip stop   →  pause for today   ·   drip start  →  resume
   It wakes at ${dripStart} AM, sends up to 3 links every 18-25 min until ${dripEnd > 12 ? dripEnd - 12 : dripEnd} PM, and

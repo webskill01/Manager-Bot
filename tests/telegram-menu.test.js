@@ -83,13 +83,13 @@ test('the prose menus become buttons', () => {
   assert.deepEqual(allButtons(followUps('stop')).map(b => b[0]),
     ['stop removal', 'stop kickall', 'stop kickghosts']);
   assert.deepEqual(allButtons(followUps('drip')).map(b => b[0]),
-    ['drip start', 'drip stop', 'drip test']);
+    ['drip plan', 'drip start', 'drip stop', 'drip test']);
   assert.deepEqual(allButtons(followUps('kickghosts')).map(b => b[0]),
     ['kickghosts confirm', 'stop kickghosts']);
 });
 
 test('drip keeps its buttons after start/stop/test — the next steps are the same three', () => {
-  for (const sub of ['drip start', 'drip stop', 'drip test']) {
+  for (const sub of ['drip plan', 'drip start', 'drip stop', 'drip test']) {
     assert.ok(followUps(sub), `${sub} lost its buttons`);
   }
 });
