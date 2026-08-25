@@ -96,12 +96,17 @@ export function adaptiveGapMs(remaining, msLeftInWindow, settings, rand = Math.r
 export function buildDripBatch({ members, config, pushed = [], now = todayStr(), max = 3 }) {
   const seen = new Set(pushed.map(String));
   const batch = [];
-  // Most-overdue cohort first. Irrelevant when all three go out together; decisive when
-  // `max` is 1, as auto mode sets it. The final-notice cohort has exactly one day to be
-  // reached before day 7 moves them to the removal list, whereas a due-today member missed
-  // now simply becomes a nudge tomorrow. Draining 'due' first on a busy day would quietly
-  // cost people their last notice.
-  for (const cohort of ['final', 'nudge', 'due']) {
+  // Due-today cohort FIRST, then the nudge, then the final notice. Irrelevant when all three
+  // go out together; decisive when `max` is 1, as auto mode sets it.
+  //
+  // This used to run most-overdue-first, reasoning that a day-6 member has one day left
+  // before removal. The operator's call, and the right one: the day-0 reminder is the one
+  // that actually collects money, and on a day the queue overflows the window it was the
+  // renewals — not the chase-ups — that were silently dropped. A missed day-0 member becomes
+  // a nudge tomorrow; a missed day-6 member is already a decision (the removal list), which
+  // `overdue`/`kickall` handle. Follow-ups are the lower-value half of the queue, so they
+  // are the half that gets squeezed.
+  for (const cohort of ['due', 'nudge', 'final']) {
     if (batch.length >= max) break;
     const { rows } = buildDmList({ members, config, cohort, now });
     const row = rows.find(r => !seen.has(String(r.phone)));
@@ -120,6 +125,54 @@ export function countRemaining({ members, config, pushed = [] }) {
     }
   }
   return phones.size;
+}
+
+// Today's whole queue, in the exact order the drip will work it: every 'due' row, then
+// every 'nudge', then every 'final' — the same cohort order buildDripBatch drains, so the
+// plan and the day cannot disagree. Deduped across cohorts like countRemaining.
+export function buildDripQueue({ members, config, pushed = [], now = todayStr() }) {
+  const seen = new Set(pushed.map(String));
+  const queue = [];
+  for (const cohort of ['due', 'nudge', 'final']) {
+    for (const r of buildDmList({ members, config, cohort, now }).rows) {
+      if (seen.has(String(r.phone))) continue;
+      seen.add(String(r.phone));
+      queue.push(r);
+    }
+  }
+  return queue;
+}
+
+// Estimated clock time for each member in the queue.
+//
+// Estimates, and labelled as such wherever they are printed: the gap is redrawn every tick
+// from the queue as it stands THEN, and carries up to +40% of deliberate wobble. A member who
+// pays at noon leaves the queue and pulls everyone behind them earlier. What IS exact is the
+// ORDER, which is the half the operator actually needs to check the day against.
+//
+// The wobble is applied to the FLOOR and the cap, never to an even split. adaptiveGapMs
+// re-divides the time actually left by the queue actually left on every tick, so inflating
+// one gap shortens the next one and an evenly-paced day still lands on the window's edge.
+// Only a gap pinned at the floor — a queue longer than the window can hold — really pushes
+// the day out past its end, which is exactly the case `late` is here to find.
+//
+// Multiplying an even split by 1.2 as well made the plan cry wolf: eight members across
+// twelve hours came out as 14.4 hours of sends and reported as overflowing.
+export function planTimes(queue, settings, { from = new Date(), endHour } = {}) {
+  const end = new Date(from);
+  end.setHours(endHour ?? settings.endHour, 0, 0, 0);
+  const WOBBLE = 1.2;   // mean of the +0..40% adaptiveGapMs adds, so times land mid-spread
+  let at = from.getTime();
+  return queue.map((row, i) => {
+    const remaining = queue.length - i;
+    const even = remaining > 0 ? (end - at) / remaining : settings.gapCapMs * WOBBLE;
+    const gap = Math.min(
+      Math.max(even, settings.gapMinMs * WOBBLE),
+      settings.gapCapMs * WOBBLE,
+    );
+    at += gap;
+    return { ...row, at: new Date(at), late: at > end.getTime() };
+  });
 }
 
 const STAGE_LABEL = { msg1: 'due today', msg2: 'overdue', msg3: 'FINAL notice' };
@@ -281,15 +334,16 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     }
     const jid = `91${normalizePhone(row.phone)}@s.whatsapp.net`;
 
-    // The QR rides the first message of each billing CYCLE — see needsQr. Later messages in
-    // the same cycle go to someone who has it in this very chat, a scroll away, so re-sending
-    // buys nothing and costs a second and third image. Media is the heaviest thing this bot
-    // transmits and the easiest to fingerprint, so roughly half of them stop existing.
+    // The QR rides msg1, once per billing CYCLE — see needsQr. The nudge and the final notice
+    // go to someone who has it in this very chat, a scroll away, so re-sending buys nothing
+    // and costs a second and third image. Media is the heaviest thing this bot transmits and
+    // the easiest to fingerprint, so roughly two thirds of them stop existing.
     //
     // upiQrPath may be a LIST. Same payee, different bytes: WhatsApp identifies media by file
     // hash, so one identical image landing on 600 phones is a far louder signal than any
     // repeated wording. pickVariant is keyed on phone, so a member always gets the same one.
-    const wantsQr = needsQr(row);
+    const first = firstContact(row);
+    const wantsQr = needsQr(row, first);
     const qr = wantsQr ? pickVariant(config.upiQrPath, row.phone) : null;
     const qrPath = qr ? path.resolve(config.botDir, qr) : null;
     const withQr = !!(qrPath && fs.existsSync(qrPath));
@@ -300,8 +354,11 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     await sendLikeHuman(sock, jid, content, row.text);
     // Recorded only AFTER the send lands. A QR marked sent on a message that threw would
     // leave that member without one for the whole cycle.
-    if (withQr) noteQrSent(row);
-    log.info(`💧 Auto-sent ${STAGE_LABEL[row.stage]} → ${row.name} (${row.phone})${withQr ? ' +QR' : ''}`);
+    noteSent(row, withQr);
+    // The QR tag says WHY, not just whether. "+QR" on nine sends in a row looks identical to
+    // a broken gate from the log alone, which is exactly how this got reported as a bug.
+    const tag = withQr ? (row.stage === 'msg1' ? ' +QR (msg1)' : ' +QR (first contact this cycle)') : '';
+    log.info(`💧 Auto-sent ${STAGE_LABEL[row.stage]} → ${row.name} (${row.phone})${tag}`);
     return true;
   }
 
@@ -320,31 +377,65 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     catch (err) { log.error(`❌ Drip state save failed: ${err.message}`); }
   }
 
+  // phone → { cycle, qr }: the last billingDate we messaged them in, and the last one we
+  // attached a QR in. Two fields rather than one because "have they heard from us this
+  // cycle" and "do they already have the QR" are different questions — see needsQr.
+  //
+  // Reads tolerate the old flat `{ phone: "DD-MM-YYYY" }` shape (one QR date, no contact
+  // record) so an upgrade does not hand everyone a second QR. ponytail: no migration step,
+  // the shim is three lines and the file rewrites itself on the next send.
   function loadQrLog() {
-    try { return JSON.parse(fs.readFileSync(qrFile, 'utf8')); }
-    catch { return {}; }
+    try {
+      const raw = JSON.parse(fs.readFileSync(qrFile, 'utf8'));
+      const out = {};
+      for (const [phone, v] of Object.entries(raw)) {
+        out[phone] = typeof v === 'string' ? { cycle: v, qr: v } : v;
+      }
+      return out;
+    } catch { return {}; }
   }
 
-  // Has this member already been sent the QR for the cycle they are currently in?
+  function saveQrLog(log_) {
+    try { fs.writeFileSync(qrFile, JSON.stringify(log_, null, 2)); }
+    catch (err) { log.warn(`⚠️  QR log write failed: ${err.message}`); }
+  }
+
+  // Nothing on record for the cycle they are in right now.
+  function firstContact(row) {
+    return loadQrLog()[String(row.phone)]?.cycle !== row.billingDate;
+  }
+
+  // Exactly ONE QR per member per billing cycle, and it rides msg1 wherever msg1 happens.
   //
-  // NOT "is this msg1", which is what this used to be and was wrong. A member missed on their
-  // due date never gets msg1 at all — the 'due' cohort is exactly day 0 — so their first ever
-  // contact is the day-5 nudge. Keying on msg1 meant that person was chased for ₹90 twice
-  // with no way to pay. Keyed on the cycle, whichever message reaches them FIRST carries the
-  // QR and the rest go without.
+  // Two conditions, both required:
+  //   1. nothing logged for this member's current cycle, and
+  //   2. this is msg1 — OR the member has had no contact at all this cycle, in which case
+  //      whatever reaches them first carries it.
+  //
+  // (2)'s second half is not a loophole, it is the money. A member missed on their due date
+  // never gets msg1 at all — the 'due' cohort is exactly day 0 — so their first ever contact
+  // is the day-5 nudge. A strict msg1-only gate chased that person for ₹90 twice with no way
+  // to pay. The ceiling is still one image per cycle either way; this only decides WHICH
+  // message carries it.
   //
   // Their billingDate is the cycle id: it moves forward the moment they renew, so next
   // month's first message carries a QR again with nothing to reset or expire.
-  function needsQr(row) {
-    return loadQrLog()[String(row.phone)] !== row.billingDate;
+  function needsQr(row, firstContactThisCycle) {
+    if (loadQrLog()[String(row.phone)]?.qr === row.billingDate) return false;
+    return row.stage === 'msg1' || firstContactThisCycle;
   }
 
-  function noteQrSent(row) {
-    try {
-      const log_ = loadQrLog();
-      log_[String(row.phone)] = row.billingDate;
-      fs.writeFileSync(qrFile, JSON.stringify(log_, null, 2));
-    } catch (err) { log.warn(`⚠️  QR log write failed: ${err.message}`); }
+  // One write, after the send lands, recording both facts at once. `withQr` false still
+  // records the contact — that is what stops a day-6 member who was nudged on day 5 from
+  // being treated as a first contact and handed a second image.
+  function noteSent(row, withQr) {
+    const log_ = loadQrLog();
+    const prev = log_[String(row.phone)] || {};
+    log_[String(row.phone)] = {
+      cycle: row.billingDate,
+      qr: withQr ? row.billingDate : prev.qr,
+    };
+    saveQrLog(log_);
   }
 
   function clearTimer() {
@@ -638,13 +729,96 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
       : '⚠️ No Telegram listener — nothing was sent.';
   }
 
+  // `drip plan` — what the rest of today looks like, before it happens.
+  //
+  // Exists because "is it working or is it random?" is unanswerable from the outside: the
+  // gaps ARE random by design, so the operator had no way to tell a healthy day from a stuck
+  // one until the evening report. The ORDER and the MEMBERS are fully determined, so print
+  // those as fact and the times as estimates, and the day becomes checkable at 6 AM.
+  //
+  // Reads the sheet, writes nothing — safe to run at any hour, as often as you like.
+  async function plan() {
+    if (cloudApiActive()) {
+      return 'ℹ️ Reminders run through the Cloud API on this bot — the drip is not used.';
+    }
+    await store.refresh();
+    const state = loadState();
+    const queue = buildDripQueue({ members: store.getAll(), config, pushed: state.pushed });
+
+    const head = `📋 *Today’s plan* — ${friendlyDate()}  ·  ` +
+      `${auto ? '🤖 bot sends' : '👍 links to you'}, ` +
+      `${settings.startHour}:00–${settings.endHour}:00\n`;
+
+    if (state.stopped) return `${head}\n🛑 Stopped for today. \`drip start\` to resume.`;
+    if (queue.length === 0) {
+      return `${head}\n✅ Nothing left — ${state.pushed.length} already handled today, ` +
+        `nobody else due, overdue or final.`;
+    }
+
+    // Start from now, or from the window opening if the day has not begun. Not from the armed
+    // timer: that delay is drawn randomly and re-drawn on restart, so pretending to know it
+    // would make the first row the least accurate one on the list.
+    const now = new Date();
+    const open = new Date(now);
+    open.setHours(settings.startHour, 0, 0, 0);
+    const from = now < open ? open : now;
+
+    const rows = planTimes(queue, settings, { from });
+    const fits = rows.filter(r => !r.late);
+    const spill = rows.filter(r => r.late);
+    const qrLog = loadQrLog();
+
+    const line = (r, i) => {
+      const t = r.at.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+      const cyc = qrLog[String(r.phone)] || {};
+      const qr = (cyc.qr !== r.billingDate && (r.stage === 'msg1' || cyc.cycle !== r.billingDate))
+        ? ' 📷' : '';
+      const age = r.overdueDays === 0 ? 'due today' : `${r.overdueDays}d over`;
+      return `${String(i + 1).padStart(3)}. ~${t}  ${STAGE_LABEL[r.stage]} · ${r.name} · ₹${r.fee} · ${age}${qr}`;
+    };
+
+    const body = fits.map(line).join('\n');
+    const tail = spill.length > 0
+      ? `\n\n⚠️ *${spill.length} will NOT fit before ${settings.endHour}:00* — they roll into ` +
+        `tomorrow one day more overdue:\n` +
+        spill.map(r => `   · ${r.name} (${r.overdueDays}d)`).join('\n') +
+        `\nClear them by hand with \`dmlist\` / \`dmlist2\` / \`dmlist3\` to get them out today.`
+      : '';
+
+    return `${head}${state.pushed.length} done · ${queue.length} to go · order is exact, ` +
+      `times are estimates (📷 = carries the QR)\n━━━━━━━━━━━━━━━━━\n${body}${tail}`;
+  }
+
   // A restart mid-window must not silently end the day. Nothing replays: `pushed` is
   // persisted, so resuming picks up exactly where it left off.
   function resume() {
     if (cloudApiActive()) return;
     const state = loadState();
-    if (state.stopped || state.done || !state.armedAt) return;
+    if (state.stopped || state.done) return;
     if (!withinWindow(new Date(), settings)) return;
+
+    // Never armed today. node-cron does not replay a firing the process was not alive for,
+    // so a bot that was down across 6 AM and came up at 10 used to sit out the whole day with
+    // `status` cheerfully reporting "running" — the queue simply rolled to tomorrow, everyone
+    // a day more overdue, and nothing anywhere said so. Arming here is safe precisely because
+    // `done` and `stopped` are checked above: a finished or stopped day never reaches this.
+    if (!state.armedAt) {
+      log.info('💧 Missed the arm cron — the bot was down for it. Arming now.');
+      arm().catch(err => log.error(`❌ Drip late-arm: ${err.message}`));
+      return;
+    }
+
+    // A timer is ALREADY pending, so this is a socket reconnect, not a process restart —
+    // and the two are indistinguishable from here because index.js fires resume() on every
+    // 'open'. Falling through would clearTimer() and draw a fresh full gap, pushing the next
+    // member back by up to 45 minutes EVERY reconnect. bot-nitin took 7 reconnects in one
+    // four-hour stretch; had they landed inside the send window rather than overnight, most
+    // of the day's queue would simply never have gone out.
+    //
+    // In-process state is the right test here, not anything on disk: a real restart has no
+    // timer because it has no previous process.
+    if (_timer) return;
+
     log.info(`💧 Resuming ${auto ? 'auto-send' : 'drip'} after restart`);
     // The adaptive gap needs a queue length, and after a restart the only honest one comes
     // from the sheet as it stands. Passing 0 would hand back the 2h cap and idle away the
@@ -653,5 +827,5 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     scheduleNext(auto ? countRemaining({ members: store.getAll(), config, pushed: state.pushed }) : 0);
   }
 
-  return { arm, start, stop, status, resume, tick, test, rememberShown, markShownHandled };
+  return { arm, start, stop, status, plan, resume, tick, test, rememberShown, markShownHandled };
 }

@@ -333,10 +333,11 @@ test('no two gaps are the same number — the wobble is real', () => {
   assert.ok(seen.size > 15, 'gaps are clustering on one value');
 });
 
-// With max:1 the cohort ORDER decides who gets left out on a busy day. Day-6 members have
-// one day left before the removal threshold; a due-today member missed now is simply a
-// nudge tomorrow. Draining 'due' first would silently cost people their final notice.
-test('the most overdue cohort is served first when only one send fits', () => {
+// With max:1 the cohort ORDER decides who gets left out on a busy day, and the operator's
+// call is renewals before follow-ups: the day-0 reminder is the one that actually collects
+// money, so an overflowing day must drop chase-ups and not income. A missed day-0 member
+// becomes a nudge tomorrow; a missed day-6 member is already a decision on the removal list.
+test('the due-today cohort is served first when only one send fits', () => {
   const members = [
     member('DueA', '9000000001', 0),
     member('NudgeA', '9000000003', 5),
@@ -349,7 +350,7 @@ test('the most overdue cohort is served first when only one send fits', () => {
     order.push(row.stage);
     pushed = [...pushed, row.phone];
   }
-  assert.deepEqual(order, ['msg3', 'msg2', 'msg1']);
+  assert.deepEqual(order, ['msg1', 'msg2', 'msg3']);
 });
 
 // A fake socket close enough to Baileys for the send path: presence calls plus sendMessage.
