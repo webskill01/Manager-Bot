@@ -229,8 +229,12 @@ export function createReminderSender(config, log, { fetchImpl } = {}) {
     const caption = template.replace('{name}', name).replace('{date}', date);
 
     try {
-      const qrPath = path.resolve(botDir, config.upiQrPath);
-      if (config.upiQrPath && fs.existsSync(qrPath)) {
+      // pickVariant, not the raw value: upiQrPath is a LIST on any bot running QR variants,
+      // and path.resolve(dir, []) throws TypeError before the reminder ever goes out. Keyed
+      // on phone, so a member always gets the same image as the drip would send them.
+      const qrFile = config.upiQrPath ? pickVariant(config.upiQrPath, phone) : null;
+      const qrPath = qrFile ? path.resolve(botDir, qrFile) : null;
+      if (qrPath && fs.existsSync(qrPath)) {
         const image = fs.readFileSync(qrPath);
         await sock.sendMessage(jid, { image, caption });
       } else {
@@ -493,7 +497,10 @@ export function createReminderSender(config, log, { fetchImpl } = {}) {
           state.digestSent = true;   // nothing to send counts as done for today
           saveState(botDir, state);
         } else {
-          const qrPath = config.upiQrPath ? path.resolve(botDir, config.upiQrPath) : null;
+          // upiQrPath may be a LIST — resolve() on an array throws. One image per group per
+          // day, picked off the group id so two groups do not get byte-identical media.
+          const qrFile = config.upiQrPath ? pickVariant(config.upiQrPath, g.groupId) : null;
+          const qrPath = qrFile ? path.resolve(botDir, qrFile) : null;
           const chunks = chunkMembers(due);
           try {
             for (let ci = 0; ci < chunks.length; ci++) {

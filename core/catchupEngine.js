@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import {
   daysFromToday, formatDate, todayStr, randomBetween,
-  overdueCohort, renewedOn, friendlyDate, sleep,
+  overdueCohort, renewedOn, friendlyDate, sleep, pickVariant,
 } from './globalConfig.js';
 import { buildGroupDigest, chunkMembers, MAX_TAGS_PER_MSG } from './reminderSender.js';
 
@@ -310,8 +310,11 @@ export function createCatchupEngine(config, log, getSock, store) {
         });
 
         try {
-          const qrPath = stage.withQr && config.upiQrPath
-            ? path.resolve(config.botDir, config.upiQrPath) : null;
+          // upiQrPath may be a LIST — resolve() on an array throws. Same pick as the live
+          // group digest, so a catch-up run and a normal day send the same image.
+          const qrFile = stage.withQr && config.upiQrPath
+            ? pickVariant(config.upiQrPath, g.groupId) : null;
+          const qrPath = qrFile ? path.resolve(config.botDir, qrFile) : null;
           if (qrPath && fs.existsSync(qrPath)) {
             await live.sendMessage(g.groupId, { image: fs.readFileSync(qrPath), caption: text, mentions });
           } else {
