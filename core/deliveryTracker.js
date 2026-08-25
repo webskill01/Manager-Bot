@@ -34,8 +34,38 @@ export const STATUS_LABEL = {
   5: 'played',
 };
 
+// Why the server rejected a message, when it says. Verified against baileys 7.0.0-rc13
+// Utils/decode-wa-message.js, where the codes and this explanation both live:
+//
+//   463 SenderReachoutTimelocked / MessageAccountRestriction
+//       "1:1 message missing privacy token (tctoken). Usually means the account is
+//        restricted: WhatsApp blocks starting new chats but preserves existing ones,
+//        since established chats already carry a tctoken."
+//
+//       This is the shape of a partial restriction, and it explains a split delivery
+//       exactly: members the operator has messaged before still get through, members they
+//       have never messaged do not. No amount of retrying changes it, and retrying is
+//       precisely how a restriction becomes a ban.
+//
+//   479 SmaxInvalid — "stanza rejected by server, likely stale device session or malformed
+//       addressing". A reconnect genuinely can fix this one.
+export const REJECTION = {
+  '463': {
+    fatal: true,
+    what: 'your account is RESTRICTED from starting new chats',
+    detail: 'WhatsApp is blocking messages to people this number has never messaged before. ' +
+            'Existing conversations still work, which is why some reminders land and some do not. ' +
+            'Retrying will not help and makes a ban more likely.',
+  },
+  '479': {
+    fatal: false,
+    what: 'the stanza was rejected — stale device session',
+    detail: 'Usually clears on a reconnect. If it persists for one member, their session is stale.',
+  },
+};
+
 export function createDeliveryTracker(log, { max = 1000 } = {}) {
-  // messageId → highest status seen. Insertion-ordered and trimmed from the front: a bot that
+  // messageId → { status, code }. Insertion-ordered and trimmed from the front: a bot that
   // runs for months must not keep one entry per message it has ever sent.
   const seen = new Map();
 
@@ -51,9 +81,17 @@ export function createDeliveryTracker(log, { max = 1000 } = {}) {
         const status = u?.update?.status;
         // See note 2 above: `status: undefined` is a normal payload here, not a malformed one.
         if (!id || typeof status !== 'number') continue;
-        // Highest wins. Receipts can arrive out of order, and a READ must never be walked
-        // back to SERVER_ACK by a late duplicate.
-        seen.set(id, Math.max(seen.get(id) ?? 0, status));
+        // The reason rides along on an ERROR ack as messageStubParameters[0]. It is the
+        // difference between "reconnect" and "stop sending immediately", so it must not be
+        // thrown away with the rest of the payload.
+        const code = String(u?.update?.messageStubParameters?.[0] ?? '') || null;
+        const prev = seen.get(id);
+        // Highest status wins — receipts arrive out of order and a READ must never be walked
+        // back by a late duplicate — but a reason, once given, is kept.
+        seen.set(id, {
+          status: Math.max(prev?.status ?? 0, status),
+          code: code || prev?.code || null,
+        });
         if (seen.size > max) seen.delete(seen.keys().next().value);
       }
     });
@@ -61,7 +99,8 @@ export function createDeliveryTracker(log, { max = 1000 } = {}) {
 
   // PENDING, not undefined, for an id nothing has come back about — that is precisely what
   // "handed over, nothing heard" means.
-  const statusOf = (id) => (id && seen.has(id) ? seen.get(id) : STATUS.PENDING);
+  const entryOf = (id) => (id && seen.has(id) ? seen.get(id) : { status: STATUS.PENDING, code: null });
+  const statusOf = (id) => entryOf(id).status;
 
   // Two tiers, because they are two different problems with two different responses.
   //
@@ -77,10 +116,18 @@ export function createDeliveryTracker(log, { max = 1000 } = {}) {
   // Reporting soft failures as alarms would train the operator to ignore the alarm, which
   // costs more than the missing information.
   function verdict(id) {
-    const status = statusOf(id);
-    if (status >= STATUS.DELIVERY_ACK) return { ok: true, status };
+    const { status, code } = entryOf(id);
+    if (status >= STATUS.DELIVERY_ACK) return { ok: true, status, code: null };
     const hard = status < STATUS.SERVER_ACK;
-    return { ok: false, hard, status, why: STATUS_LABEL[status] || `status ${status}` };
+    const reason = code ? REJECTION[code] : null;
+    return {
+      ok: false, hard, status, code,
+      // `fatal` means "no future send will work either" — the caller is expected to stop the
+      // day rather than walk the whole queue into the same wall.
+      fatal: !!reason?.fatal,
+      why: reason ? `${reason.what} [${code}]` : (STATUS_LABEL[status] || `status ${status}`),
+      detail: reason?.detail || null,
+    };
   }
 
   return { attach, statusOf, verdict, size: () => seen.size };

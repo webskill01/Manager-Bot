@@ -247,3 +247,85 @@ test('{name} and {date} are both substituted, never left raw', () => {
   assert.doesNotMatch(row.text, /\{name\}|\{date\}/, 'a placeholder would be sent literally');
   assert.match(row.text, /Bob/);
 });
+
+// ── rejection codes ──────────────────────────────────────────────────────────
+
+import { REJECTION } from '../core/deliveryTracker.js';
+
+// 463 is documented in baileys' own source as "the account is restricted: WhatsApp blocks
+// starting new chats but preserves existing ones". Every future send hits the same wall, so
+// the caller must be told to stop rather than to retry.
+test('a 463 rejection is carried through as fatal, with the code', () => {
+  const t = createDeliveryTracker(quietLog);
+  const ev = fakeEv();
+  t.attach({ ev });
+  ev.emit('messages.update', [{
+    key: { id: 'A' },
+    update: { status: STATUS.ERROR, messageStubParameters: ['463', 'Your account has been restricted'] },
+  }]);
+  const v = t.verdict('A');
+  assert.equal(v.ok, false);
+  assert.equal(v.code, '463');
+  assert.equal(v.fatal, true, 'a restricted account was reported as retryable');
+  assert.match(v.why, /RESTRICTED/);
+});
+
+// 479 is a stale session and genuinely does clear on a reconnect — stopping the day for it
+// would be an overreaction.
+test('a 479 rejection is not fatal', () => {
+  const t = createDeliveryTracker(quietLog);
+  const ev = fakeEv();
+  t.attach({ ev });
+  ev.emit('messages.update', [{
+    key: { id: 'A' }, update: { status: STATUS.ERROR, messageStubParameters: ['479'] },
+  }]);
+  assert.equal(t.verdict('A').fatal, false);
+});
+
+test('an unknown rejection code degrades to the plain status label', () => {
+  const t = createDeliveryTracker(quietLog);
+  const ev = fakeEv();
+  t.attach({ ev });
+  ev.emit('messages.update', [{
+    key: { id: 'A' }, update: { status: STATUS.ERROR, messageStubParameters: ['999'] },
+  }]);
+  const v = t.verdict('A');
+  assert.equal(v.fatal, false);
+  assert.match(v.why, /rejected/);
+});
+
+test('every documented rejection code carries an explanation', () => {
+  for (const [code, r] of Object.entries(REJECTION)) {
+    assert.ok(r.what && r.detail, `${code} has no explanation`);
+    assert.equal(typeof r.fatal, 'boolean');
+  }
+});
+
+// The behaviour that matters most: one 463 must end the day, not be walked through the
+// whole remaining queue.
+test('a fatal rejection stops the day instead of burning the queue', async () => {
+  const dir = tmp('fatal-');
+  const notices = [];
+  const tracker = createDeliveryTracker(quietLog);
+  const ev = fakeEv();
+  tracker.attach({ ev });
+  const members = Array.from({ length: 5 }, (_, i) => member(`M${i}`, `900000000${i}`, 0));
+  const engine = engineWith(dir, members,
+    sockThatReturns(['id-0', 'id-1', 'id-2', 'id-3', 'id-4']), tracker, notices);
+
+  await engine.tick();
+  ev.emit('messages.update', [{
+    key: { id: 'id-0' },
+    update: { status: STATUS.ERROR, messageStubParameters: ['463'] },
+  }]);
+  await engine.tick();   // sees the 463 from the previous send
+
+  assert.ok(notices.some(n => n.includes('Auto-send STOPPED') && n.includes('RESTRICTED')),
+    'the operator was not told the account is restricted');
+  assert.ok(engine.status().includes('stopped'), 'the day kept going into the same wall');
+
+  const before = notices.length;
+  await engine.tick();
+  assert.equal(notices.length, before, 'a stopped day resumed on its own');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

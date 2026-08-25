@@ -531,11 +531,32 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     if (auto && lastSend) {
       const prev = lastSend;
       lastSend = null;
-      const { ok, hard, why } = tracker.verdict(prev.id);
+      const { ok, hard, fatal, why, detail } = tracker.verdict(prev.id);
       if (!ok) {
         log.warn(`⚠️  ${prev.name} (${prev.phone}) — ${why}`);
         state.undelivered = [...(state.undelivered || []), `${prev.name} ${prev.phone} — ${why}`];
         saveState(state);
+
+        // A fatal rejection is about the ACCOUNT, not this member — every remaining send
+        // today would hit the same wall. Walking the rest of the queue into it achieves
+        // nothing and is exactly the behaviour that turns a restriction into a ban, so the
+        // day ends here and the operator is told why in full.
+        if (fatal) {
+          state.stopped = true;
+          saveState(state);
+          clearTimer();
+          log.error(`🛑 Auto-send stopped — ${why}`);
+          await notify(
+            `🛑 *Auto-send STOPPED* — ${why}
+
+${detail || ''}
+
+` +
+            `Stopped after ${state.pushed.length} send(s) today so this does not become a ban. ` +
+            `Reach people with \`dm [phone]\` from your own phone meanwhile.`);
+          return;
+        }
+
         if (hard) {
           await notify(
             `⚠️ *Not delivered* — ${prev.name} (${prev.phone})

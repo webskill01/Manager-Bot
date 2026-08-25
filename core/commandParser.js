@@ -828,6 +828,20 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           // Long enough to be conclusive, short enough that the operator waits for it.
           await sleep(45000);
           const v = deliveryTracker.verdict(id);
+          // A named rejection code is the whole answer — say it and stop guessing.
+          if (!v.ok && v.code) {
+            return `${v.fatal ? '🛑' : '⚠️'} NOT delivered to ${who?.name || phone}.
+` +
+              `WhatsApp said: *${v.why}*
+
+${v.detail || ''}` +
+              (v.fatal
+                ? `
+
+This is an ACCOUNT-level block, not a problem with this member. ` +
+                  `Stop the bot sending (\`drip stop\`) and use \`dm [phone]\` instead.`
+                : '');
+          }
           if (v.ok) {
             return `✅ DELIVERED to ${who?.name || phone}.\n\n` +
               `A plain text message gets through. If reminders with the QR do not, the ` +
