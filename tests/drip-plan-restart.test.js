@@ -427,3 +427,89 @@ test('dmlist done records the contact for the cycle, not just for today', () => 
   assert.deepEqual(q.map(r => r.name), ['B']);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ── a restart must not eat the delivery check ──────────────────────────────────
+// 25-08-2026: Vikramjeet was sent a reminder at 17:38, the process restarted at 17:43, and
+// the next tick had nothing to check. No delivery, no report, no handoff, and no ping to say
+// so — the member was simply marked done and forgotten. `lastSend` lived in memory only.
+
+function stagedRestart(dir, { pid, phone = '9000000001' } = {}) {
+  const m = member('Vikram', phone, 0);
+  const row = {
+    name: m.name, phone, billingDate: m.billingDate, overdueDays: 0,
+    stage: 'msg1', fee: 90, text: 'due', link: `https://wa.me/91${phone}?text=due`,
+  };
+  fs.writeFileSync(path.join(dir, 'drip-state.json'), JSON.stringify({
+    date: todayStr(), pushed: [phone], stopped: false, done: false, armedAt: Date.now(),
+    lastSend: { id: 'MSGID', name: m.name, phone, at: Date.now(), row, pid },
+  }));
+  // noteSent already claimed the cycle at send time — that is the record under test.
+  fs.writeFileSync(path.join(dir, 'qr-sent.json'),
+    JSON.stringify({ [phone]: { cycle: m.billingDate, qr: m.billingDate } }));
+  return { m, row };
+}
+
+function engineOver(dir, members, notices, verdict) {
+  return createDripEngine(
+    makeConfig({ botDir: dir, drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } }),
+    quietLog, { refresh: async () => {}, getAll: () => members },
+    { autoRenewDue: async () => [] }, async (t) => { notices.push(t); },
+    { getSock: () => ({ user: { id: 'b' } }), warmingUp: () => false, tracker: { verdict: () => verdict } },
+  );
+}
+
+test('a send the previous process made is reported as unknown, not as a failure', async () => {
+  const dir = tmp('drip-restart-');
+  const { m } = stagedRestart(dir, { pid: process.pid + 1 });
+  const notices = [];
+  // The tracker would say "never acknowledged" for an id it has never seen. That verdict
+  // must not be used: this process cannot know, and saying so is the whole point.
+  await engineOver(dir, [m], notices, { ok: false, hard: true, fatal: false, why: 'never acknowledged' }).tick();
+
+  const handoff = notices.find(n => n.includes('Send it yourself'));
+  assert.ok(handoff, 'the operator was told nothing');
+  assert.match(handoff, /restarted before it could check/);
+  assert.doesNotMatch(handoff, /never acknowledged/, 'a guess was reported as a fact');
+
+  const state = JSON.parse(fs.readFileSync(path.join(dir, 'drip-state.json'), 'utf8'));
+  assert.equal(state.lastSend, null, 'the check must not run twice');
+  assert.match(state.undelivered.join(''), /Vikram/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('an unproven send stops counting as contact, so missed can recover them', async () => {
+  const dir = tmp('drip-forget-');
+  const { m } = stagedRestart(dir, { pid: process.pid + 1 });
+  await engineOver(dir, [m], [], { ok: false, hard: true, fatal: false, why: 'x' }).tick();
+
+  const qr = JSON.parse(fs.readFileSync(path.join(dir, 'qr-sent.json'), 'utf8'));
+  assert.equal(qr['9000000001'], undefined, 'the cycle record still claims they were reached');
+  // Tomorrow they are 1d overdue with no contact on file — exactly the missed cohort.
+  const tomorrow = member('Vikram', '9000000001', 1);
+  assert.deepEqual(buildDripQueue({ members: [tomorrow], config: makeConfig(), contactLog: qr })
+    .map(r => r.name), ['Vikram']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a confirmed failure in the SAME process also releases the cycle record', async () => {
+  const dir = tmp('drip-failed-');
+  const { m } = stagedRestart(dir, { pid: process.pid });
+  const notices = [];
+  await engineOver(dir, [m], notices, { ok: false, hard: false, fatal: false, why: 'their phone is off' }).tick();
+
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'qr-sent.json'), 'utf8'))['9000000001'], undefined);
+  assert.match(notices.find(n => n.includes('Send it yourself')), /their phone is off/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a delivered send keeps its cycle record and says nothing', async () => {
+  const dir = tmp('drip-ok-');
+  const { m } = stagedRestart(dir, { pid: process.pid });
+  const notices = [];
+  await engineOver(dir, [m], notices, { ok: true, status: 3 }).tick();
+
+  const qr = JSON.parse(fs.readFileSync(path.join(dir, 'qr-sent.json'), 'utf8'));
+  assert.equal(qr['9000000001'].cycle, m.billingDate, 'a delivered reminder was forgotten');
+  assert.equal(notices.filter(n => n.includes('Send it yourself')).length, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

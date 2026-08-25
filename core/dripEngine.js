@@ -416,8 +416,11 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     // only means the server took the node off our hands — see deliveryTracker. Checking on
     // the next tick rather than on a timer gives a free 15-45 minute grace period, which is
     // what stops a recipient with their phone off being reported as a failure.
+    // `pid` is what lets the check survive a restart honestly — see checkLastSend. The
+    // tracker keeps its receipts in memory, so the process that sent a message is the only
+    // one that can ever say what became of it.
     lastSend = receipt?.key?.id
-      ? { id: receipt.key.id, name: row.name, phone: row.phone, at: Date.now(), row }
+      ? { id: receipt.key.id, name: row.name, phone: row.phone, at: Date.now(), row, pid: process.pid }
       : null;
     if (!lastSend) log.warn(`⚠️  No message id back for ${row.phone} — delivery cannot be confirmed`);
 
@@ -536,6 +539,97 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     if (_timer.unref) _timer.unref();
   }
 
+  // Undo the cycle record for a member whose message was not proven to arrive.
+  //
+  // noteSent writes it the moment the send returns an id — the right moment for the QR gate,
+  // the wrong one for "have they heard from us". Left alone, one undelivered reminder
+  // suppresses that member from the 'missed' cohort for the whole cycle, which is precisely
+  // the hole the cohort exists to close. Drops the entry whole, QR included: an image nobody
+  // received is not an image they have.
+  function forgetContact(row) {
+    if (!row) return;
+    const log_ = loadQrLog();
+    if (log_[String(row.phone)]?.cycle !== row.billingDate) return;
+    delete log_[String(row.phone)];
+    saveQrLog(log_);
+  }
+
+  // Did the PREVIOUS one land?
+  //
+  // Asked on the next tick rather than on a timer because the gap is 15-45 minutes, which is
+  // a generous grace period for free. A hard failure means the message never left and is
+  // worth a buzz; a soft one is indistinguishable from the recipient having their phone off,
+  // so it only goes in tonight's count. See deliveryTracker for why those two must not be
+  // reported the same way.
+  //
+  // The record is held in state as well as in memory. It used to be in-process only, and a
+  // restart inside the gap threw the question away in silence: on 25-08-2026 Vikramjeet was
+  // sent a reminder at 17:38, the process restarted at 17:43, and the tick that followed had
+  // nothing to check — no delivery, no report, no handoff, and no ping to say so. A deploy
+  // is not a delivery receipt.
+  async function checkLastSend(state) {
+    const prev = lastSend || state.lastSend;
+    if (!auto || !prev) return;
+    lastSend = null;
+    state.lastSend = null;
+    saveState(state);
+
+    // A DIFFERENT process cannot answer the question. The tracker holds its receipts in
+    // memory, so after a restart every id looks exactly like one nothing ever came back
+    // about — and reporting that as "it never left the bot" is a guess dressed up as a fact.
+    // Say what is actually known, hand the member over, and let the cycle record forget them
+    // so the 'missed' cohort recovers them if the operator does not.
+    if (prev.pid !== process.pid) {
+      const why = 'the bot restarted before it could check — delivery unknown';
+      log.warn(`⚠️  ${prev.name} (${prev.phone}) — ${why}`);
+      state.undelivered = [...(state.undelivered || []), `${prev.name} ${prev.phone} — ${why}`];
+      saveState(state);
+      forgetContact(prev.row);
+      if (prev.row) await handToOperator(prev.row, why);
+      return;
+    }
+
+    const { ok, fatal, why, detail } = tracker.verdict(prev.id);
+    if (ok) return;
+
+    log.warn(`⚠️  ${prev.name} (${prev.phone}) — ${why}`);
+    state.undelivered = [...(state.undelivered || []), `${prev.name} ${prev.phone} — ${why}`];
+    saveState(state);
+    // The bot believed this one went and it did not, so the cycle record must stop claiming
+    // they have heard from us — otherwise 'missed' skips the one member it was built for.
+    forgetContact(prev.row);
+
+    // Retroactive handoff. The bot believed this one went; it did not, and the member is
+    // still owed their reminder — so it goes to the operator like any other failure
+    // rather than being left as a line in tonight's report.
+    if (prev.row) await handToOperator(prev.row, why);
+
+    // A fatal code is about the ACCOUNT, not this member: every further attempt today
+    // gets the same rejection. The day does NOT stop — the queue keeps its pacing and
+    // every member still gets chased — but the bot stops ATTEMPTING and hands the whole
+    // remaining queue over as links.
+    //
+    // That distinction is the point. Continuing to fire rejected reachouts at a number
+    // WhatsApp has already restricted is what turns a restriction into a ban, and it buys
+    // nothing, because not one of them can land. Going link-only keeps the collection
+    // running at full rate while the account stops digging.
+    if (fatal && !state.linkOnly) {
+      state.linkOnly = true;
+      state.linkOnlyReason = why;
+      saveState(state);
+      log.warn(`📤 Switching to link-only for the rest of today — ${why}`);
+      await notify(
+        `📤 *Handing today over to you* — ${why}
+
+${detail || ''}
+
+` +
+        `The bot will keep working the queue on the same schedule, but it will send you ` +
+        `a tap-to-send link for each person instead of messaging them itself. Nothing ` +
+        `stops and nobody is skipped — you just become the last step.`);
+    }
+  }
+
   async function tick() {
     if (cloudApiActive()) return;
     const state = loadState();
@@ -552,51 +646,7 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
       return retrySoon();
     }
 
-    // Did the PREVIOUS one land? Asked here rather than on a timer because the gap to this
-    // tick is 15-45 minutes, which is a generous grace period for free. A hard failure means
-    // the message never left and is worth a buzz; a soft one is indistinguishable from the
-    // recipient having their phone off, so it only goes in tonight's count. See
-    // deliveryTracker for why those two must not be reported the same way.
-    if (auto && lastSend) {
-      const prev = lastSend;
-      lastSend = null;
-      const { ok, hard, fatal, why, detail } = tracker.verdict(prev.id);
-      if (!ok) {
-        log.warn(`⚠️  ${prev.name} (${prev.phone}) — ${why}`);
-        state.undelivered = [...(state.undelivered || []), `${prev.name} ${prev.phone} — ${why}`];
-        saveState(state);
-
-        // Retroactive handoff. The bot believed this one went; it did not, and the member is
-        // still owed their reminder — so it goes to the operator like any other failure
-        // rather than being left as a line in tonight's report.
-        if (prev.row) await handToOperator(prev.row, why);
-
-        // A fatal code is about the ACCOUNT, not this member: every further attempt today
-        // gets the same rejection. The day does NOT stop — the queue keeps its pacing and
-        // every member still gets chased — but the bot stops ATTEMPTING and hands the whole
-        // remaining queue over as links.
-        //
-        // That distinction is the point. Continuing to fire rejected reachouts at a number
-        // WhatsApp has already restricted is what turns a restriction into a ban, and it buys
-        // nothing, because not one of them can land. Going link-only keeps the collection
-        // running at full rate while the account stops digging.
-        if (fatal && !state.linkOnly) {
-          state.linkOnly = true;
-          state.linkOnlyReason = why;
-          saveState(state);
-          log.warn(`📤 Switching to link-only for the rest of today — ${why}`);
-          await notify(
-            `📤 *Handing today over to you* — ${why}
-
-${detail || ''}
-
-` +
-            `The bot will keep working the queue on the same schedule, but it will send you ` +
-            `a tap-to-send link for each person instead of messaging them itself. Nothing ` +
-            `stops and nobody is skipped — you just become the last step.`);
-        }
-      }
-    }
+    await checkLastSend(state);
 
     await store.refresh();
     const members = store.getAll();
@@ -691,6 +741,9 @@ ${detail || ''}
       }
       failStreak = 0;
       state.pushed = [...state.pushed, String(batch[0].phone)];
+      // On disk, not just in memory: a restart before the next tick is what silently ate the
+      // delivery check for Vikramjeet on 25-08-2026.
+      state.lastSend = lastSend;
       saveState(state);
       return scheduleNext(countRemaining({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
     }
@@ -712,6 +765,9 @@ ${detail || ''}
   async function finish(state) {
     clearTimer();
     if (state.done) return;
+    // Before the report is built, so the day's LAST send makes it into `undelivered` like
+    // every other. Nothing ticks after the window closes, so this was its only chance.
+    await checkLastSend(state);
     state.done = true;
     saveState(state);
     await store.refresh();
