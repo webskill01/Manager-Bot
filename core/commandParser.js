@@ -708,11 +708,24 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           const template = (type === 'referral' && config.messages.referralReminder)
             ? config.messages.referralReminder : config.messages.reminder;
           const caption = template.replace('{name}', member.name).replace('{date}', friendlyDate(member.billingDate));
-          const jid = `91${member.phone}@s.whatsapp.net`;
+          // Resolved, not assembled — same reason as the drip. This is also the command the
+          // operator reaches for when an auto-send did not land, so it is the last one that
+          // should repeat the fault.
+          let jid = `91${member.phone}@s.whatsapp.net`;
+          try {
+            const found = await resolveWhatsAppJid(sock, member.phone);
+            if (!found.exists) {
+              return `📵 ${member.name} (${member.phone}) is not on WhatsApp.\n` +
+                     `Nothing can be delivered to that number — check it in the sheet.`;
+            }
+            jid = found.jid;
+          } catch (err) {
+            log.warn(`⚠️  JID lookup failed for ${member.phone} — using the phone JID: ${err.message}`);
+          }
           try {
             // upiQrPath may be a LIST — resolve() on an array throws before anything sends.
-          const qrFile = config.upiQrPath ? pickVariant(config.upiQrPath, member.phone) : null;
-          const qrPath = qrFile ? path.resolve(config.botDir, qrFile) : null;
+            const qrFile = config.upiQrPath ? pickVariant(config.upiQrPath, member.phone) : null;
+            const qrPath = qrFile ? path.resolve(config.botDir, qrFile) : null;
             if (qrPath && fs.existsSync(qrPath)) {
               const image = fs.readFileSync(qrPath);
               await sock.sendMessage(jid, { image, caption });
