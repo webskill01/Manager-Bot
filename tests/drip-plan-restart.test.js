@@ -207,3 +207,88 @@ test('an old flat qr-sent.json is read, not ignored — no second QR after an up
   assert.ok(!sent[0].image, 'the upgrade re-sent a QR the member already had');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ── addressing: the bug that logged nine sends and delivered five ──────────────
+
+// A fake socket that records the JID it was actually asked to send to, and answers
+// onWhatsApp from a lookup table.
+function addressableSock(lookup) {
+  const sent = [];
+  return {
+    sent,
+    sock: {
+      user: { id: 'bot' },
+      async presenceSubscribe() {}, async sendPresenceUpdate() {},
+      async onWhatsApp(pn) {
+        const answer = lookup[pn];
+        if (answer === 'throw') throw new Error('usync timed out');
+        if (!answer) return [{ exists: false }];
+        return [{ exists: true, jid: answer }];
+      },
+      async sendMessage(jid, msg) { sent.push({ jid, msg }); },
+    },
+  };
+}
+
+function autoEngine(dir, members, sock, log = quietLog) {
+  return createDripEngine(
+    makeConfig({ botDir: dir, drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } }),
+    log, { refresh: async () => {}, getAll: () => members },
+    { autoRenewDue: async () => [] }, async () => {},
+    { getSock: () => sock, warmingUp: () => false },
+  );
+}
+
+// The whole point. A LID-primary account accepts a send to its phone JID and never shows
+// the message, and sendMessage does not throw — so the bot logged a success it never had.
+test('the send goes to the JID WhatsApp names, not the one we assembled', async () => {
+  const dir = tmp('addr-');
+  const { sock, sent } = addressableSock({ '919000000001': '242902009692413@lid' });
+  await autoEngine(dir, [member('A', '9000000001', 0)], sock).tick();
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].jid, '242902009692413@lid', 'sent to the guessed phone JID again');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a number WhatsApp does not know is reported, never silently counted as sent', async () => {
+  const dir = tmp('addr-');
+  const notices = [];
+  const { sock, sent } = addressableSock({});          // nobody exists
+  const engine = createDripEngine(
+    makeConfig({ botDir: dir, drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } }),
+    quietLog, { refresh: async () => {}, getAll: () => [member('Ghost', '9000000001', 0)] },
+    { autoRenewDue: async () => [] }, async (t) => { notices.push(t); },
+    { getSock: () => sock, warmingUp: () => false },
+  );
+  await engine.tick();
+
+  assert.equal(sent.length, 0, 'it sent to a number that does not exist');
+  assert.ok(notices.some(n => n.includes('Not on WhatsApp') && n.includes('Ghost')),
+    'the operator was never told the number is dead');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// Fails OPEN, exactly like the roster check: wrongly skipping someone who pays is invisible
+// and costs money, so only an explicit "does not exist" may stop a send.
+test('a lookup that errors still sends, to the phone JID', async () => {
+  const dir = tmp('addr-');
+  const { sock, sent } = addressableSock({ '919000000001': 'throw' });
+  await autoEngine(dir, [member('A', '9000000001', 0)], sock).tick();
+
+  assert.equal(sent.length, 1, 'a usync hiccup cost a paying member their reminder');
+  assert.equal(sent[0].jid, '919000000001@s.whatsapp.net');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// One bad row must not eat the day by retrying every five minutes.
+test('an unreachable member is passed over and the queue keeps moving', async () => {
+  const dir = tmp('addr-');
+  const { sock, sent } = addressableSock({ '919000000002': '919000000002@s.whatsapp.net' });
+  const members = [member('Ghost', '9000000001', 0), member('Real', '9000000002', 0)];
+  await autoEngine(dir, members, sock).tick();
+
+  assert.equal(sent.length, 1);
+  assert.ok(sent[0].msg.text.includes('Real'), 'the queue stalled on the dead number');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

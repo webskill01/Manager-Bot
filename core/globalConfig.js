@@ -266,6 +266,35 @@ export function normalizePhone(phone) {
   return digits.slice(-10);
 }
 
+// The JID to send to, asked of WhatsApp instead of assembled by hand.
+//
+// Every DM path used to build `91<phone>@s.whatsapp.net` by string concatenation. That is a
+// GUESS, and in LID-era WhatsApp it can be the wrong one: an account whose primary address is
+// a @lid will accept a send to its phone JID without any error and never show the message.
+// sendMessage does not throw, so the bot logs a success it did not have — on 25-08-2026 it
+// logged nine sends and five arrived.
+//
+// index.js already does exactly this for allowedNumbers, because inbound commands hit the
+// same problem from the other side. The send path simply never got the same treatment.
+//
+// Returns { exists, jid }. THROWS on a lookup failure, so callers can tell "WhatsApp says
+// this number does not exist" (a real answer, act on it) from "the lookup did not complete"
+// (say nothing, send anyway). Those must never collapse into one value.
+export async function resolveWhatsAppJid(sock, phone, countryCode = '91') {
+  const pn = `${countryCode}${normalizePhone(phone)}`;
+  const [res] = (await sock.onWhatsApp(pn)) || [];
+  return { exists: !!res?.exists, jid: res?.jid || null };
+}
+
+// The @lid Baileys has cached for a phone JID, or null. Diagnostics only — the send path
+// trusts whatever onWhatsApp hands back rather than second-guessing it.
+export async function lidFor(sock, phoneJid) {
+  try {
+    const lid = await sock.signalRepository?.lidMapping?.getLIDForPN(phoneJid);
+    return lid ? `${String(lid).split('@')[0].split(':')[0]}@lid` : null;
+  } catch { return null; }
+}
+
 export function formatDate(date) {
   const d = new Date(date);
   const day = String(d.getDate()).padStart(2, '0');

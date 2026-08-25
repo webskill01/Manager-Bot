@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, normalizePhone as normPhone, getReferralsInBillingPeriod, todayStr, friendlyDate, sleep, isTracker } from './globalConfig.js';
+import { daysFromToday, normalizePhone as normPhone, getReferralsInBillingPeriod, todayStr, friendlyDate, sleep, isTracker, pickVariant, resolveWhatsAppJid, lidFor } from './globalConfig.js';
 import { createMemberHandlers } from './handlers/memberHandlers.js';
 import { createRenewalHandlers } from './handlers/renewalHandlers.js';
 import { createLookupHandlers } from './handlers/lookupHandlers.js';
@@ -20,7 +20,7 @@ const SLOW_COMMANDS = new Set([
   'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
   'kick', 'rejoin', 'sendlinks', 'links', 'refreshlinks', 'groupcheck', 'remind', 'renewed', 'advance',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
-  'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip', 'ledger',
+  'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip', 'ledger', 'checknum',
 ]);
 
 // A Sheets 403 is a Google-side problem, not a bot problem, but its raw message ("The
@@ -102,6 +102,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     ['stillin',     'Needs a live group roster. Compare by hand, or run this on the WhatsApp bot.'],
     ['kickghosts',  'Bulk group removal needs a WhatsApp connection. Remove them by hand.'],
     ['diag',        'Diagnostic for the WhatsApp socket — nothing to probe on Telegram.'],
+    ['checknum',    'Asks WhatsApp whether a number exists — needs a WhatsApp connection.'],
     ['remind',      'This DMs the member a UPI QR over WhatsApp. Send it yourself, or use: dmlist'],
     // These three are engine-backed, and core/telegram.js constructs no engines — there is
     // no socket for them to drive. They were previously unreachable by accident: RENEWAL_ONLY
@@ -709,7 +710,9 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           const caption = template.replace('{name}', member.name).replace('{date}', friendlyDate(member.billingDate));
           const jid = `91${member.phone}@s.whatsapp.net`;
           try {
-            const qrPath = config.upiQrPath ? path.resolve(config.botDir, config.upiQrPath) : null;
+            // upiQrPath may be a LIST — resolve() on an array throws before anything sends.
+          const qrFile = config.upiQrPath ? pickVariant(config.upiQrPath, member.phone) : null;
+          const qrPath = qrFile ? path.resolve(config.botDir, qrFile) : null;
             if (qrPath && fs.existsSync(qrPath)) {
               const image = fs.readFileSync(qrPath);
               await sock.sendMessage(jid, { image, caption });
@@ -721,6 +724,36 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           } catch (err) {
             return `❌ Failed to send reminder: ${err.message}`;
           }
+        }
+
+        // `checknum [phone] [phone] …` — what WhatsApp says about a number, before anything
+        // is sent to it. Exists because sendMessage does not throw when it fails to deliver:
+        // on 25-08-2026 nine reminders were logged as sent and five arrived, and there was no
+        // way to tell the two groups apart afterwards. This is that way.
+        case 'checknum': {
+          const phones = args.map(a => normPhone(a)).filter(p => p.length === 10);
+          if (phones.length === 0) {
+            return '❌ Format: checknum [phone] [phone] …\nExample: checknum 7015225875 9056647708';
+          }
+          const lines = [];
+          for (const phone of phones) {
+            const m = store.findByPhone(phone);
+            const who = m ? m.name : '(not in the sheet)';
+            try {
+              const { exists, jid } = await resolveWhatsAppJid(sock, phone);
+              if (!exists) { lines.push(`📵 ${phone} · ${who}\n   NOT on WhatsApp — nothing can be delivered`); continue; }
+              const guess = `91${phone}@s.whatsapp.net`;
+              const lid = await lidFor(sock, jid);
+              lines.push(
+                `✅ ${phone} · ${who}\n   addressed as: ${jid}` +
+                (jid === guess ? '  (same as the phone JID)' : '  ⚠️ DIFFERENT from the phone JID') +
+                (lid ? `\n   lid: ${lid}` : ''));
+            } catch (err) {
+              lines.push(`⚠️ ${phone} · ${who}\n   lookup failed: ${err.message}`);
+            }
+            await sleep(400);   // usync is a server round trip; do not machine-gun it
+          }
+          return `🔎 NUMBER CHECK\n━━━━━━━━━━━━━━━━━\n${lines.join('\n\n')}`;
         }
 
         case 'dmlist':   return handleDmList(args, 'due');

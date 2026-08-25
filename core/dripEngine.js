@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { randomBetween, todayStr, friendlyDate, sleep, normalizePhone, pickVariant } from './globalConfig.js';
+import { randomBetween, todayStr, friendlyDate, sleep, normalizePhone, pickVariant, resolveWhatsAppJid } from './globalConfig.js';
 import { buildDmList } from './dmList.js';
 import { usesCloudApi } from './cloudApiSender.js';
 
@@ -332,7 +332,21 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
       log.warn('💧 Auto-send held — WhatsApp socket not ready');
       return false;
     }
-    const jid = `91${normalizePhone(row.phone)}@s.whatsapp.net`;
+    // Ask WhatsApp where this person actually is. The concatenated phone JID stays as the
+    // fallback and NOTHING skips a member on a failed lookup — same asymmetry as the roster
+    // check: wrongly skipping someone who pays is invisible and costs real money, so only an
+    // explicit "this number does not exist" is allowed to stop a send.
+    let jid = `91${normalizePhone(row.phone)}@s.whatsapp.net`;
+    try {
+      const found = await resolveWhatsAppJid(sock, row.phone);
+      if (!found.exists) return 'unreachable';
+      if (found.jid !== jid) {
+        log.info(`📱 ${row.phone} addressed as ${found.jid} (not the phone JID)`);
+      }
+      jid = found.jid;
+    } catch (err) {
+      log.warn(`⚠️  JID lookup failed for ${row.phone} — sending to the phone JID: ${err.message}`);
+    }
 
     // The QR rides msg1, once per billing CYCLE — see needsQr. The nudge and the final notice
     // go to someone who has it in this very chat, a scroll away, so re-sending buys nothing
@@ -515,6 +529,18 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
         why = err.message;
         log.error(`❌ Auto-send to ${batch[0].phone} failed: ${err.message}`);
       }
+
+      // WhatsApp says there is no account on that number. Not a failure to retry — retrying
+      // it every five minutes would burn the day on one bad row — and emphatically not a
+      // silent success either. Mark it handled, name it in tonight's report, move on.
+      if (ok === 'unreachable') {
+        log.warn(`📵 ${batch[0].name} (${batch[0].phone}) is not on WhatsApp — nothing sent`);
+        state.pushed = [...state.pushed, String(batch[0].phone)];
+        state.unreachable = [...(state.unreachable || []), `${batch[0].name} ${batch[0].phone}`];
+        saveState(state);
+        return tick();
+      }
+
       if (!ok) {
         if (++failStreak >= FAIL_LIMIT) {
           state.stopped = true;
@@ -561,15 +587,23 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     // nobody sees is a check that fixes one day and nothing after it. Named here so the
     // operator can kick them from the sheet and stop them coming back round tomorrow.
     const gone = state.left || [];
+    // Numbers WhatsApp has no account for. Separate from `gone` because the fix is different:
+    // someone who left the groups gets kicked from the sheet, someone whose number is dead
+    // needs the number corrected or the member removed. Both used to be invisible.
+    const dead = state.unreachable || [];
     await notify(
       `💧 *${auto ? 'Auto-send finished' : 'Drip finished'}* — ${friendlyDate()}\n` +
-      `${state.pushed.length - gone.length} ${auto ? 'sent by the bot' : 'pushed'}` +
+      `${state.pushed.length - gone.length - dead.length} ${auto ? 'sent by the bot' : 'pushed'}` +
       (left > 0
         ? `, ${left} NOT reached today (they roll into tomorrow one day more overdue).`
         : `, nobody still waiting. 👍`) +
       (gone.length > 0
         ? `\n\n👋 *Left the groups — not messaged* (${gone.length}):\n${gone.join('\n')}\n` +
           `\`kick\` them so they stop coming round.`
+        : '') +
+      (dead.length > 0
+        ? `\n\n📵 *Not on WhatsApp — nothing could be sent* (${dead.length}):\n${dead.join('\n')}\n` +
+          `Check the number in the sheet, or \`skip\` them.`
         : ''),
     );
     log.info(`💧 ${auto ? 'Auto-send' : 'Drip'} finished — ${state.pushed.length} sent, ${left} unreached`);

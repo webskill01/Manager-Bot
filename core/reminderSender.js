@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate, renewedOn, pickSurplusReferrals, surplusCreditDate, cronTimePassedToday, beforeCatchUpCutoff, isDelayActive, pickVariant } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, todayStr, parseDate, formatDate, formatDateTime, getReferralsInBillingPeriod, friendlyDate, clampedBillingDate, renewedOn, pickSurplusReferrals, surplusCreditDate, cronTimePassedToday, beforeCatchUpCutoff, isDelayActive, pickVariant, resolveWhatsAppJid } from './globalConfig.js';
 import { usesCloudApi, createCloudApiSender } from './cloudApiSender.js';
 
 // ── Group digest builder (pure, exported for tests) ──────────────────────────
@@ -218,7 +218,20 @@ export function createReminderSender(config, log, { fetchImpl } = {}) {
       return { ok: false, error: 'WhatsApp socket not ready' };
     }
 
-    const jid = `91${normalizePhone(phone)}@s.whatsapp.net`;
+    // Same addressing fix as the drip's autoSend, and for the same reason: a phone JID we
+    // assembled ourselves is a guess, and a LID-primary account accepts it silently without
+    // ever showing the message. Fails OPEN — only an explicit "does not exist" stops a send.
+    let jid = `91${normalizePhone(phone)}@s.whatsapp.net`;
+    try {
+      const found = await resolveWhatsAppJid(sock, phone);
+      if (!found.exists) {
+        log.warn(`📵 ${name} (${phone}) is not on WhatsApp — reminder not sent`);
+        return { ok: false, error: 'not on WhatsApp', unreachable: true };
+      }
+      jid = found.jid;
+    } catch (err) {
+      log.warn(`⚠️  JID lookup failed for ${phone} — sending to the phone JID: ${err.message}`);
+    }
     // pickVariant, not the raw config value: every bot's messages.reminder is an ARRAY of
     // wordings, and calling .replace on an array throws. Only the drip's tap-to-send path
     // rotated them, so this — the socket auto-send path — was one send away from a
