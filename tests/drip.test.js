@@ -522,7 +522,7 @@ test('every member gets a QR on their own first contact, whatever stage it is', 
 
 // A restricted number still accepts sendMessage and simply fails to deliver. Retrying that
 // for eleven hours is how a warning becomes an escalation.
-test('five failures in a row stop the day and say why', async () => {
+test('five failures in a row hand the rest of the day over, rather than stopping', async () => {
   const notices = [];
   const sock = {
     user: { id: 'bot' },
@@ -539,17 +539,21 @@ test('five failures in a row stop the day and say why', async () => {
   );
   for (let i = 0; i < 5; i++) await engine.tick();
 
-  // Filtered, because each member's FIRST failure also pushes a notice now. This test is
-  // about the breaker: exactly one shutdown, however many individual failures preceded it.
-  const stops = notices.filter(n => /Auto-send stopped/.test(n));
-  assert.equal(stops.length, 1, 'the operator was not told, or was told twice');
-  assert.match(stops[0], /forbidden/, 'the actual error must reach the operator');
-  assert.ok(engine.status().includes('stopped'));
+  // The day does not stop — it changes channel. Announced exactly once, however many
+  // individual failures preceded it.
+  const flips = notices.filter(n => /Handing today over to you/.test(n));
+  assert.equal(flips.length, 1, 'the operator was not told, or was told twice');
+  assert.match(flips[0], /forbidden/, 'the actual error must reach the operator');
+  assert.ok(engine.status().includes('LINK-ONLY'));
 
-  // And it stays stopped: a sixth tick must not quietly resume.
-  const before = notices.length;
+  // And every one of them still got chased — that is the whole point of not stopping.
+  assert.ok(notices.filter(n => /Send it yourself/.test(n)).length >= 5,
+    'members went unchased once the bot could no longer send');
+
+  // And it stays link-only: the flip is announced once, not on every subsequent member.
+  const before = notices.filter(n => /Handing today over/.test(n)).length;
   await engine.tick();
-  assert.equal(notices.length, before);
+  assert.equal(notices.filter(n => /Handing today over/.test(n)).length, before);
 });
 
 test('a success clears the streak — an intermittent failure is not a shutdown', async () => {
@@ -630,8 +634,10 @@ test('the QR goes once per cycle, then stops until the member renews', async () 
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// A QR marked sent on a message that threw would leave that member without one all cycle.
-test('a failed send does not burn the member\'s QR', async () => {
+// A QR marked sent on a message that threw would leave that member without one all cycle —
+// and now that a failed send is handed to the operator rather than retried, the handoff is
+// what has to carry that fact.
+test('a failed send hands the member over WITH their QR still owed', async () => {
   const dir = tempBotDir();
   fs.writeFileSync(path.join(dir, 'qr-1.jpg'), 'qr');
   const cfgQr = { ...cfg, botDir: dir, upiQrPath: ['./qr-1.jpg'], drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } };
@@ -648,11 +654,20 @@ test('a failed send does not burn the member\'s QR', async () => {
     { autoRenewDue: async () => [] }, async () => {},
     { getSock: () => sock, warmingUp: () => false },
   );
-  await engine.tick();
-  fail = false;
-  await engine.tick();
-  assert.equal(sent.length, 1);
-  assert.ok(sent[0].msg.image, 'the retry went out without the QR');
+  const notices = [];
+  const engine2 = createDripEngine(
+    cfgQr, quietLog, { refresh: async () => {}, getAll: () => members },
+    { autoRenewDue: async () => [] }, async (t) => { notices.push(t); },
+    { getSock: () => sock, warmingUp: () => false },
+  );
+  await engine2.tick();
+
+  // Nothing reached the member, so their QR is still owed — and the handoff has to say so,
+  // because the operator is the one attaching it now.
+  assert.equal(sent.length, 0);
+  const handoff = notices.find(n => n.includes('Send it yourself'));
+  assert.ok(handoff, 'a failed send never reached the operator');
+  assert.ok(handoff.includes('Attach the QR'), 'the operator was not told the QR is still owed');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

@@ -220,6 +220,27 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   // trouble takes before it is announced: a number that has been restricted still accepts
   // sendMessage and simply fails to deliver, and a loop that keeps trying for eleven hours
   // turns a warning into an escalation. Five in a row ends the day and says so.
+  // Hand ONE member to the operator's thumb, as a tap-to-send link.
+  //
+  // The bot failing to reach someone is not a reason for that person to go unchased. wa.me
+  // opens the chat with the message already typed on the operator's own phone, which is a
+  // human opening a conversation rather than a linked device reaching out — a different path
+  // entirely, and the one that still works while the account is restricted from reachouts.
+  //
+  // Marked handled immediately, with no confirmation step: the operator's standing
+  // instruction is that a link they are sent is a message they send. A confirm button would
+  // buy a bit of bookkeeping accuracy at the cost of a second interaction per member, ~30 a
+  // day, which is how `dmlist done` ended up being forgotten in the first place.
+  async function handToOperator(row, reason) {
+    await notify(
+      `📤 *Send it yourself* — the bot could not reach them\n` +
+      `${STAGE_LABEL[row.stage]} · ${row.name} · ₹${row.fee} · ` +
+      `${row.overdueDays === 0 ? 'due today' : `${row.overdueDays}d overdue`}\n` +
+      `_${reason}_\n\n${row.link}` +
+      (needsQr(row, firstContact(row)) ? '\n\n📷 Attach the QR — they have not had one this month.' : ''));
+    log.info(`📤 Handed ${row.name} (${row.phone}) to the operator — ${reason}`);
+  }
+
   // The previous auto-send, held until the next tick can ask whether it landed. In memory on
   // purpose: a restart loses at most one pending check, and persisting it would mean a file
   // write per send to buy back one line of an evening report.
@@ -388,7 +409,7 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     // the next tick rather than on a timer gives a free 15-45 minute grace period, which is
     // what stops a recipient with their phone off being reported as a failure.
     lastSend = receipt?.key?.id
-      ? { id: receipt.key.id, name: row.name, phone: row.phone, at: Date.now() }
+      ? { id: receipt.key.id, name: row.name, phone: row.phone, at: Date.now(), row }
       : null;
     if (!lastSend) log.warn(`⚠️  No message id back for ${row.phone} — delivery cannot be confirmed`);
 
@@ -537,33 +558,34 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
         state.undelivered = [...(state.undelivered || []), `${prev.name} ${prev.phone} — ${why}`];
         saveState(state);
 
-        // A fatal rejection is about the ACCOUNT, not this member — every remaining send
-        // today would hit the same wall. Walking the rest of the queue into it achieves
-        // nothing and is exactly the behaviour that turns a restriction into a ban, so the
-        // day ends here and the operator is told why in full.
-        if (fatal) {
-          state.stopped = true;
+        // Retroactive handoff. The bot believed this one went; it did not, and the member is
+        // still owed their reminder — so it goes to the operator like any other failure
+        // rather than being left as a line in tonight's report.
+        if (prev.row) await handToOperator(prev.row, why);
+
+        // A fatal code is about the ACCOUNT, not this member: every further attempt today
+        // gets the same rejection. The day does NOT stop — the queue keeps its pacing and
+        // every member still gets chased — but the bot stops ATTEMPTING and hands the whole
+        // remaining queue over as links.
+        //
+        // That distinction is the point. Continuing to fire rejected reachouts at a number
+        // WhatsApp has already restricted is what turns a restriction into a ban, and it buys
+        // nothing, because not one of them can land. Going link-only keeps the collection
+        // running at full rate while the account stops digging.
+        if (fatal && !state.linkOnly) {
+          state.linkOnly = true;
+          state.linkOnlyReason = why;
           saveState(state);
-          clearTimer();
-          log.error(`🛑 Auto-send stopped — ${why}`);
+          log.warn(`📤 Switching to link-only for the rest of today — ${why}`);
           await notify(
-            `🛑 *Auto-send STOPPED* — ${why}
+            `📤 *Handing today over to you* — ${why}
 
 ${detail || ''}
 
 ` +
-            `Stopped after ${state.pushed.length} send(s) today so this does not become a ban. ` +
-            `Reach people with \`dm [phone]\` from your own phone meanwhile.`);
-          return;
-        }
-
-        if (hard) {
-          await notify(
-            `⚠️ *Not delivered* — ${prev.name} (${prev.phone})
-${why}
-
-` +
-            `Re-send with \`remind ${prev.phone}\`.`);
+            `The bot will keep working the queue on the same schedule, but it will send you ` +
+            `a tap-to-send link for each person instead of messaging them itself. Nothing ` +
+            `stops and nobody is skipped — you just become the last step.`);
         }
       }
     }
@@ -592,6 +614,16 @@ ${why}
         return tick();
       }
 
+      // Link-only: the account is restricted, so an attempt would be a rejected reachout and
+      // nothing else. Skip straight to the operator, keep the pacing, keep the queue moving.
+      if (state.linkOnly) {
+        await handToOperator(batch[0], state.linkOnlyReason || 'the bot cannot send today');
+        state.pushed = [...state.pushed, String(batch[0].phone)];
+        state.handed = [...(state.handed || []), `${batch[0].name} ${batch[0].phone}`];
+        saveState(state);
+        return scheduleNext(countRemaining({ members, config, pushed: state.pushed }));
+      }
+
       // Recorded only on a send that actually happened. A member whose message failed is
       // still owed one and must come back around, not be marked done by a socket hiccup.
       let ok = false;
@@ -617,32 +649,37 @@ ${why}
       }
 
       if (!ok) {
-        // First failure for this member today gets a push; the retries do not. retrySoon()
-        // comes back to the SAME member every five minutes, so notifying every attempt would
-        // turn one dead socket into twelve buzzes an hour — and an operator who mutes the bot
-        // is worse off than one who was never told. The 5-in-a-row stop below still fires.
-        const seen = new Set(state.failNotified || []);
-        if (!seen.has(String(batch[0].phone))) {
-          state.failNotified = [...seen, String(batch[0].phone)];
+        // A socket that is merely not ready yet is worth ONE quick retry — a reconnect takes
+        // seconds and the member keeps their slot. Anything else, or a second failure, goes
+        // straight to the operator: the member is owed their reminder today, and which
+        // channel carries it matters far less than whether it arrives at all.
+        const firstTry = !(state.retried || []).includes(String(batch[0].phone));
+        if (firstTry && /socket/i.test(why)) {
+          state.retried = [...(state.retried || []), String(batch[0].phone)];
           saveState(state);
-          await notify(
-            `⚠️ *Send failed* — ${batch[0].name} (${batch[0].phone})\n` +
-            `${why}\n\nRetrying shortly. They are still owed this message.`);
+          return retrySoon();
         }
 
-        if (++failStreak >= FAIL_LIMIT) {
-          state.stopped = true;
+        await handToOperator(batch[0], why);
+        state.pushed = [...state.pushed, String(batch[0].phone)];
+        state.handed = [...(state.handed || []), `${batch[0].name} ${batch[0].phone}`];
+        saveState(state);
+
+        // The streak still matters, but it now means "the bot cannot send at all today"
+        // rather than "stop chasing people". Five in a row flips the whole day to link-only,
+        // which keeps every remaining member on schedule without another rejected reachout.
+        if (++failStreak >= FAIL_LIMIT && !state.linkOnly) {
+          state.linkOnly = true;
+          state.linkOnlyReason = why;
           saveState(state);
-          clearTimer();
-          log.error(`❌ Auto-send stopped — ${failStreak} failures in a row`);
+          log.warn(`📤 ${failStreak} failures in a row — link-only for the rest of today`);
           await notify(
-            `🛑 *Auto-send stopped* — ${failStreak} sends failed in a row.\n` +
+            `📤 *Handing today over to you* — ${failStreak} sends failed in a row.\n` +
             `Last error: ${why}\n\n` +
-            `Check the number can still message people before restarting. ` +
-            `\`drip start\` resumes once you are sure.`);
-          return;
+            `The bot will keep working the queue on the same schedule and send you a link ` +
+            `for each person instead of messaging them itself. Nobody is skipped.`);
         }
-        return retrySoon();
+        return scheduleNext(countRemaining({ members, config, pushed: state.pushed }));
       }
       failStreak = 0;
       state.pushed = [...state.pushed, String(batch[0].phone)];
@@ -682,9 +719,14 @@ ${why}
     // Sent, believed delivered, and never confirmed. The only failure mode the bot used to
     // report as a success.
     const lost = state.undelivered || [];
+    // Sent by the operator's thumb instead of the socket. Not a failure — a different
+    // delivery path — so they are counted apart from both the sent and the lost.
+    const handed = state.handed || [];
     await notify(
       `💧 *${auto ? 'Auto-send finished' : 'Drip finished'}* — ${friendlyDate()}\n` +
-      `${state.pushed.length - gone.length - dead.length} ${auto ? 'sent by the bot' : 'pushed'}` +
+      `${state.pushed.length - gone.length - dead.length - handed.length} ` +
+      `${auto ? 'sent by the bot' : 'pushed'}` +
+      (handed.length > 0 ? `, ${handed.length} handed to you` : '') +
       (left > 0
         ? `, ${left} NOT reached today (they roll into tomorrow one day more overdue).`
         : `, nobody still waiting. 👍`) +
@@ -698,6 +740,10 @@ ${why}
         : '') +
       // The line that would have caught this on day one. Everything above is a message the
       // bot knowingly did not send; this is one it believed it had.
+      (handed.length > 0
+        ? `\n\n📤 *Handed to you as links* (${handed.length}):\n${handed.join('\n')}\n` +
+          (state.linkOnly ? `Reason: ${state.linkOnlyReason}` : '')
+        : '') +
       (lost.length > 0
         ? `\n\n⚠️ *Sent but NOT confirmed delivered* (${lost.length} of ${state.pushed.length}):\n` +
           `${lost.join('\n')}\n` +
@@ -828,6 +874,11 @@ ${why}
   function status() {
     const state = loadState();
     const s = state.stopped ? '🛑 stopped' : state.done ? '✅ finished' : '💧 running';
+    if (state.linkOnly) {
+      return `${s} · 📤 LINK-ONLY — ${state.linkOnlyReason}\n` +
+        `${(state.handed || []).length} handed to you today, ${state.pushed.length} done in total.\n` +
+        `The bot is still pacing the queue; it sends you a link instead of messaging them.`;
+    }
     const what = auto ? 'sent by the bot' : 'pushed';
     return `${s} · ${auto ? '🤖 auto-send' : '👍 manual links'} — ${state.pushed.length} ${what} today ` +
       `(window ${settings.startHour}:00–${settings.endHour}:00, ` +

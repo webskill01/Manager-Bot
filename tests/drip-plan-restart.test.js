@@ -334,7 +334,7 @@ test('a dead number is pushed to Telegram, not just written to the log', async (
 
 // retrySoon() comes back to the SAME member every five minutes. One buzz per member is
 // signal; one per attempt is what makes an operator mute the bot.
-test('a failing member is reported once, not once per retry', async () => {
+test('a failing member is handed over once, not once per retry', async () => {
   const dir = tmp('notify-');
   const notices = [];
   const sock = {
@@ -351,8 +351,8 @@ test('a failing member is reported once, not once per retry', async () => {
   );
   for (let i = 0; i < 4; i++) await engine.tick();
 
-  const failNotices = notices.filter(n => n.includes('Send failed'));
-  assert.equal(failNotices.length, 1, `four retries produced ${failNotices.length} buzzes`);
-  assert.ok(failNotices[0].includes('server said no'), 'the real error must reach the operator');
+  const handoffs = notices.filter(n => n.includes('Send it yourself'));
+  assert.equal(handoffs.length, 1, `four ticks produced ${handoffs.length} handoffs`);
+  assert.ok(handoffs[0].includes('server said no'), 'the real error must reach the operator');
   fs.rmSync(dir, { recursive: true, force: true });
 });

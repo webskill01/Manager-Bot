@@ -7,7 +7,7 @@ import { createLookupHandlers } from './handlers/lookupHandlers.js';
 import { createReportHandlers } from './handlers/reportHandlers.js';
 import { createTrackerHandlers } from './handlers/trackerHandlers.js';
 import { isConfigured, usesCloudApi, createCloudApiSender } from './cloudApiSender.js';
-import { buildDmList, renderDmList, dmRowFor } from './dmList.js';
+import { buildDmList, renderDmList, dmRowFor, chunkByChars } from './dmList.js';
 import { renderSendLog } from './reminderSender.js';
 
 let activeOverdueList = [];
@@ -777,21 +777,47 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         // which is the one delivery path WhatsApp has never filtered. Also the only way to
         // reach someone who has fallen past day 7 and so appears on no dmlist at all.
         case 'dm': {
+          // One phone, or a whole list of them. mergePhoneFromStart glues consecutive digit
+          // groups into one number, which is right for `dm +91 70152 25875` and catastrophic
+          // for `dm 7015225875 9056647708` — so a run of already-complete numbers is detected
+          // first and never merged. Commas are accepted because pasting a list is how anyone
+          // actually types five numbers.
+          const tokens = args.join(' ').split(/[,\s]+/).filter(Boolean);
+          const isList = tokens.length > 1 && tokens.every(a => /^\+?\d{10,13}$/.test(a));
           const merged = mergePhoneFromStart(args);
-          const phone = normPhone(merged[0] || '');
-          if (phone.length !== 10) {
-            return '❌ Format: dm [phone] [msg1|msg2|msg3]\nExample: dm 7015225875';
-          }
-          const member = store.findByPhone(phone);
-          if (!member) return `❌ No member found for ${merged[0]}. Try: find [name]`;
-          const forced = (merged[1] || '').toLowerCase();
+          const wanted = isList ? tokens : [merged[0] || ''];
+          const forced = isList ? '' : (merged[1] || '').toLowerCase();
           const stage = /^msg[123]$/.test(forced) ? forced : null;
-          const refs = getReferralsInBillingPeriod(member.phone, member.billingDate, store.getAll()).length;
-          const row = dmRowFor(member, config, { stage, referral: refs === 1 });
-          const age = row.overdueDays === 0 ? 'due today' : `${row.overdueDays}d overdue`;
-          return `📤 ${row.name} · ₹${row.fee} · ${age} · ${row.stage}\n` +
-            `Tap → the message is pre-typed → hit send.\n` +
-            `Attach the QR yourself if they still need it.\n\n${row.link}`;
+
+          const phones = wanted.map(a => normPhone(a)).filter(p => p.length === 10);
+          if (phones.length === 0) {
+            return '❌ Format: dm [phone] [msg1|msg2|msg3]   or   dm [phone] [phone] …\n' +
+                   'Example: dm 7015225875\n' +
+                   '         dm 7015225875 9056647708 9816291178';
+          }
+
+          const all = store.getAll();
+          const blocks = [];
+          const missing = [];
+          for (const p of phones) {
+            const member = store.findByPhone(p);
+            if (!member) { missing.push(p); continue; }
+            const refs = getReferralsInBillingPeriod(member.phone, member.billingDate, all).length;
+            const row = dmRowFor(member, config, { stage, referral: refs === 1 });
+            const age = row.overdueDays === 0 ? 'due today' : `${row.overdueDays}d overdue`;
+            blocks.push(`${row.name} · ₹${row.fee} · ${age} · ${row.stage}\n${row.link}`);
+          }
+          if (blocks.length === 0) return `❌ No member found for ${phones.join(', ')}.`;
+
+          // Chunked like dmlist: five long wa.me links overflow one Telegram message, and a
+          // link cut in half is worse than no link at all.
+          const header = `📤 SEND THESE YOURSELF — ${blocks.length} member(s)\n` +
+            `Tap → the message is pre-typed → hit send. Attach the QR if they still need it.` +
+            (missing.length > 0 ? `\n⚠️ Not in the sheet: ${missing.join(', ')}` : '') +
+            `\n━━━━━━━━━━━━━━━━━`;
+          const chunks = chunkByChars(blocks);
+          return chunks.map((c, i) =>
+            (i === 0 ? `${header}\n\n` : `📤 (${i + 1}/${chunks.length})\n\n`) + c.join('\n\n'));
         }
 
         // `checksend [phone]` — send one real message and report whether it ARRIVED.

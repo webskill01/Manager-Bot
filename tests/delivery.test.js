@@ -126,7 +126,7 @@ function engineWith(dir, members, sock, tracker, notices) {
   );
 }
 
-test('a message that never left is reported on the next tick, not the same one', async () => {
+test('a message that never left is handed to the operator on the next tick', async () => {
   const dir = tmp('deliv-');
   const notices = [];
   const tracker = createDeliveryTracker(quietLog);   // told nothing → everything stays PENDING
@@ -137,8 +137,10 @@ test('a message that never left is reported on the next tick, not the same one',
   assert.deepEqual(notices, [], 'it complained before any grace period had passed');
   await engine.tick();
 
-  assert.ok(notices.some(n => n.includes('Not delivered') && n.includes('A')),
-    'a message that never left was still reported as sent');
+  // Not merely reported — handed over, with the link, so the member still gets chased.
+  const handoff = notices.find(n => n.includes('Send it yourself') && n.includes('A'));
+  assert.ok(handoff, 'a message that never left was still counted as sent');
+  assert.ok(handoff.includes('wa.me/919000000001'), 'the handoff carried no tap-to-send link');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -155,7 +157,7 @@ test('a delivered message is never reported', async () => {
   ev.emit('messages.update', [{ key: { id: 'id-A' }, update: { status: STATUS.DELIVERY_ACK } }]);
   await engine.tick();
 
-  assert.deepEqual(notices.filter(n => n.includes('Not delivered')), []);
+  assert.deepEqual(notices.filter(n => n.includes('Send it yourself')), []);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -174,8 +176,11 @@ test('accepted-but-undelivered is counted for the evening, not buzzed about', as
   ev.emit('messages.update', [{ key: { id: 'id-A' }, update: { status: STATUS.SERVER_ACK } }]);
   await engine.tick();
 
-  assert.deepEqual(notices.filter(n => n.includes('Not delivered')), [],
-    'a switched-off phone buzzed the operator');
+  // Still handed over — the member is owed their reminder either way — but the day does not
+  // flip to link-only over one phone that happens to be off.
+  assert.ok(notices.some(n => n.includes('Send it yourself')), 'the member went unchased');
+  assert.deepEqual(notices.filter(n => n.includes('Handing today over')), [],
+    'one switched-off phone flipped the whole day to link-only');
   const state = JSON.parse(fs.readFileSync(path.join(dir, 'drip-state.json'), 'utf8'));
   assert.equal(state.undelivered.length, 1, 'it was not recorded for the evening report');
   fs.rmSync(dir, { recursive: true, force: true });
@@ -303,7 +308,7 @@ test('every documented rejection code carries an explanation', () => {
 
 // The behaviour that matters most: one 463 must end the day, not be walked through the
 // whole remaining queue.
-test('a fatal rejection stops the day instead of burning the queue', async () => {
+test('a fatal rejection flips the day to link-only instead of burning the queue', async () => {
   const dir = tmp('fatal-');
   const notices = [];
   const tracker = createDeliveryTracker(quietLog);
@@ -320,12 +325,70 @@ test('a fatal rejection stops the day instead of burning the queue', async () =>
   }]);
   await engine.tick();   // sees the 463 from the previous send
 
-  assert.ok(notices.some(n => n.includes('Auto-send STOPPED') && n.includes('RESTRICTED')),
+  assert.ok(notices.some(n => n.includes('Handing today over') && n.includes('RESTRICTED')),
     'the operator was not told the account is restricted');
-  assert.ok(engine.status().includes('stopped'), 'the day kept going into the same wall');
+  assert.ok(engine.status().includes('LINK-ONLY'), 'the day kept firing rejected reachouts');
 
-  const before = notices.length;
+  // The queue keeps moving — as links. Nobody is skipped just because the socket cannot send.
+  const handoffs = notices.filter(n => n.includes('Send it yourself')).length;
   await engine.tick();
-  assert.equal(notices.length, before, 'a stopped day resumed on its own');
+  assert.ok(notices.filter(n => n.includes('Send it yourself')).length > handoffs,
+    'the queue stalled once the day went link-only');
+  assert.equal(notices.filter(n => n.includes('Handing today over')).length, 1,
+    'the flip was announced more than once');
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// ── dm with a list ────────────────────────────────────────────────────────────
+
+import { createCommandParser } from '../core/commandParser.js';
+
+function parserFor(members) {
+  const store = {
+    async refresh() {}, getAll: () => members, getActive: () => members,
+    findByPhone: (p) => members.find(m => m.phone === p) || null,
+  };
+  return createCommandParser(store, {}, {
+    ...msgCfg, botName: 'test', botDir: os.tmpdir(), allowedNumbers: [], paidGroups: [],
+  }, quietLog, null, Date.now(), null, null, null, new Set(), null, () => null, null, null, null);
+}
+
+// mergePhoneFromStart glues consecutive digit groups into one number — right for
+// `dm +91 70152 25875`, catastrophic for a list of complete numbers.
+test('dm with several whole numbers does not glue them into one', async () => {
+  const members = [
+    { name: 'Raju', phone: '7015225875', status: 'ACTIVE', renewals: 0, paidLast: 0, billingDate: formatDate(new Date()) },
+    { name: 'Krishan', phone: '9056647708', status: 'ACTIVE', renewals: 0, paidLast: 0, billingDate: formatDate(new Date()) },
+  ];
+  const out = await parserFor(members).parse('dm 7015225875 9056647708');
+  const text = Array.isArray(out) ? out.join('\n') : out;
+  assert.match(text, /Raju/);
+  assert.match(text, /Krishan/);
+  assert.match(text, /wa.me\/917015225875/);
+  assert.match(text, /wa.me\/919056647708/);
+});
+
+test('dm still merges a split single number', async () => {
+  const members = [{ name: 'Raju', phone: '7015225875', status: 'ACTIVE', renewals: 0, paidLast: 0, billingDate: formatDate(new Date()) }];
+  const out = await parserFor(members).parse('dm +91 70152 25875');
+  const text = Array.isArray(out) ? out.join('\n') : out;
+  assert.match(text, /wa.me\/917015225875/);
+});
+
+test('dm accepts a comma-pasted list', async () => {
+  const members = [
+    { name: 'Raju', phone: '7015225875', status: 'ACTIVE', renewals: 0, paidLast: 0, billingDate: formatDate(new Date()) },
+    { name: 'Krishan', phone: '9056647708', status: 'ACTIVE', renewals: 0, paidLast: 0, billingDate: formatDate(new Date()) },
+  ];
+  const out = await parserFor(members).parse('dm 7015225875, 9056647708');
+  const text = Array.isArray(out) ? out.join('\n') : out;
+  assert.match(text, /Raju/);
+  assert.match(text, /Krishan/);
+});
+
+test('dm names numbers that are not in the sheet rather than dropping them', async () => {
+  const members = [{ name: 'Raju', phone: '7015225875', status: 'ACTIVE', renewals: 0, paidLast: 0, billingDate: formatDate(new Date()) }];
+  const out = await parserFor(members).parse('dm 7015225875 9999999999');
+  const text = Array.isArray(out) ? out.join('\n') : out;
+  assert.match(text, /Not in the sheet: 9999999999/);
 });
