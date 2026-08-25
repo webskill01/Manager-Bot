@@ -108,6 +108,13 @@ function fullBodies(config) {
 • dmlist   →  due TODAY  →  1st msg, one tap-to-send link each
 • dmlist2  →  ${nudge} days overdue  →  2nd msg
 • dmlist3  →  ${final} days overdue  →  3rd msg (final notice, the LAST one)
+• dmlist missed  →  1-${nudge - 1}d overdue and never messaged this cycle
+
+  \`missed\` is the catch-up list. dmlist is exactly day 0 and dmlist2 is exactly
+  day ${nudge}, so a member whose first message never went out — the bot was down, the
+  window overflowed, the account was restricted — used to sit unreachable in
+  between. The drip now works this cohort on its own; run it by hand after a
+  day the bot could not send at all.
 
   Day ${(config.overdue?.consolidatedListDays ?? final + 1)} they stop getting messages and move to the removal
   list — see \`overdue\` and \`kickall\`. Nobody is chased forever.

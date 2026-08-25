@@ -192,10 +192,25 @@ test('no follow-up buttons under a refusal', async () => {
 // the verb and the phones stay in drip-state. Every dmlist form gets it — the date batches
 // are exactly the ones the operator runs to clear an overflow by hand.
 test('every dmlist form offers "I sent these", and the claim itself does not', () => {
-  for (const cmd of ['dmlist', 'dmlist2', 'dmlist3', 'dmlist 27', 'dmlist 27 msg2']) {
+  for (const cmd of ['dmlist', 'dmlist2', 'dmlist3', 'dmlist 27', 'dmlist 27 msg2', 'dmlist missed']) {
     const rows = followUps(cmd);
-    assert.deepEqual(allButtons(rows).map(b => b[0]), ['dmlist done'], `${cmd} lost its button`);
-    assert.ok(Buffer.byteLength(rows[0][0][0]) <= 64, 'callback_data over Telegram cap');
+    assert.ok(allButtons(rows).some(b => b[0] === 'dmlist done'), `${cmd} lost its button`);
+    for (const b of allButtons(rows)) {
+      assert.ok(Buffer.byteLength(b[0]) <= 64, 'callback_data over Telegram cap');
+    }
   }
   assert.equal(followUps('dmlist done'), null, 'the claim offered to claim itself again');
+});
+
+// The plain list is the one place the catch-up question follows naturally: you have just seen
+// today's round, and days 1-4 are the ones nothing else prints. The cohort commands and the
+// date batches already ARE a specific slice, so they get the claim button and nothing else.
+test('only the plain dmlist offers the catch-up list, and it does not offer it to itself', () => {
+  assert.deepEqual(
+    allButtons(followUps('dmlist')).map(b => b[0]),
+    ['dmlist done', 'dmlist missed'],
+  );
+  for (const cmd of ['dmlist2', 'dmlist3', 'dmlist 27', 'dmlist missed']) {
+    assert.deepEqual(allButtons(followUps(cmd)).map(b => b[0]), ['dmlist done'], cmd);
+  }
 });

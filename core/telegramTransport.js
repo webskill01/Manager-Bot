@@ -173,7 +173,16 @@ export function followUps(text, profile = 'full') {
   // only thing to tell the bot afterwards is that you sent them. `dmlist done` fits in
   // callback_data with room to spare, whereas a list of twenty phone numbers never would —
   // which is why the phones live in drip-state and the button carries only the verb.
-  if (cmd.startsWith('dmlist') && parts[1]?.toLowerCase() !== 'done') {
+  //
+  // `missed` rides alongside it on the plain list, because the question that follows "here
+  // is today's round" is "did anyone slip through the last four days" — and after a day the
+  // bot could not send, that is the whole backlog.
+  if (cmd.startsWith('dmlist') && !['done', 'missed'].includes(parts[1]?.toLowerCase())) {
+    const row = [['dmlist done', '✅ Sent these — skip them today']];
+    if (cmd === 'dmlist' && !parts[1]) row.push(['dmlist missed', '🕳️ Who was missed']);
+    return [row];
+  }
+  if (parts[1]?.toLowerCase() === 'missed') {
     return [[['dmlist done', '✅ Sent these — skip them today']]];
   }
 

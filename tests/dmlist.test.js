@@ -316,3 +316,66 @@ test('renderDmList splits a big list into numbered parts, all under the cap', ()
   const joined = parts.join('\n');
   for (const m of members) assert.ok(joined.includes(m.phone), `${m.phone} missing`);
 });
+
+// ── the 'missed' cohort ────────────────────────────────────────────────────────
+// 'due' is exactly day 0 and 'nudge' is exactly day 5, so days 1-4 were a hole nothing
+// covered. On 24-08-2026 a whole day's batch fell in and was never chased again.
+
+test('missed is the gap between due and nudge, and nothing else', () => {
+  const members = [
+    member('9000000000', daysAgo(0)),   // due today  → not missed
+    member('9000000001', daysAgo(1)),
+    member('9000000004', daysAgo(4)),
+    member('9000000005', daysAgo(5)),   // nudge      → not missed
+    member('9000000006', daysAgo(6)),   // final      → not missed
+    member('9000000009', daysAgo(-3)),  // not yet due
+  ];
+  const { rows } = buildDmList({ members, config: cfg, cohort: 'missed' });
+  assert.deepStrictEqual(rows.map(r => r.phone).sort(), ['9000000001', '9000000004']);
+});
+
+test('a member already reached this cycle is not missed', () => {
+  const billing = daysAgo(3);
+  const members = [member('9000000001', billing), member('9000000002', billing)];
+  const { rows } = buildDmList({
+    members, config: cfg, cohort: 'missed',
+    contactLog: { '9000000001': { cycle: billing, qr: billing } },
+  });
+  assert.deepStrictEqual(rows.map(r => r.phone), ['9000000002']);
+});
+
+// The cycle id is the billing date, so last month's record must not suppress this month.
+test('contact logged against an OLD cycle does not suppress the new one', () => {
+  const members = [member('9000000001', daysAgo(2))];
+  const { rows } = buildDmList({
+    members, config: cfg, cohort: 'missed',
+    contactLog: { '9000000001': { cycle: daysAgo(32), qr: daysAgo(32) } },
+  });
+  assert.strictEqual(rows.length, 1);
+});
+
+// They never got msg1 — that is the entire reason they are here.
+test('missed members get the first message, not an escalation', () => {
+  const members = [member('9000000001', daysAgo(4))];
+  const { rows } = buildDmList({ members, config: cfg, cohort: 'missed' });
+  assert.strictEqual(rows[0].stage, 'msg1');
+  assert.match(rows[0].text, /^DUE /);
+});
+
+test('paid, delayed and inactive members are excluded like every other cohort', () => {
+  const members = [
+    member('9000000001', daysAgo(2), { status: 'REMOVED' }),
+    member('9000000002', daysAgo(2), { lastRenewed: todayStr() }),
+    member('9000000003', daysAgo(2)),
+  ];
+  const { rows } = buildDmList({ members, config: cfg, cohort: 'missed' });
+  assert.deepStrictEqual(rows.map(r => r.phone), ['9000000003']);
+});
+
+test('the header names the range rather than a single day', () => {
+  const out = renderDmList({
+    rows: buildDmList({ members: [member('9000000001', daysAgo(2))], config: cfg, cohort: 'missed' }).rows,
+    stageForced: false, cohort: 'missed', config: cfg,
+  });
+  assert.match(out[0], /1-4 days overdue, never messaged this cycle/);
+});

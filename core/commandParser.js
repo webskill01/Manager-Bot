@@ -183,7 +183,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   // The number is a DAY OF THE MONTH, not a window: `dmlist 27` is everyone billed on a 27th
   // and still unpaid, which is how a backlog gets worked in ~15-person batches. It used to
   // mean "the last N days" and returned 115+ people in one dump.
-  async function handleDmList(args, cohort = 'due') {
+  async function handleDmList(args, cohort = 'due') {   // eslint-disable-line no-param-reassign
     const cmd = cohort === 'nudge' ? 'dmlist2' : cohort === 'final' ? 'dmlist3' : 'dmlist';
 
     // `dmlist done` — "I have sent that batch, don't send to them again today". Checked
@@ -199,10 +199,14 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
       const w = String(a).toLowerCase();
       if (/^\d{1,2}$/.test(w) && +w >= 1 && +w <= 31) billingDay = parseInt(w, 10);
       else if (/^msg[123]$/.test(w)) force = w;
-      else return `❌ Unknown argument "${a}".\nUse: dmlist [1-31] [msg1|msg2|msg3]\n` +
+      // The four-day hole, on demand. The drip works this cohort on its own; this is for
+      // clearing it by hand after a day the bot could not send at all.
+      else if (w === 'missed' && cohort === 'due') cohort = 'missed';
+      else return `❌ Unknown argument "${a}".\nUse: dmlist [1-31] [msg1|msg2|msg3|missed]\n` +
         `  dmlist            due today\n` +
         `  dmlist2           ${config.overdue?.autoReminderDays ?? 5} days overdue (2nd message)\n` +
         `  dmlist3           ${config.overdue?.finalReminderDays ?? 6} days overdue (final notice)\n` +
+        `  dmlist missed     1-${(config.overdue?.autoReminderDays ?? 5) - 1}d overdue, never messaged this cycle\n` +
         `  dmlist 27         everyone billed on the 27th, still unpaid\n` +
         `  dmlist 27 msg2    same batch, escalated wording\n` +
         `  dmlist done       mark the last list as sent by you today`;
@@ -210,6 +214,9 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
 
     // A date batch is its own thing — combining it with a cohort would ask for "billed on
     // the 27th AND exactly 5 days overdue", which is almost always nobody.
+    if (billingDay !== null && cohort === 'missed') {
+      return '❌ `dmlist missed` takes no date — it IS the range nobody else covers.';
+    }
     if (billingDay !== null && cohort !== 'due') {
       return `❌ ${cmd} takes no date. For a specific billing day use:\n` +
         `  dmlist ${billingDay} ${cohort === 'nudge' ? 'msg2' : 'msg3'}`;
@@ -222,7 +229,10 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     if (!reminderSender) return `❌ ${cmd} not available on this bot.`;
     const renewed = await reminderSender.autoRenewDue(store, config.botDir);
     await store.refresh();
-    const { rows, stageForced } = buildDmList({ members: store.getAll(), config, cohort, billingDay, force });
+    const { rows, stageForced } = buildDmList({
+      members: store.getAll(), config, cohort, billingDay, force,
+      contactLog: dripEngine?.contactLog?.() || {},
+    });
     const parts = renderDmList({ rows, stageForced, cohort, billingDay, config });
 
     // Recorded as SHOWN, never as sent — printing is not sending. `dmlist done` is what

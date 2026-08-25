@@ -378,3 +378,52 @@ test('status says so when the socket is down, and not when it is up', () => {
   assert.match(ok, /auto-send/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ── the 'missed' cohort in the queue ───────────────────────────────────────────
+
+test('the queue works due first, then missed, then the chase-ups', () => {
+  const members = [
+    member('FinalGuy', '9000000006', 6),
+    member('NudgeGuy', '9000000005', 5),
+    member('MissedGuy', '9000000002', 2),
+    member('DueGuy', '9000000000', 0),
+  ];
+  const q = buildDripQueue({ members, config: makeConfig() });
+  assert.deepEqual(q.map(r => r.name), ['DueGuy', 'MissedGuy', 'NudgeGuy', 'FinalGuy']);
+});
+
+test('a member reached this cycle is not queued again as missed', () => {
+  const m = member('MissedGuy', '9000000002', 2);
+  const q = buildDripQueue({
+    members: [m], config: makeConfig(),
+    contactLog: { '9000000002': { cycle: m.billingDate } },
+  });
+  assert.deepEqual(q, []);
+});
+
+// `dmlist done` is the operator asserting they sent that batch. Without recording it against
+// the CYCLE (state.pushed resets at midnight) their own hand-sent batch comes back at them
+// as missed tomorrow.
+test('dmlist done records the contact for the cycle, not just for today', () => {
+  const dir = tmp('drip-done-');
+  const members = [member('A', '9000000001', 2), member('B', '9000000002', 2)];
+  const engine = createDripEngine(
+    makeConfig({ botDir: dir, drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } }),
+    quietLog, { refresh: async () => {}, getAll: () => members },
+    { autoRenewDue: async () => [] }, async () => {},
+    { getSock: () => ({ user: { id: 'b' } }), warmingUp: () => false },
+  );
+
+  engine.rememberShown(['9000000001']);
+  engine.markShownHandled();
+
+  const logged = JSON.parse(fs.readFileSync(path.join(dir, 'qr-sent.json'), 'utf8'));
+  assert.equal(logged['9000000001'].cycle, members[0].billingDate);
+  assert.equal(logged['9000000001'].qr, undefined, 'dmlist done cannot know whether a QR was attached');
+  assert.equal(logged['9000000002'], undefined, 'only the batch that was claimed');
+
+  // Tomorrow's queue (pushed has reset) must not offer A back.
+  const q = buildDripQueue({ members, config: makeConfig(), contactLog: logged });
+  assert.deepEqual(q.map(r => r.name), ['B']);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

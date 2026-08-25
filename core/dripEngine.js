@@ -93,11 +93,19 @@ export function adaptiveGapMs(remaining, msLeftInWindow, settings, rand = Math.r
 // mid-day payment drop someone automatically, with no reconciliation step and no stale queue
 // to corrupt across a restart. `seen` also spans cohorts, so a member who straddles two
 // windows on a tight ladder still gets exactly one link.
-export function buildDripBatch({ members, config, pushed = [], now = todayStr(), max = 3 }) {
+export function buildDripBatch({
+  members, config, pushed = [], contactLog = {}, now = todayStr(), max = 3,
+}) {
   const seen = new Set(pushed.map(String));
   const batch = [];
-  // Due-today cohort FIRST, then the nudge, then the final notice. Irrelevant when all three
-  // go out together; decisive when `max` is 1, as auto mode sets it.
+  // Due-today cohort FIRST, then the missed, then the nudge, then the final notice.
+  // Irrelevant when all four go out together; decisive when `max` is 1, as auto mode sets it.
+  //
+  // 'missed' sits SECOND, not first, for the same reason 'due' leads: today's due members are
+  // the ones who still pay on time, and a day-0 member squeezed out of the window becomes a
+  // day-1 'missed' tomorrow rather than vanishing — which is the whole point of the cohort.
+  // Ahead of the chase-ups because a member who has never been asked once this cycle is owed
+  // a first message before anyone gets a second one.
   //
   // This used to run most-overdue-first, reasoning that a day-6 member has one day left
   // before removal. The operator's call, and the right one: the day-0 reminder is the one
@@ -106,9 +114,9 @@ export function buildDripBatch({ members, config, pushed = [], now = todayStr(),
   // a nudge tomorrow; a missed day-6 member is already a decision (the removal list), which
   // `overdue`/`kickall` handle. Follow-ups are the lower-value half of the queue, so they
   // are the half that gets squeezed.
-  for (const cohort of ['due', 'nudge', 'final']) {
+  for (const cohort of ['due', 'missed', 'nudge', 'final']) {
     if (batch.length >= max) break;
-    const { rows } = buildDmList({ members, config, cohort, now });
+    const { rows } = buildDmList({ members, config, cohort, contactLog, now });
     const row = rows.find(r => !seen.has(String(r.phone)));
     if (row) { batch.push(row); seen.add(String(row.phone)); }
   }
@@ -116,11 +124,11 @@ export function buildDripBatch({ members, config, pushed = [], now = todayStr(),
 }
 
 // Everyone still owed a link today, across all three cohorts, deduped.
-export function countRemaining({ members, config, pushed = [] }) {
+export function countRemaining({ members, config, pushed = [], contactLog = {} }) {
   const seen = new Set(pushed.map(String));
   const phones = new Set();
-  for (const cohort of ['due', 'nudge', 'final']) {
-    for (const r of buildDmList({ members, config, cohort }).rows) {
+  for (const cohort of ['due', 'missed', 'nudge', 'final']) {
+    for (const r of buildDmList({ members, config, cohort, contactLog }).rows) {
       if (!seen.has(String(r.phone))) phones.add(String(r.phone));
     }
   }
@@ -130,11 +138,11 @@ export function countRemaining({ members, config, pushed = [] }) {
 // Today's whole queue, in the exact order the drip will work it: every 'due' row, then
 // every 'nudge', then every 'final' — the same cohort order buildDripBatch drains, so the
 // plan and the day cannot disagree. Deduped across cohorts like countRemaining.
-export function buildDripQueue({ members, config, pushed = [], now = todayStr() }) {
+export function buildDripQueue({ members, config, pushed = [], contactLog = {}, now = todayStr() }) {
   const seen = new Set(pushed.map(String));
   const queue = [];
-  for (const cohort of ['due', 'nudge', 'final']) {
-    for (const r of buildDmList({ members, config, cohort, now }).rows) {
+  for (const cohort of ['due', 'missed', 'nudge', 'final']) {
+    for (const r of buildDmList({ members, config, cohort, contactLog, now }).rows) {
       if (seen.has(String(r.phone))) continue;
       seen.add(String(r.phone));
       queue.push(r);
@@ -592,7 +600,7 @@ ${detail || ''}
 
     await store.refresh();
     const members = store.getAll();
-    const batch = buildDripBatch({ members, config, pushed: state.pushed, max: auto ? 1 : 3 });
+    const batch = buildDripBatch({ members, config, pushed: state.pushed, contactLog: loadQrLog(), max: auto ? 1 : 3 });
     if (batch.length === 0) return finish(state);
 
     if (auto) {
@@ -621,7 +629,7 @@ ${detail || ''}
         state.pushed = [...state.pushed, String(batch[0].phone)];
         state.handed = [...(state.handed || []), `${batch[0].name} ${batch[0].phone}`];
         saveState(state);
-        return scheduleNext(countRemaining({ members, config, pushed: state.pushed }));
+        return scheduleNext(countRemaining({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
       }
 
       // Recorded only on a send that actually happened. A member whose message failed is
@@ -679,16 +687,16 @@ ${detail || ''}
             `The bot will keep working the queue on the same schedule and send you a link ` +
             `for each person instead of messaging them itself. Nobody is skipped.`);
         }
-        return scheduleNext(countRemaining({ members, config, pushed: state.pushed }));
+        return scheduleNext(countRemaining({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
       }
       failStreak = 0;
       state.pushed = [...state.pushed, String(batch[0].phone)];
       saveState(state);
-      return scheduleNext(countRemaining({ members, config, pushed: state.pushed }));
+      return scheduleNext(countRemaining({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
     }
 
     const after = [...state.pushed, ...batch.map(r => String(r.phone))];
-    await notify(renderDripBatch(batch, countRemaining({ members, config, pushed: after })));
+    await notify(renderDripBatch(batch, countRemaining({ members, config, pushed: after, contactLog: loadQrLog() })));
 
     state.pushed = after;
     saveState(state);
@@ -707,7 +715,7 @@ ${detail || ''}
     state.done = true;
     saveState(state);
     await store.refresh();
-    const left = countRemaining({ members: store.getAll(), config, pushed: state.pushed });
+    const left = countRemaining({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() });
     // The people who left are the reason the group check exists, and a check whose findings
     // nobody sees is a check that fixes one day and nothing after it. Named here so the
     // operator can kick them from the sheet and stop them coming back round tomorrow.
@@ -788,7 +796,7 @@ ${detail || ''}
     // the ceiling, or clear the excess by hand with dmlist.
     if (auto) {
       try {
-        const queued = countRemaining({ members: store.getAll(), config, pushed: state.pushed });
+        const queued = countRemaining({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() });
         const capacity = Math.floor(
           ((settings.endHour - settings.startHour) * 3600000) / (settings.gapMinMs * 1.2));
         if (queued > capacity) {
@@ -844,7 +852,26 @@ ${detail || ''}
     state.pushed = [...state.pushed, ...fresh];
     state.shown = [];
     saveState(state);
-    const rest = countRemaining({ members: store.getAll(), config, pushed: state.pushed });
+
+    // Record the contact against the CYCLE, not just today. `pushed` resets at midnight; the
+    // 'missed' cohort asks "has anyone reached this member this billing cycle", and without
+    // this the operator's own hand-sent batch would come back at them as missed tomorrow.
+    //
+    // The QR field is deliberately left alone: the operator attaches it or does not, and this
+    // command cannot know which. Erring toward "they still need one" only ever costs an image.
+    //
+    // handToOperator does NOT do this, on purpose. A link the bot pushed at you and you never
+    // tapped is a member nobody reached — them resurfacing as missed is the point. The cost is
+    // one duplicate for a link you did send, four days later; the alternative is what happened
+    // on 24-08-2026, where a whole handed-over batch was silently never chased again.
+    const byPhone = new Map(store.getAll().map(m => [String(m.phone), m]));
+    const log_ = loadQrLog();
+    for (const ph of fresh) {
+      const m = byPhone.get(String(ph));
+      if (m) log_[String(ph)] = { cycle: m.billingDate, qr: log_[String(ph)]?.qr };
+    }
+    saveQrLog(log_);
+    const rest = countRemaining({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() });
     return `✅ ${fresh.length} marked as sent by you today — ${auto ? 'the bot' : 'the drip'} ` +
       `will skip them.\n${rest} still queued.`;
   }
@@ -911,14 +938,14 @@ ${detail || ''}
     await store.refresh();
     const state = loadState();
     const members = store.getAll();
-    const batch = buildDripBatch({ members, config, pushed: state.pushed });
+    const batch = buildDripBatch({ members, config, pushed: state.pushed, contactLog: loadQrLog() });
     if (batch.length === 0) return '✅ Nothing to send right now — nobody due, overdue or final.';
     // Still a Telegram preview in auto mode, deliberately: `drip test` exists to show the
     // operator what the next tick would do, and a test that really messaged a member would
     // cost them their reminder and spend a slot.
     const sent = await notify(
       '🧪 *TEST — not recorded, these will still be sent for real later*\n\n' +
-      renderDripBatch(batch, countRemaining({ members, config, pushed: state.pushed })),
+      renderDripBatch(batch, countRemaining({ members, config, pushed: state.pushed, contactLog: loadQrLog() })),
     );
     return sent
       ? `🧪 Test push sent to Telegram — ${batch.length} link(s). Nothing was recorded.`
@@ -939,7 +966,7 @@ ${detail || ''}
     }
     await store.refresh();
     const state = loadState();
-    const queue = buildDripQueue({ members: store.getAll(), config, pushed: state.pushed });
+    const queue = buildDripQueue({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() });
 
     const head = `📋 *Today’s plan* — ${friendlyDate()}  ·  ` +
       `${auto ? '🤖 bot sends' : '👍 links to you'}, ` +
@@ -1020,8 +1047,13 @@ ${detail || ''}
     // from the sheet as it stands. Passing 0 would hand back the 2h cap and idle away the
     // rest of the window. store.getAll() is the cache the last refresh filled — a tick will
     // refresh it properly before anything is sent.
-    scheduleNext(auto ? countRemaining({ members: store.getAll(), config, pushed: state.pushed }) : 0);
+    scheduleNext(auto ? countRemaining({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() }) : 0);
   }
 
-  return { arm, start, stop, status, plan, resume, tick, test, rememberShown, markShownHandled };
+  // contactLog is read-only, and exists so `dmlist missed` can ask the same question the
+  // drip asks: who has heard nothing this cycle. commandParser owns no such record.
+  return {
+    arm, start, stop, status, plan, resume, tick, test, rememberShown, markShownHandled,
+    contactLog: loadQrLog,
+  };
 }

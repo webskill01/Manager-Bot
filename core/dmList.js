@@ -81,7 +81,10 @@ export function dmRowFor(member, config, { stage = null, referral = false } = {}
 // `force` ('msg1'|'msg2'|'msg3') overrides the wording for everyone. Date batches always
 // pass one, because escalating a 25-day-overdue member purely by age would hand them the
 // final notice as their first ever contact — which is how you collect spam reports.
-export function buildDmList({ members, config, cohort = 'due', billingDay = null, force = null, now = todayStr() }) {
+export function buildDmList({
+  members, config, cohort = 'due', billingDay = null, force = null,
+  contactLog = {}, now = todayStr(),
+}) {
   const fee = config.joining?.fee ?? 90;
   const nudge = config.overdue?.autoReminderDays ?? 5;
   const final = config.overdue?.finalReminderDays ?? 6;
@@ -103,6 +106,19 @@ export function buildDmList({ members, config, cohort = 'due', billingDay = null
       // The d > 0 guard above already dropped this month's not-yet-due 27th, so what's
       // left is every past 27th the member still owes for.
       if (parseDate(m.billingDate)?.getDate() !== billingDay) continue;
+    } else if (cohort === 'missed') {
+      // The four-day hole. 'due' is exactly day 0 and 'nudge' is exactly day 5, so a member
+      // whose due-day message never went out — the window overflowed, the socket was down,
+      // the account was restricted and the link was handed over and never tapped — was on no
+      // list and in no queue until day 5. On 24-08-2026 a whole day's batch fell in here and
+      // nothing found them again.
+      //
+      // "Never heard from us this cycle" is the whole test, and contactLog is the record:
+      // billingDate is the cycle id, so a member who WAS reached is excluded by their own
+      // entry and drops out the moment they renew. With no log passed, every member in the
+      // window qualifies — correct for a caller that has no way to know better.
+      if (overdueDays < 1 || overdueDays >= nudge) continue;
+      if (contactLog[String(m.phone)]?.cycle === m.billingDate) continue;
     } else if (cohort === 'nudge') {
       if (overdueDays !== nudge) continue;
     } else if (cohort === 'final') {
@@ -154,6 +170,13 @@ function describe({ cohort, billingDay, config }) {
     return {
       label: `billed on the ${billingDay}${suffix}`,
       empty: `✅ Nobody billed on the ${billingDay}${suffix} is due right now.`,
+    };
+  }
+  if (cohort === 'missed') {
+    const n = config?.overdue?.autoReminderDays ?? 5;
+    return {
+      label: `1-${n - 1} days overdue, never messaged this cycle`,
+      empty: '✅ Nobody was missed — everyone past their date has heard from us.',
     };
   }
   if (cohort === 'nudge') {
