@@ -7,7 +7,7 @@ import { createLookupHandlers } from './handlers/lookupHandlers.js';
 import { createReportHandlers } from './handlers/reportHandlers.js';
 import { createTrackerHandlers } from './handlers/trackerHandlers.js';
 import { isConfigured, usesCloudApi, createCloudApiSender } from './cloudApiSender.js';
-import { buildDmList, renderDmList } from './dmList.js';
+import { buildDmList, renderDmList, dmRowFor } from './dmList.js';
 import { renderSendLog } from './reminderSender.js';
 
 let activeOverdueList = [];
@@ -20,7 +20,7 @@ const SLOW_COMMANDS = new Set([
   'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
   'kick', 'rejoin', 'sendlinks', 'links', 'refreshlinks', 'groupcheck', 'remind', 'renewed', 'advance',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
-  'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip', 'ledger', 'checknum',
+  'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip', 'ledger', 'checknum', 'checksend',
 ]);
 
 // A Sheets 403 is a Google-side problem, not a bot problem, but its raw message ("The
@@ -68,7 +68,7 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null, deliveryTracker = null) {
   const memberH = createMemberHandlers(store, groupManager, config, log);
   const renewalH = createRenewalHandlers(store, config, log);
   const lookupH = createLookupHandlers(store, config, log);
@@ -82,7 +82,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
   // Renewal-era commands a tracker bot must never run — its operators don't collect
   // renewals at all, so silently doing nothing would be worse than saying so.
   const RENEWAL_ONLY = new Set([
-    'renewed', 'advance', 'remind', 'dmlist', 'dmlist2', 'dmlist3', 'sent', 'due', 'overdue', 'refs', 'ref',
+    'renewed', 'advance', 'remind', 'dm', 'dmlist', 'dmlist2', 'dmlist3', 'sent', 'due', 'overdue', 'refs', 'ref',
     'warnall', 'kickall', 'removal', 'forecast', 'collection',
     'norenew', 'toprefs', 'loyal', 'churn', 'upcoming', 'drip',
   ]);
@@ -103,6 +103,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     ['kickghosts',  'Bulk group removal needs a WhatsApp connection. Remove them by hand.'],
     ['diag',        'Diagnostic for the WhatsApp socket — nothing to probe on Telegram.'],
     ['checknum',    'Asks WhatsApp whether a number exists — needs a WhatsApp connection.'],
+    ['checksend',   'Sends a real message to test delivery — needs a WhatsApp connection.'],
     ['remind',      'This DMs the member a UPI QR over WhatsApp. Send it yourself, or use: dmlist'],
     // These three are engine-backed, and core/telegram.js constructs no engines — there is
     // no socket for them to drive. They were previously unreachable by accident: RENEWAL_ONLY
@@ -767,6 +768,78 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
             await sleep(400);   // usync is a server round trip; do not machine-gun it
           }
           return `🔎 NUMBER CHECK\n━━━━━━━━━━━━━━━━━\n${lines.join('\n\n')}`;
+        }
+
+        // `dm [phone] [msg1|msg2|msg3]` — one tap-to-send link for ONE member.
+        //
+        // The workaround that always works. When the bot's own sends are being dropped,
+        // sending more of them is not a plan; this hands the message to the operator's thumb,
+        // which is the one delivery path WhatsApp has never filtered. Also the only way to
+        // reach someone who has fallen past day 7 and so appears on no dmlist at all.
+        case 'dm': {
+          const merged = mergePhoneFromStart(args);
+          const phone = normPhone(merged[0] || '');
+          if (phone.length !== 10) {
+            return '❌ Format: dm [phone] [msg1|msg2|msg3]\nExample: dm 7015225875';
+          }
+          const member = store.findByPhone(phone);
+          if (!member) return `❌ No member found for ${merged[0]}. Try: find [name]`;
+          const forced = (merged[1] || '').toLowerCase();
+          const stage = /^msg[123]$/.test(forced) ? forced : null;
+          const refs = getReferralsInBillingPeriod(member.phone, member.billingDate, store.getAll()).length;
+          const row = dmRowFor(member, config, { stage, referral: refs === 1 });
+          const age = row.overdueDays === 0 ? 'due today' : `${row.overdueDays}d overdue`;
+          return `📤 ${row.name} · ₹${row.fee} · ${age} · ${row.stage}\n` +
+            `Tap → the message is pre-typed → hit send.\n` +
+            `Attach the QR yourself if they still need it.\n\n${row.link}`;
+        }
+
+        // `checksend [phone]` — send one real message and report whether it ARRIVED.
+        //
+        // Exists because "the bot says it sent and they got nothing" was unanswerable: the
+        // evening report now counts undelivered messages, but waiting until 9 PM to learn
+        // whether the number works at all is no way to debug it. Text only, deliberately — if
+        // this lands and the reminder with the QR did not, the problem is media, and that is a
+        // different fix from the number being filtered outright.
+        case 'checksend': {
+          if (!deliveryTracker) return '❌ Delivery tracking is not wired on this bot.';
+          const phone = normPhone(mergePhoneFromStart(args)[0] || '');
+          if (phone.length !== 10) return '❌ Format: checksend [phone]';
+          const live = getSock?.() || sock;
+          if (!live?.user) return '❌ Bot not connected.';
+
+          let jid = `91${phone}@s.whatsapp.net`;
+          try {
+            const found = await resolveWhatsAppJid(live, phone);
+            if (!found.exists) return `📵 ${phone} is not on WhatsApp — nothing can be delivered.`;
+            jid = found.jid;
+          } catch { /* fall open, same as every other send path */ }
+
+          const who = store.findByPhone(phone);
+          const receipt = await live.sendMessage(jid, {
+            text: (config.messages?.reminder && pickVariant(config.messages.reminder, phone) || 'Renewal reminder')
+              .replace(/\{name\}/g, who?.name || 'there')
+              .replace(/\{date\}/g, friendlyDate(who?.billingDate)),
+          });
+          const id = receipt?.key?.id;
+          if (!id) return '⚠️ WhatsApp returned no message id — the send did not even start.';
+
+          // 45s: a delivery receipt for an online recipient comes back in a second or two.
+          // Long enough to be conclusive, short enough that the operator waits for it.
+          await sleep(45000);
+          const v = deliveryTracker.verdict(id);
+          if (v.ok) {
+            return `✅ DELIVERED to ${who?.name || phone}.\n\n` +
+              `A plain text message gets through. If reminders with the QR do not, the ` +
+              `problem is the image, not the number — try \`drip\` with media off.`;
+          }
+          return `${v.hard ? '❌' : '⚠️'} NOT delivered to ${who?.name || phone} after 45s.\n` +
+            `${v.why}\n\n` +
+            (v.hard
+              ? 'The message never left the bot. That is a socket or session fault, not filtering.'
+              : 'WhatsApp accepted it and no device confirmed it. Either their phone is off, ' +
+                'or this number is being filtered. Try a member you know is online to tell ' +
+                'the two apart.');
         }
 
         case 'dmlist':   return handleDmList(args, 'due');

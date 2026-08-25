@@ -398,7 +398,7 @@ export async function startBot(config, log, authDir) {
       sock.ev.on('groups.update', (updates) => { for (const u of updates || []) groupMetaCache.delete(u?.id); });
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine, ledger);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine, ledger, deliveryTracker);
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {

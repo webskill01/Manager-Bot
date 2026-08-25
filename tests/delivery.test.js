@@ -213,3 +213,37 @@ test('with no tracker the engine assumes delivery, as it always did', async () =
   assert.deepEqual(notices.filter(n => n.includes('Not delivered')), []);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ── dmRowFor: reaching one member outside every cohort ────────────────────────
+
+import { dmRowFor } from '../core/dmList.js';
+
+const msgCfg = {
+  joining: { fee: 90 }, renewal: { fullAmount: 90, referralAmount: 45 },
+  overdue: { autoReminderDays: 5, finalReminderDays: 6, consolidatedListDays: 7 },
+  messages: { reminder: 'Hi {name}, due {date}', overdue: 'late {name}', finalReminder: 'final {name}' },
+};
+
+// The case this exists for: a day-6 member missed yesterday is day 7 today, past the ladder
+// and absent from every dmlist — with no way to reach them but retyping the message by hand.
+test('a member past the ladder still gets a link', () => {
+  const row = dmRowFor(member('Raju', '7015225875', 9), msgCfg);
+  assert.equal(row.stage, 'msg3');
+  assert.equal(row.overdueDays, 9);
+  assert.ok(row.link.startsWith('https://wa.me/917015225875?text='));
+  assert.ok(decodeURIComponent(row.link).includes('Raju'), 'the name never reached the text');
+});
+
+test('the stage can be forced', () => {
+  assert.equal(dmRowFor(member('A', '9000000001', 9), msgCfg, { stage: 'msg1' }).stage, 'msg1');
+});
+
+test('a referral halves the fee, like the list does', () => {
+  assert.equal(dmRowFor(member('A', '9000000001', 0), msgCfg, { referral: true }).fee, 45);
+});
+
+test('{name} and {date} are both substituted, never left raw', () => {
+  const row = dmRowFor(member('Bob', '9000000001', 0), msgCfg);
+  assert.doesNotMatch(row.text, /\{name\}|\{date\}/, 'a placeholder would be sent literally');
+  assert.match(row.text, /Bob/);
+});

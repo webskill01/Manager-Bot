@@ -74,7 +74,9 @@ function fullBodies(config) {
 • renewed [phone] [day]  /  [day] 45
 • advance [phone] [months]  →  billing +N months, ₹${fee}×N banked today
 • remind [phone]  →  send reminder + QR manually
+• dm [phone]  →  ONE tap-to-send link, for anyone, any day
 • checknum [phone] …  →  does WhatsApp actually know this number?
+• checksend [phone]  →  send a test and report if it ARRIVED
 • due / due tomorrow
 • upcoming [days]  →  who's due in next N days (default 7)
 • overdue / pending`,

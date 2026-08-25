@@ -28,6 +28,35 @@ function templateFor(stage, config, { referral, phone, seq }) {
   return (referral && m.referralReminder) ? pick(m.referralReminder) : (pick(m.reminder) || 'Your renewal is due today.');
 }
 
+// One member's reminder, outside any cohort.
+//
+// buildDmList slices by who is due; this answers "that specific person, right now" — which is
+// what you need when the bot reported a send it did not make, and the member has since fallen
+// off every cohort. A day-6 member missed yesterday is day 7 today: past the ladder, absent
+// from dmlist3, and otherwise unreachable without retyping the message by hand.
+//
+// Same templates, same {name}/{date} substitution and the same global replace as the list, so
+// a hand-sent reminder is word-for-word the one the drip would have sent.
+export function dmRowFor(member, config, { stage = null, referral = false } = {}) {
+  const fee = config.joining?.fee ?? 90;
+  const d = daysFromToday(member.billingDate);
+  const overdueDays = d === null ? 0 : Math.max(0, -d);
+  const chosen = stage || pickStage(overdueDays, config);
+  const text = templateFor(chosen, config, { referral, phone: member.phone })
+    .replace(/\{name\}/g, member.name)
+    .replace(/\{date\}/g, friendlyDate(member.billingDate));
+  return {
+    name: member.name,
+    phone: member.phone,
+    billingDate: member.billingDate,
+    overdueDays,
+    stage: chosen,
+    fee: referral ? Math.round(fee / 2) : fee,
+    text,
+    link: `https://wa.me/91${member.phone}?text=${encodeURIComponent(text)}`,
+  };
+}
+
 // Two ways to pick who lands on the list. Both are backwards-only — messaging someone
 // before their month is up reads as wrong and invites a report.
 //
