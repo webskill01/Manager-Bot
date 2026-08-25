@@ -60,9 +60,21 @@ export function createScheduler(config, log) {
     register(schedule.morningDigest,  'morning-digest',  tasks.morningDigest);
     register(schedule.eveningSummary, 'evening-summary', tasks.eveningSummary);
     register(schedule.dripArm || '0 9 * * *', 'drip-arm', tasks.dripArm);
-    // The daily ledger, written twice on purpose. 10 PM captures the day while it is still
-    // the day; the morning pass corrects it (anything logged after 10) and backfills any date
-    // the bot was down for. Defaults inline so adding a ledger needs no schedule edit.
+    // The daily ledger, written twice on purpose. The evening pass captures the day while it
+    // is still the day; the morning pass corrects it (anything logged after) and backfills any
+    // date the bot was down for. Defaults inline so adding a ledger needs no schedule edit.
+    //
+    // 9 PM, not 10, and this is the same bug as the 5 AM one below rather than a second kind.
+    // ledgerWrite used to default to 10 PM — the exact slot eveningSummary sits in on all four
+    // bots — and with ≤20m of INDEPENDENT jitter on each, the summary won the race about half
+    // the time and reported ₹0 for a day it was about to be told about. Running the same
+    // summary by hand ten minutes later showed the real figure, which is what makes this look
+    // like a flaky read rather than an ordering fault.
+    //
+    // An hour of clearance is what it takes: the friend bots reconcile on their own VPS, so
+    // bot-nitin's "ALL BOTS" line needs THEIR rows written too, and no amount of ordering
+    // inside one process can give that. Latest possible write 21:20, earliest possible
+    // summary 22:00. Keep any digest at least jitter+jitter after this one.
     //
     // 5 AM, not 6: the reconcile used to share 6:00 with morning-digest, and with ≤20m of
     // independent jitter on each the digest won the race about half the time and printed
@@ -70,7 +82,7 @@ export function createScheduler(config, log) {
     // their own VPS, so bot-nitin's "ALL BOTS" line needs THEIR rows written too — a gate no
     // amount of ordering inside one process can give. An hour of clearance covers all four.
     // Keep any digest at least jitter+jitter after this one.
-    register(schedule.ledgerWrite || '0 22 * * *', 'ledger-write', tasks.ledgerWrite);
+    register(schedule.ledgerWrite || '0 21 * * *', 'ledger-write', tasks.ledgerWrite);
     register(schedule.ledgerReconcile || '0 5 * * *', 'ledger-reconcile', tasks.ledgerReconcile);
     log.info(`⏰ Scheduler started — ${jobs.length} jobs active`);
   }

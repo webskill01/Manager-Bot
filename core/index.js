@@ -552,7 +552,16 @@ export async function startBot(config, log, authDir) {
               // and so registers none of these jobs at all. That absence IS the safety gate.
               ...(config.usesTelegram ? {
                 morningDigest:  async () => { await notifyTelegram(await commandParser.runReport('digest')); },
-                eveningSummary: async () => { await notifyTelegram(await commandParser.runReport('summary')); },
+                eveningSummary: async () => {
+                  // Own row first, THEN read. The 9 PM ledger job already ran an hour ago, so
+                  // this is belt-and-braces against the one case the hour of clearance cannot
+                  // cover: this bot restarting between 21:00 and 22:00 and missing its own
+                  // write. Cheap (a diff that usually writes nothing) and it cannot make the
+                  // report worse. Never let a Sheets hiccup here cost the whole summary.
+                  try { await ledger.writeToday(); }
+                  catch (err) { log.warn(`⚠️  Pre-summary ledger write failed: ${err.message}`); }
+                  await notifyTelegram(await commandParser.runReport('summary'));
+                },
                 // Not gated on warm-up: warm-up keeps a freshly linked WhatsApp number
                 // quiet, and the drip never transmits on it.
                 dripArm: () => dripEngine.arm(),

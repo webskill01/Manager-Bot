@@ -187,7 +187,16 @@ export async function startBot(config, log) {
   } else {
     scheduler.start({
       morningDigest:  async () => { await notifyTelegram(await commandParser.runReport('digest')); },
-      eveningSummary: async () => { await notifyTelegram(await commandParser.runReport('summary')); },
+      eveningSummary: async () => {
+        // Own row first, THEN read. The 9 PM ledger job already ran an hour ago, so
+        // this is belt-and-braces against the one case the hour of clearance cannot
+        // cover: this bot restarting between 21:00 and 22:00 and missing its own
+        // write. Cheap (a diff that usually writes nothing) and it cannot make the
+        // report worse. Never let a Sheets hiccup here cost the whole summary.
+        try { await ledger.writeToday(); }
+        catch (err) { log.warn(`⚠️  Pre-summary ledger write failed: ${err.message}`); }
+        await notifyTelegram(await commandParser.runReport('summary'));
+      },
       dripArm: () => dripEngine.arm(),
       // Sheet writes only — nothing is sent to any member, so these are safe on every
       // transport and need none of the WhatsApp gating the reports above carry.
