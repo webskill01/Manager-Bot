@@ -854,3 +854,62 @@ test('one cohort reads as a bare number, several name themselves', () => {
   // Empty cohorts are dropped rather than printed as zeroes.
   assert.equal(describeQueue({ due: 2, nudge: 0, final: 0, missed: 7 }), '9 (2 due, 7 missed)');
 });
+
+// ── A pushed link counts as contact, so 'missed' does not re-push it tomorrow ──
+//
+// Manual mode has no other delivery path: if the push does not record the cycle, the member
+// stays in 'missed' for days 1-4 and the operator gets the same name back every morning.
+test('a manual push records the cycle, so "missed" stops re-queueing that member', async () => {
+  const calls = [];
+  // 1 day overdue: past their date, before the day-5 nudge — squarely the 'missed' cohort.
+  const m = member('A', '9000000001', 1);
+  const store = { refresh: async () => {}, getAll: () => [m] };
+  const engine = createDripEngine(engineCfg(), quietLog, store,
+    { autoRenewDue: async () => [] }, async (t) => { calls.push(t); });
+
+  assert.equal(countRemaining({ members: [m], config: cfg, pushed: [], contactLog: {} }), 1,
+    'they start out queued as missed');
+
+  await engine.tick();
+  assert.equal(calls.length, 1, 'the link went out');
+
+  const logged = engine.contactLog()[String(m.phone)];
+  assert.equal(logged?.cycle, m.billingDate, 'the billing cycle is on record');
+  assert.equal(logged?.qr, undefined, 'no QR is claimed — the operator attaches that by hand');
+
+  // Tomorrow: `pushed` has reset, so the cycle record is the only thing standing between
+  // this member and a second identical link.
+  assert.equal(
+    countRemaining({ members: [m], config: cfg, pushed: [], contactLog: engine.contactLog() }),
+    0, 'a member contacted this cycle is not re-queued as missed');
+});
+
+// ── Before the window is not after it ─────────────────────────────────────────
+//
+// The trap that nearly cost bot-nitin a whole day: arm cron at 6, window moved to 9.
+test('a tick before the window opens waits, it does not end the day', async () => {
+  const calls = [];
+  const store = { refresh: async () => {}, getAll: () => [member('A', '9000000001', 0)] };
+  // Window opens one hour from now — so "now" is always before it, whatever time the
+  // suite runs at. At 23:xx that is hour 24, which no clock reaches: still "before".
+  const openAt = new Date().getHours() + 1;
+  const engine = createDripEngine({ ...cfg, botDir: tempBotDir(), drip: { startHour: openAt, endHour: 24 } },
+    quietLog, store, { autoRenewDue: async () => [] }, async (t) => { calls.push(t); });
+
+  await engine.tick();
+  assert.equal(calls.length, 0, 'nothing is pushed before the window opens');
+  assert.ok(!engine.status().includes('finished'), `the day is not over: ${engine.status()}`);
+  assert.equal(engine.contactLog()['9000000001'], undefined, 'and nobody was marked contacted');
+});
+
+test('a tick after the window closes still ends the day', async () => {
+  const calls = [];
+  const store = { refresh: async () => {}, getAll: () => [member('A', '9000000001', 0)] };
+  // Closes on the hour the suite is running in, so "now" is always past it.
+  const engine = createDripEngine(
+    { ...cfg, botDir: tempBotDir(), drip: { startHour: 0, endHour: new Date().getHours() } },
+    quietLog, store, { autoRenewDue: async () => [] }, async (t) => { calls.push(t); });
+
+  await engine.tick();
+  assert.ok(engine.status().includes('finished'), `a closed window finishes: ${engine.status()}`);
+});

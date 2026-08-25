@@ -674,7 +674,28 @@ ${detail || ''}
     const state = loadState();
     if (state.stopped || state.done) return;
 
-    if (!withinWindow(new Date(), settings)) return finish(state);
+    // A window that has not OPENED yet is not a day that is over. finish() here files the
+    // evening report at dawn and sets done:true, and both resume() and the next tick refuse
+    // to touch a finished day — so the whole queue silently rolls to tomorrow.
+    //
+    // Two ordinary things reach this: the operator typing `drip start` before the window, and
+    // an arm cron sitting earlier than startHour. bot-nitin had exactly that pairing the
+    // moment its window moved from 6:00 to 9:00 while dripArm stayed at 6 — one edit away
+    // from a day where nothing went out and `drip` reported "✅ finished" from 6 AM.
+    //
+    // Wait for the opening instead. Only a window that has CLOSED ends the day.
+    const now = new Date();
+    if (now.getHours() < settings.startHour) {
+      const open = new Date(now);
+      open.setHours(settings.startHour, 0, 0, 0);
+      log.info(`💧 Window opens at ${settings.startHour}:00 — holding for ` +
+               `${Math.round((open - now) / 60000)}m`);
+      clearTimer();
+      _timer = setTimeout(() => { tick().catch(err => log.error(`❌ Drip tick: ${err.message}`)); }, open - now);
+      if (_timer.unref) _timer.unref();
+      return;
+    }
+    if (!withinWindow(now, settings)) return finish(state);
 
     // Auto mode transmits over WhatsApp, so unlike manual mode it is subject to warm-up: a
     // freshly linked number whose first act is a paced reminder run is exactly the profile
@@ -792,6 +813,24 @@ ${detail || ''}
 
     state.pushed = after;
     saveState(state);
+    // The cycle record, same as autoSend writes after a send. In manual mode the LINK is the
+    // delivery mechanism — there is no other one — so a pushed link has to count as contact
+    // for exactly the question 'missed' asks: has anyone reached this member this cycle.
+    //
+    // Without this every manual bot re-pushes days 1, 2, 3 and 4 on top of the day-0 push,
+    // because `pushed` resets at midnight and nothing else records anything: seven links per
+    // member per cycle instead of three, the same name back in the operator's queue every
+    // morning, and a 'missed' backlog that grows by the whole due-day every day (76 → 94 →
+    // 109 → 125 on bot-nitin's sheet). The four-day hole this cohort was built to close is a
+    // hole for members the drip NEVER GOT TO, not for the ones it handed you yesterday.
+    //
+    // `false` for the QR: manual mode cannot know whether the operator attached the image, so
+    // it records the contact and leaves them still owed one. Erring that way costs an image.
+    //
+    // handToOperator still does NOT record, and that asymmetry is deliberate — see its note.
+    // A link the AUTO sender pushed at you after a failure is an exception you may never have
+    // tapped; a link the manual drip pushed is the whole design working as intended.
+    for (const r of batch) noteSent(r, false);
     log.info(`💧 Pushed ${batch.length} link(s) — ${state.pushed.length} sent today`);
     scheduleNext();
   }
