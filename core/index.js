@@ -37,6 +37,7 @@ import { createCommandParser, isSlowCommand } from './commandParser.js';
 import { createScheduler } from './scheduler.js';
 import { createReminderSender, renderSendLog } from './reminderSender.js';
 import { createOverdueEngine } from './overdueEngine.js';
+import { createDeliveryTracker } from './deliveryTracker.js';
 import { createDripEngine } from './dripEngine.js';
 import { createLedger } from './ledger.js';
 import { createTrialRemovalEngine } from './trialRemovalEngine.js';
@@ -106,6 +107,9 @@ export async function startBot(config, log, authDir) {
   // query per group send). Explicit groupMetadata() calls always fetch live and repopulate
   // it; membership events and reconnects invalidate. ponytail: plain Map, no TTL needed.
   const groupMetaCache = new Map();
+  // Watches message acks so the drip can tell a delivered reminder from one WhatsApp
+  // merely accepted. Re-attached per socket below — listeners do not survive a reconnect.
+  const deliveryTracker = createDeliveryTracker(log);
   const scheduler = createScheduler(config, log);
   const reminderSender = createReminderSender(config, log);
   // notifyTelegram is a hoisted function declaration, so passing it here — above its
@@ -134,7 +138,7 @@ export async function startBot(config, log, authDir) {
     dripEngine = createDripEngine(
       config, log, store, reminderSender,
       (text) => notifyTelegram(text, config.dripIds),
-      { getSock, warmingUp },
+      { getSock, warmingUp, tracker: deliveryTracker },
     );
   }
 
@@ -388,6 +392,8 @@ export async function startBot(config, log, authDir) {
         if (String(jid).endsWith('@g.us') && meta) groupMetaCache.set(jid, meta);
         return meta;
       };
+      // Before any other listener: a receipt that arrives during connect must not be missed.
+      deliveryTracker.attach(sock);
       sock.ev.on('group-participants.update', (u) => groupMetaCache.delete(u?.id));
       sock.ev.on('groups.update', (updates) => { for (const u of updates || []) groupMetaCache.delete(u?.id); });
 

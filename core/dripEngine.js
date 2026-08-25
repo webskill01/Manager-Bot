@@ -199,7 +199,12 @@ export function withinWindow(when, settings) {
 // `sender` is the auto-mode capability: { getSock, warmingUp }. Passed ONLY by core/index.js,
 // which is the only caller that has a socket. Omit it — as core/telegram.js does — and the
 // engine physically cannot send over WhatsApp, whatever the config says.
+// "Assume it arrived" — the behaviour before delivery was ever checked. Used when index.js
+// wires no tracker, so core/telegram.js and every existing test are unaffected by this.
+const NO_TRACKER = { verdict: () => ({ ok: true, status: null }) };
+
 export function createDripEngine(config, log, store, reminderSender, notify, sender = null) {
+  const tracker = sender?.tracker || NO_TRACKER;
   const stateFile = path.join(config.botDir, 'drip-state.json');
   // phone → the billingDate of the cycle we last sent that member a QR in. Survives restarts
   // and, unlike drip-state, is NOT reset daily: a cycle spans a week of messages.
@@ -215,6 +220,11 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   // trouble takes before it is announced: a number that has been restricted still accepts
   // sendMessage and simply fails to deliver, and a loop that keeps trying for eleven hours
   // turns a warning into an escalation. Five in a row ends the day and says so.
+  // The previous auto-send, held until the next tick can ask whether it landed. In memory on
+  // purpose: a restart loses at most one pending check, and persisting it would mean a file
+  // write per send to buy back one line of an evening report.
+  let lastSend = null;
+
   let failStreak = 0;
   const FAIL_LIMIT = config.drip?.failLimit ?? 5;
   if (settings.mode === 'auto' && !auto) {
@@ -321,7 +331,7 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     } catch (err) {
       log.warn(`⚠️  Presence failed for ${jid}: ${err.message}`);
     }
-    await sock.sendMessage(jid, content);
+    return sock.sendMessage(jid, content);
   }
 
   // One reminder, sent by the bot. Returns false rather than throwing when the socket is not
@@ -365,13 +375,23 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
       ? { image: fs.readFileSync(qrPath), caption: row.text }
       : { text: row.text };
 
-    await sendLikeHuman(sock, jid, content, row.text);
+    const receipt = await sendLikeHuman(sock, jid, content, row.text);
     // Recorded only AFTER the send lands. A QR marked sent on a message that threw would
     // leave that member without one for the whole cycle.
     noteSent(row, withQr);
     // The QR tag says WHY, not just whether. "+QR" on nine sends in a row looks identical to
     // a broken gate from the log alone, which is exactly how this got reported as a bug.
     const tag = withQr ? (row.stage === 'msg1' ? ' +QR (msg1)' : ' +QR (first contact this cycle)') : '';
+
+    // Held so the NEXT tick can ask whether this one actually arrived. sendMessage resolving
+    // only means the server took the node off our hands — see deliveryTracker. Checking on
+    // the next tick rather than on a timer gives a free 15-45 minute grace period, which is
+    // what stops a recipient with their phone off being reported as a failure.
+    lastSend = receipt?.key?.id
+      ? { id: receipt.key.id, name: row.name, phone: row.phone, at: Date.now() }
+      : null;
+    if (!lastSend) log.warn(`⚠️  No message id back for ${row.phone} — delivery cannot be confirmed`);
+
     log.info(`💧 Auto-sent ${STAGE_LABEL[row.stage]} → ${row.name} (${row.phone})${tag}`);
     return true;
   }
@@ -503,6 +523,30 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
       return retrySoon();
     }
 
+    // Did the PREVIOUS one land? Asked here rather than on a timer because the gap to this
+    // tick is 15-45 minutes, which is a generous grace period for free. A hard failure means
+    // the message never left and is worth a buzz; a soft one is indistinguishable from the
+    // recipient having their phone off, so it only goes in tonight's count. See
+    // deliveryTracker for why those two must not be reported the same way.
+    if (auto && lastSend) {
+      const prev = lastSend;
+      lastSend = null;
+      const { ok, hard, why } = tracker.verdict(prev.id);
+      if (!ok) {
+        log.warn(`⚠️  ${prev.name} (${prev.phone}) — ${why}`);
+        state.undelivered = [...(state.undelivered || []), `${prev.name} ${prev.phone} — ${why}`];
+        saveState(state);
+        if (hard) {
+          await notify(
+            `⚠️ *Not delivered* — ${prev.name} (${prev.phone})
+${why}
+
+` +
+            `Re-send with \`remind ${prev.phone}\`.`);
+        }
+      }
+    }
+
     await store.refresh();
     const members = store.getAll();
     const batch = buildDripBatch({ members, config, pushed: state.pushed, max: auto ? 1 : 3 });
@@ -614,6 +658,9 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     // someone who left the groups gets kicked from the sheet, someone whose number is dead
     // needs the number corrected or the member removed. Both used to be invisible.
     const dead = state.unreachable || [];
+    // Sent, believed delivered, and never confirmed. The only failure mode the bot used to
+    // report as a success.
+    const lost = state.undelivered || [];
     await notify(
       `💧 *${auto ? 'Auto-send finished' : 'Drip finished'}* — ${friendlyDate()}\n` +
       `${state.pushed.length - gone.length - dead.length} ${auto ? 'sent by the bot' : 'pushed'}` +
@@ -627,6 +674,14 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
       (dead.length > 0
         ? `\n\n📵 *Not on WhatsApp — nothing could be sent* (${dead.length}):\n${dead.join('\n')}\n` +
           `Check the number in the sheet, or \`skip\` them.`
+        : '') +
+      // The line that would have caught this on day one. Everything above is a message the
+      // bot knowingly did not send; this is one it believed it had.
+      (lost.length > 0
+        ? `\n\n⚠️ *Sent but NOT confirmed delivered* (${lost.length} of ${state.pushed.length}):\n` +
+          `${lost.join('\n')}\n` +
+          `Re-send with \`remind [phone]\`. If this list is most of the day, the number is ` +
+          `being filtered rather than these members being offline.`
         : ''),
     );
     log.info(`💧 ${auto ? 'Auto-send' : 'Drip'} finished — ${state.pushed.length} sent, ${left} unreached`);
