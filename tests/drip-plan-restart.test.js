@@ -356,3 +356,25 @@ test('a failing member is handed over once, not once per retry', async () => {
   assert.ok(handoffs[0].includes('server said no'), 'the real error must reach the operator');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ── "can it send right now?" ───────────────────────────────────────────────────
+// On 25-08-2026 the bot was disconnected for most of the day and `drip` reported
+// "running" the whole time. The state file cannot know: linkOnly is only set once a send has
+// already been rejected. Status asks the socket instead.
+test('status says so when the socket is down, and not when it is up', () => {
+  const dir = tmp('drip-live-');
+  const build = (sock, warm) => createDripEngine(
+    makeConfig({ botDir: dir, drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } }),
+    quietLog, { refresh: async () => {}, getAll: () => [] },
+    { autoRenewDue: async () => [] }, async () => {},
+    { getSock: () => sock, warmingUp: () => warm },
+  );
+
+  assert.match(build(null, false).status(), /DISCONNECTED/);
+  assert.match(build({}, false).status(), /DISCONNECTED/);          // socket object, never linked
+  assert.match(build({ user: { id: 'b' } }, true).status(), /Warm-up/);
+  const ok = build({ user: { id: 'b' } }, false).status();
+  assert.doesNotMatch(ok, /DISCONNECTED|Warm-up/);
+  assert.match(ok, /auto-send/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

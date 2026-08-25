@@ -873,14 +873,26 @@ ${detail || ''}
 
   function status() {
     const state = loadState();
+
+    // Can it send RIGHT NOW? linkOnly only appears AFTER a send has already been rejected,
+    // and a dead socket or a warm-up hold looks exactly like a quiet day from the outside —
+    // on 25-08-2026 the bot was down most of the day and `drip` said "running" throughout.
+    // Ask the socket directly, so this answers the question without messaging a member.
+    const down = !auto ? ''
+      : !sender.getSock?.()?.user
+        ? '⚠️ WhatsApp is DISCONNECTED — nothing can be auto-sent until it reconnects.\n' +
+          '   `dmlist` still works — send them yourself.\n\n'
+        : sender.warmingUp?.()
+          ? '🐣 Warm-up — auto-send is HELD until the number has aged. Nothing is going out.\n\n'
+          : '';
     const s = state.stopped ? '🛑 stopped' : state.done ? '✅ finished' : '💧 running';
     if (state.linkOnly) {
-      return `${s} · 📤 LINK-ONLY — ${state.linkOnlyReason}\n` +
+      return `${down}${s} · 📤 LINK-ONLY — ${state.linkOnlyReason}\n` +
         `${(state.handed || []).length} handed to you today, ${state.pushed.length} done in total.\n` +
         `The bot is still pacing the queue; it sends you a link instead of messaging them.`;
     }
     const what = auto ? 'sent by the bot' : 'pushed';
-    return `${s} · ${auto ? '🤖 auto-send' : '👍 manual links'} — ${state.pushed.length} ${what} today ` +
+    return `${down}${s} · ${auto ? '🤖 auto-send' : '👍 manual links'} — ${state.pushed.length} ${what} today ` +
       `(window ${settings.startHour}:00–${settings.endHour}:00, ` +
       `${auto ? `≥${Math.round(settings.gapMinMs / 60000)}m apart, gap adapts to the queue` :
                 `${Math.round(settings.gapMinMs / 60000)}-${Math.round(settings.gapMaxMs / 60000)}m apart`})`;
