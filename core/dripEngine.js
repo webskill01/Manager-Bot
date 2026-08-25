@@ -517,6 +517,13 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
         state.pushed = [...state.pushed, String(batch[0].phone)];
         state.left = [...(state.left || []), `${batch[0].name} ${batch[0].phone}`];
         saveState(state);
+        // Said now, not only in tonight's summary. These are the two things the operator can
+        // actually act on the same day — kick them from the sheet, or fix a wrong number —
+        // and a line buried in pm2 logs is a line nobody reads. The end-of-day report keeps
+        // listing them too, so a missed push is not a lost record.
+        await notify(
+          `👋 *${batch[0].name}* (${batch[0].phone}) is not in any group any more — not messaged.\n` +
+          `\`kick ${batch[0].phone}\` so they stop coming round.`);
         return tick();
       }
 
@@ -538,10 +545,26 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
         state.pushed = [...state.pushed, String(batch[0].phone)];
         state.unreachable = [...(state.unreachable || []), `${batch[0].name} ${batch[0].phone}`];
         saveState(state);
+        await notify(
+          `📵 *${batch[0].name}* (${batch[0].phone}) is not on WhatsApp — nothing could be sent.\n` +
+          `Check the number in the sheet, or \`skip ${batch[0].phone}\`.`);
         return tick();
       }
 
       if (!ok) {
+        // First failure for this member today gets a push; the retries do not. retrySoon()
+        // comes back to the SAME member every five minutes, so notifying every attempt would
+        // turn one dead socket into twelve buzzes an hour — and an operator who mutes the bot
+        // is worse off than one who was never told. The 5-in-a-row stop below still fires.
+        const seen = new Set(state.failNotified || []);
+        if (!seen.has(String(batch[0].phone))) {
+          state.failNotified = [...seen, String(batch[0].phone)];
+          saveState(state);
+          await notify(
+            `⚠️ *Send failed* — ${batch[0].name} (${batch[0].phone})\n` +
+            `${why}\n\nRetrying shortly. They are still owed this message.`);
+        }
+
         if (++failStreak >= FAIL_LIMIT) {
           state.stopped = true;
           saveState(state);

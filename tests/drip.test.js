@@ -539,9 +539,11 @@ test('five failures in a row stop the day and say why', async () => {
   );
   for (let i = 0; i < 5; i++) await engine.tick();
 
-  assert.equal(notices.length, 1, 'the operator was not told');
-  assert.match(notices[0], /Auto-send stopped/);
-  assert.match(notices[0], /forbidden/, 'the actual error must reach the operator');
+  // Filtered, because each member's FIRST failure also pushes a notice now. This test is
+  // about the breaker: exactly one shutdown, however many individual failures preceded it.
+  const stops = notices.filter(n => /Auto-send stopped/.test(n));
+  assert.equal(stops.length, 1, 'the operator was not told, or was told twice');
+  assert.match(stops[0], /forbidden/, 'the actual error must reach the operator');
   assert.ok(engine.status().includes('stopped'));
 
   // And it stays stopped: a sixth tick must not quietly resume.
@@ -567,7 +569,11 @@ test('a success clears the streak — an intermittent failure is not a shutdown'
     { getSock: () => sock, warmingUp: () => false },
   );
   for (let i = 0; i < 10; i++) await engine.tick();
-  assert.deepEqual(notices, [], 'alternating failures tripped the breaker');
+  assert.deepEqual(notices.filter(n => /Auto-send stopped/.test(n)), [],
+    'alternating failures tripped the breaker');
+  // Each member's first failure is still reported — one per member, never one per retry.
+  const failNotices = notices.filter(n => /Send failed/.test(n));
+  assert.equal(new Set(failNotices).size, failNotices.length, 'a member was reported twice');
 });
 
 // The hole this closes: 'due' is EXACTLY day 0, so a member missed on their due date never

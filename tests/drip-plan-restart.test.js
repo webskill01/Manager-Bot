@@ -292,3 +292,67 @@ test('an unreachable member is passed over and the queue keeps moving', async ()
   assert.ok(sent[0].msg.text.includes('Real'), 'the queue stalled on the dead number');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ── telling the operator, not the log file ────────────────────────────────────
+
+test('a member who left the groups is pushed to Telegram when it happens', async () => {
+  const dir = tmp('notify-');
+  const notices = [];
+  const { sock } = addressableSock({ '919000000001': '919000000001@s.whatsapp.net' });
+  // A roster that resolves plenty of phones but not this member's.
+  sock.groupFetchAllParticipating = async () => ({
+    g1: { id: 'g1@g.us', participants: [{ phoneNumber: '919999999999@s.whatsapp.net' }] },
+  });
+  const engine = createDripEngine(
+    makeConfig({ botDir: dir, paidGroups: ['g1@g.us'],
+      drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } }),
+    quietLog, { refresh: async () => {}, getAll: () => [member('Vivek', '9000000001', 0)] },
+    { autoRenewDue: async () => [] }, async (t) => { notices.push(t); },
+    { getSock: () => sock, warmingUp: () => false },
+  );
+  await engine.tick();
+
+  assert.ok(notices.some(n => n.includes('Vivek') && n.includes('not in any group')),
+    'the operator only found out from the log');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a dead number is pushed to Telegram, not just written to the log', async () => {
+  const dir = tmp('notify-');
+  const notices = [];
+  const { sock } = addressableSock({});
+  const engine = createDripEngine(
+    makeConfig({ botDir: dir, drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } }),
+    quietLog, { refresh: async () => {}, getAll: () => [member('Ghost', '9000000001', 0)] },
+    { autoRenewDue: async () => [] }, async (t) => { notices.push(t); },
+    { getSock: () => sock, warmingUp: () => false },
+  );
+  await engine.tick();
+  assert.ok(notices.some(n => n.includes('Ghost') && n.includes('not on WhatsApp')));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// retrySoon() comes back to the SAME member every five minutes. One buzz per member is
+// signal; one per attempt is what makes an operator mute the bot.
+test('a failing member is reported once, not once per retry', async () => {
+  const dir = tmp('notify-');
+  const notices = [];
+  const sock = {
+    user: { id: 'bot' },
+    async presenceSubscribe() {}, async sendPresenceUpdate() {},
+    async onWhatsApp(pn) { return [{ exists: true, jid: `${pn}@s.whatsapp.net` }]; },
+    async sendMessage() { throw new Error('server said no'); },
+  };
+  const engine = createDripEngine(
+    makeConfig({ botDir: dir, drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } }),
+    quietLog, { refresh: async () => {}, getAll: () => [member('A', '9000000001', 0)] },
+    { autoRenewDue: async () => [] }, async (t) => { notices.push(t); },
+    { getSock: () => sock, warmingUp: () => false },
+  );
+  for (let i = 0; i < 4; i++) await engine.tick();
+
+  const failNotices = notices.filter(n => n.includes('Send failed'));
+  assert.equal(failNotices.length, 1, `four retries produced ${failNotices.length} buzzes`);
+  assert.ok(failNotices[0].includes('server said no'), 'the real error must reach the operator');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

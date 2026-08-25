@@ -1,11 +1,11 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone, isDelayActive } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, resolveWhatsAppJid, isDelayActive } from './globalConfig.js';
 
 const MIN_GAP_MS = 15 * 60 * 1000;
 const MAX_GAP_MS = 30 * 60 * 1000;
 
-export function createRemovalEngine(config, log, getSock, store, getBroadcastJids) {
+export function createRemovalEngine(config, log, getSock, store, getBroadcastJids, notifyTelegram = null) {
   const stateFile = path.join(config.botDir, 'removal-state.json');
 
   let _timeouts = [];
@@ -45,7 +45,17 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
       .sort((a, b) => b.daysOverdue - a.daysOverdue);
   }
 
+  // Telegram first, WhatsApp only as the fallback.
+  //
+  // These progress notices used to go out as WhatsApp DMs to every admin JID — the exact
+  // traffic pattern this project blames for the July ban, and on a bot the operator drives
+  // from Telegram it is a WhatsApp send that buys nothing. A bot with no token keeps the old
+  // broadcast, so nothing goes quiet on the WhatsApp-only bots.
   async function notify(text) {
+    if (notifyTelegram) {
+      try { await notifyTelegram(text); return; }
+      catch (err) { log.warn(`⚠️  Telegram notify failed, falling back: ${err.message}`); }
+    }
     const sock = getSock();
     if (!sock?.user) return;
     for (const jid of getBroadcastJids()) {
@@ -219,6 +229,8 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
   // the admins get a completion summary when the batch finishes.
   async function runWarnBatch(list) {
     let sent = 0, failed = 0;
+    const unreachable = [];   // no WhatsApp account on the number
+    const failures = [];      // the send threw
     try {
       for (let i = 0; i < list.length; i++) {
         const m = list[i];
@@ -227,17 +239,35 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
           failed++;
           log.warn(`⚠️  Socket not ready — final warning skipped for ${m.name}`);
         } else {
-          const jid = `91${normalizePhone(m.phone)}@s.whatsapp.net`;
-          const text = config.messages.overdue
-            .replace('{name}', m.name)
-            .replace('{days}', String(m.daysOverdue));
+          // Resolved, not assembled — a phone JID we built ourselves is a guess, and a
+          // LID-primary account swallows it without error. See resolveWhatsAppJid.
+          let jid = `91${normalizePhone(m.phone)}@s.whatsapp.net`;
+          let dead = false;
           try {
-            await sock.sendMessage(jid, { text });
-            sent++;
-            log.info(`📨 Final warning → ${m.name} (${m.phone})`);
+            const found = await resolveWhatsAppJid(sock, m.phone);
+            if (found.exists) jid = found.jid;
+            else dead = true;
           } catch (err) {
+            log.warn(`⚠️  JID lookup failed for ${m.phone} — using the phone JID: ${err.message}`);
+          }
+
+          if (dead) {
             failed++;
-            log.warn(`❌ Final warning failed [${m.name}]: ${err.message}`);
+            unreachable.push(`${m.name} ${m.phone}`);
+            log.warn(`📵 ${m.name} (${m.phone}) is not on WhatsApp — final warning not sent`);
+          } else {
+            const text = config.messages.overdue
+              .replace('{name}', m.name)
+              .replace('{days}', String(m.daysOverdue));
+            try {
+              await sock.sendMessage(jid, { text });
+              sent++;
+              log.info(`📨 Final warning → ${m.name} (${m.phone})`);
+            } catch (err) {
+              failed++;
+              failures.push(`${m.name} ${m.phone} — ${err.message}`);
+              log.warn(`❌ Final warning failed [${m.name}]: ${err.message}`);
+            }
           }
         }
         if (i < list.length - 1) {
@@ -249,7 +279,16 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
           await sleep(gap);
         }
       }
-      await notify(`✅ warnall done: ${sent}/${list.length} warned${failed > 0 ? ` (${failed} failed)` : ''}`);
+      // Named, not just counted. "3 failed" tells the operator something is wrong and
+      // nothing about what to do; the names are what they act on.
+      await notify(
+        `✅ warnall done: ${sent}/${list.length} warned${failed > 0 ? ` (${failed} failed)` : ''}` +
+        (unreachable.length > 0
+          ? `\n\n📵 *Not on WhatsApp* (${unreachable.length}):\n${unreachable.join('\n')}`
+          : '') +
+        (failures.length > 0
+          ? `\n\n⚠️ *Send failed* (${failures.length}):\n${failures.join('\n')}`
+          : ''));
     } finally {
       _warnRunning = false;
     }

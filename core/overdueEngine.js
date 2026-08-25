@@ -1,10 +1,36 @@
 import fs from 'fs';
 import path from 'path';
-import { daysFromToday, sleep, randomBetween, normalizePhone, isDelayActive, friendlyDate, todayStr, cronTimePassedToday, beforeCatchUpCutoff } from './globalConfig.js';
+import { daysFromToday, sleep, randomBetween, normalizePhone, isDelayActive, friendlyDate, todayStr, cronTimePassedToday, beforeCatchUpCutoff, resolveWhatsAppJid } from './globalConfig.js';
 import { buildGroupDigest } from './reminderSender.js';
 import { usesCloudApi, createCloudApiSender } from './cloudApiSender.js';
 
-export function createOverdueEngine(config, log) {
+export function createOverdueEngine(config, log, notify = null) {
+  // Telegram, when index.js has one. Every failure below used to stop at log.warn, which
+  // means it stopped at nobody: an operator reads their phone, not pm2. Optional so a bot
+  // without a token keeps working exactly as before.
+  const tell = async (text) => {
+    if (!notify) return;
+    try { await notify(text); } catch (err) { log.warn(`⚠️  Notify failed: ${err.message}`); }
+  };
+
+  // The address WhatsApp gives, not one we assembled. Returns null when the number has no
+  // account — a real answer the caller reports rather than sends into. Fails OPEN on a lookup
+  // error, same as the drip: a usync hiccup must never cost a member their reminder.
+  async function addressFor(sock, phone, name) {
+    const guess = `91${normalizePhone(phone)}@s.whatsapp.net`;
+    try {
+      const found = await resolveWhatsAppJid(sock, phone);
+      if (!found.exists) {
+        log.warn(`📵 ${name} (${phone}) is not on WhatsApp`);
+        await tell(`📵 *${name}* (${phone}) is not on WhatsApp — overdue notice not sent.`);
+        return null;
+      }
+      return found.jid;
+    } catch (err) {
+      log.warn(`⚠️  JID lookup failed for ${phone} — using the phone JID: ${err.message}`);
+      return guess;
+    }
+  }
   // ── Per-day state (overdue-state.json) ──────────────────────────────────────
   // Tracks which members already received a day-6/day-7 reminder today and whether the
   // consolidated owner list was sent, so the daily check is idempotent: the cron run and any
@@ -182,7 +208,8 @@ export function createOverdueEngine(config, log) {
         const finalTemplate = config.messages.finalReminder || config.messages.overdue;
         for (let i = 0; i < pendingFinal.length; i++) {
           const m = pendingFinal[i];
-          const jid = `91${normalizePhone(m.phone)}@s.whatsapp.net`;
+          const jid = await addressFor(sock, m.phone, m.name);
+          if (!jid) { state.sentPhones.push(m.phone); saveState(state); continue; }
           const text = finalTemplate
             .replace('{name}', m.name)
             .replace('{days}', String(finalReminderDay))
@@ -195,6 +222,8 @@ export function createOverdueEngine(config, log) {
             log.info(`📨 Day-${finalReminderDay} FINAL reminder → ${m.name} (${m.phone})`);
           } catch (err) {
             log.warn(`❌ Final reminder failed [${m.name}]: ${err.message}`);
+            await tell(`⚠️ *Final reminder failed* — ${m.name} (${m.phone})
+${err.message}`);
           }
 
           if (i < pendingFinal.length - 1) {
@@ -241,7 +270,8 @@ export function createOverdueEngine(config, log) {
           continue;
         }
 
-        const jid = `91${normalizePhone(m.phone)}@s.whatsapp.net`;
+        const jid = await addressFor(sock, m.phone, m.name);
+        if (!jid) { state.sentPhones.push(m.phone); saveState(state); continue; }
         const text = config.messages.overdue
           .replace('{name}', m.name)
           .replace('{days}', config.overdue.autoReminderDays);
@@ -253,6 +283,8 @@ export function createOverdueEngine(config, log) {
           log.info(`📨 Day-${config.overdue.autoReminderDays} overdue reminder → ${m.name} (${m.phone})`);
         } catch (err) {
           log.warn(`❌ Day-${config.overdue.autoReminderDays} reminder failed [${m.name}]: ${err.message}`);
+          await tell(`⚠️ *Overdue reminder failed* — ${m.name} (${m.phone})
+${err.message}`);
         }
 
         if (i < day5Pending.length - 1) {

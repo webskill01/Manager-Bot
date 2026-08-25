@@ -108,7 +108,10 @@ export async function startBot(config, log, authDir) {
   const groupMetaCache = new Map();
   const scheduler = createScheduler(config, log);
   const reminderSender = createReminderSender(config, log);
-  const overdueEngine = createOverdueEngine(config, log);
+  // notifyTelegram is a hoisted function declaration, so passing it here — above its
+  // definition — is fine, and it is what turns these engines' failures from a pm2 line
+  // nobody reads into something that reaches a phone.
+  const overdueEngine = createOverdueEngine(config, log, (t) => notifyTelegram(t, config.dripIds));
   const lidToPhoneJid = new Map();
   const adminLids = new Set();   // raw numeric LIDs of allowedNumbers, auto-resolved on connect
   const trialEngine = createTrialRemovalEngine(config, log, getSock, getBroadcastJids, adminLids);
@@ -148,7 +151,8 @@ export async function startBot(config, log, authDir) {
   }
   log.info(`✅ Sheet loaded: ${store.getAll().length} members in cache`);
 
-  const removalEngine = createRemovalEngine(config, log, getSock, store, getBroadcastJids);
+  const removalEngine = createRemovalEngine(config, log, getSock, store, getBroadcastJids,
+    (t) => notifyTelegram(t, config.dripIds));
   const ghostEngine = createGhostRemovalEngine(config, log, getSock, store, getBroadcastJids);
 
   function destroySocket(reason) {
