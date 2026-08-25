@@ -839,3 +839,18 @@ test('claiming twice does not double-count, and claiming nothing says so', () =>
   assert.match(engine.markShownHandled(), /1 marked/);
   assert.match(engine.markShownHandled(), /Nothing to mark/, 'the same list was claimed twice');
 });
+
+// ── the queue count explains itself ────────────────────────────────────────────
+import { describeQueue } from '../core/dripEngine.js';
+
+test('one cohort reads as a bare number, several name themselves', () => {
+  assert.equal(describeQueue({ due: 13, nudge: 0, final: 0, missed: 0 }), '13');
+  assert.equal(describeQueue({ due: 0, nudge: 0, final: 0, missed: 0 }), '0');
+  // The 25-08-2026 line that started this: 63 where the same day had said 14.
+  assert.equal(
+    describeQueue({ due: 13, nudge: 9, final: 5, missed: 36 }),
+    '63 (13 due, 9 nudge, 5 final, 36 missed)',
+  );
+  // Empty cohorts are dropped rather than printed as zeroes.
+  assert.equal(describeQueue({ due: 2, nudge: 0, final: 0, missed: 7 }), '9 (2 due, 7 missed)');
+});

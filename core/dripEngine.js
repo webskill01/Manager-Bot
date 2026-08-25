@@ -98,14 +98,19 @@ export function buildDripBatch({
 }) {
   const seen = new Set(pushed.map(String));
   const batch = [];
-  // Due-today cohort FIRST, then the missed, then the nudge, then the final notice.
+  // Due-today cohort FIRST, then the nudge, then the final notice, then the missed backlog.
   // Irrelevant when all four go out together; decisive when `max` is 1, as auto mode sets it.
   //
-  // 'missed' sits SECOND, not first, for the same reason 'due' leads: today's due members are
-  // the ones who still pay on time, and a day-0 member squeezed out of the window becomes a
-  // day-1 'missed' tomorrow rather than vanishing — which is the whole point of the cohort.
-  // Ahead of the chase-ups because a member who has never been asked once this cycle is owed
-  // a first message before anyone gets a second one.
+  // 'missed' goes LAST, and it is the only cohort that can wait. The other three are pinned
+  // to an exact day — miss the day-6 slot and that member is on the removal list tomorrow,
+  // never having had their final notice — whereas a missed member has the rest of a four-day
+  // window and, failing that, ages into the nudge, which reaches them anyway with the QR
+  // attached (see needsQr).
+  //
+  // Ordering it second looked right and starved the ladder: on 25-08-2026 the sheet held a
+  // backlog of 50 against 13 due, 9 nudge and 5 final, so both follow-up cohorts would have
+  // sat behind it for days. A backlog drains on the capacity a day has spare. It does not get
+  // to jump the queue in front of the members whose slot expires tonight.
   //
   // This used to run most-overdue-first, reasoning that a day-6 member has one day left
   // before removal. The operator's call, and the right one: the day-0 reminder is the one
@@ -114,7 +119,7 @@ export function buildDripBatch({
   // a nudge tomorrow; a missed day-6 member is already a decision (the removal list), which
   // `overdue`/`kickall` handle. Follow-ups are the lower-value half of the queue, so they
   // are the half that gets squeezed.
-  for (const cohort of ['due', 'missed', 'nudge', 'final']) {
+  for (const cohort of ['due', 'nudge', 'final', 'missed']) {
     if (batch.length >= max) break;
     const { rows } = buildDmList({ members, config, cohort, contactLog, now });
     const row = rows.find(r => !seen.has(String(r.phone)));
@@ -123,16 +128,40 @@ export function buildDripBatch({
   return batch;
 }
 
-// Everyone still owed a link today, across all three cohorts, deduped.
-export function countRemaining({ members, config, pushed = [], contactLog = {} }) {
+// Everyone still owed a link today, split by cohort and deduped in queue order.
+//
+// The single number stopped explaining itself the moment 'missed' joined the queue: on
+// 25-08-2026 a restart reported "63 left" where the same day had said 14, and nothing in the
+// log said the other 49 were a backlog rather than a runaway.
+export function countByCohort({ members, config, pushed = [], contactLog = {} }) {
   const seen = new Set(pushed.map(String));
-  const phones = new Set();
-  for (const cohort of ['due', 'missed', 'nudge', 'final']) {
+  const out = { due: 0, nudge: 0, final: 0, missed: 0 };
+  for (const cohort of ['due', 'nudge', 'final', 'missed']) {
     for (const r of buildDmList({ members, config, cohort, contactLog }).rows) {
-      if (!seen.has(String(r.phone))) phones.add(String(r.phone));
+      if (seen.has(String(r.phone))) continue;
+      seen.add(String(r.phone));
+      out[cohort]++;
     }
   }
-  return phones.size;
+  return out;
+}
+
+// Same question, one number. Summed from the split so the two can never disagree.
+export function countRemaining(args) {
+  return Object.values(countByCohort(args)).reduce((a, b) => a + b, 0);
+}
+
+// "63 left (14 due, 49 missed)" — the parenthetical is omitted when there is nothing to
+// explain, so an ordinary day reads exactly as it did before.
+export function describeQueue(split) {
+  const total = Object.values(split).reduce((a, b) => a + b, 0);
+  const parts = [
+    split.due && `${split.due} due`,
+    split.nudge && `${split.nudge} nudge`,
+    split.final && `${split.final} final`,
+    split.missed && `${split.missed} missed`,
+  ].filter(Boolean);
+  return parts.length > 1 ? `${total} (${parts.join(', ')})` : String(total);
 }
 
 // Today's whole queue, in the exact order the drip will work it: every 'due' row, then
@@ -141,7 +170,7 @@ export function countRemaining({ members, config, pushed = [], contactLog = {} }
 export function buildDripQueue({ members, config, pushed = [], contactLog = {}, now = todayStr() }) {
   const seen = new Set(pushed.map(String));
   const queue = [];
-  for (const cohort of ['due', 'missed', 'nudge', 'final']) {
+  for (const cohort of ['due', 'nudge', 'final', 'missed']) {
     for (const r of buildDmList({ members, config, cohort, contactLog, now }).rows) {
       if (seen.has(String(r.phone))) continue;
       seen.add(String(r.phone));
@@ -185,11 +214,16 @@ export function planTimes(queue, settings, { from = new Date(), endHour } = {}) 
 
 const STAGE_LABEL = { msg1: 'due today', msg2: 'overdue', msg3: 'FINAL notice' };
 
+// A missed member carries msg1 — it IS their first message — but they are not due today, and
+// `due today · Vikram · 3d overdue` on one line is how the queue stopped making sense from the
+// log. The cohort is recoverable from the row: msg1 plus any overdue days at all.
+const labelFor = (r) => (r.stage === 'msg1' && r.overdueDays > 0 ? 'missed' : STAGE_LABEL[r.stage]);
+
 export function renderDripBatch(batch, remaining) {
   const lines = [`📤 *Send these now* — ${friendlyDate()}`, ''];
   for (const r of batch) {
     const age = r.overdueDays === 0 ? 'due today' : `${r.overdueDays}d overdue`;
-    lines.push(`${STAGE_LABEL[r.stage]} · ${r.name} · ₹${r.fee} · ${age}`);
+    lines.push(`${labelFor(r)} · ${r.name} · ₹${r.fee} · ${age}`);
     lines.push(r.link);
     lines.push('');
   }
@@ -242,7 +276,7 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   async function handToOperator(row, reason) {
     await notify(
       `📤 *Send it yourself* — the bot could not reach them\n` +
-      `${STAGE_LABEL[row.stage]} · ${row.name} · ₹${row.fee} · ` +
+      `${labelFor(row)} · ${row.name} · ₹${row.fee} · ` +
       `${row.overdueDays === 0 ? 'due today' : `${row.overdueDays}d overdue`}\n` +
       `_${reason}_\n\n${row.link}` +
       (needsQr(row, firstContact(row)) ? '\n\n📷 Attach the QR — they have not had one this month.' : ''));
@@ -424,7 +458,7 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
       : null;
     if (!lastSend) log.warn(`⚠️  No message id back for ${row.phone} — delivery cannot be confirmed`);
 
-    log.info(`💧 Auto-sent ${STAGE_LABEL[row.stage]} → ${row.name} (${row.phone})${tag}`);
+    log.info(`💧 Auto-sent ${labelFor(row)} → ${row.name} (${row.phone})${tag}`);
     return true;
   }
 
@@ -519,13 +553,18 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   // mode self-pacing. Manual mode ignores it and keeps drawing from its fixed range: the
   // operator is the rate limit there, and pushing links faster than they can tap is how the
   // stacking that caused the ban happens.
-  function scheduleNext(remaining = 0) {
+  // Takes the cohort split rather than a bare count, so the one line the operator reads in
+  // pm2 logs says what the number is made of. "63 left" on a day that had said 14 is alarming;
+  // "63 left (13 due, 9 nudge, 5 final, 36 missed)" is a backlog, and the difference between
+  // those two readings is a night spent worrying about the wrong thing.
+  function scheduleNext(split = {}) {
     clearTimer();
+    const remaining = Object.values(split).reduce((a, b) => a + b, 0);
     const gap = auto
       ? adaptiveGapMs(remaining, msLeftInWindow(), settings)
       : randomBetween(settings.gapMinMs, settings.gapMaxMs);
     log.info(`💧 Next ${auto ? 'auto send' : 'drip push'} in ${Math.round(gap / 60000)}m` +
-             (auto ? ` (${remaining} left)` : ''));
+             (auto ? ` (${describeQueue(split)} left)` : ''));
     _timer = setTimeout(() => { tick().catch(err => log.error(`❌ Drip tick: ${err.message}`)); }, gap);
     if (_timer.unref) _timer.unref();
   }
@@ -679,7 +718,7 @@ ${detail || ''}
         state.pushed = [...state.pushed, String(batch[0].phone)];
         state.handed = [...(state.handed || []), `${batch[0].name} ${batch[0].phone}`];
         saveState(state);
-        return scheduleNext(countRemaining({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
+        return scheduleNext(countByCohort({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
       }
 
       // Recorded only on a send that actually happened. A member whose message failed is
@@ -737,7 +776,7 @@ ${detail || ''}
             `The bot will keep working the queue on the same schedule and send you a link ` +
             `for each person instead of messaging them itself. Nobody is skipped.`);
         }
-        return scheduleNext(countRemaining({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
+        return scheduleNext(countByCohort({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
       }
       failStreak = 0;
       state.pushed = [...state.pushed, String(batch[0].phone)];
@@ -745,7 +784,7 @@ ${detail || ''}
       // delivery check for Vikramjeet on 25-08-2026.
       state.lastSend = lastSend;
       saveState(state);
-      return scheduleNext(countRemaining({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
+      return scheduleNext(countByCohort({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
     }
 
     const after = [...state.pushed, ...batch.map(r => String(r.phone))];
@@ -852,12 +891,13 @@ ${detail || ''}
     // the ceiling, or clear the excess by hand with dmlist.
     if (auto) {
       try {
-        const queued = countRemaining({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() });
+        const split = countByCohort({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() });
+        const queued = Object.values(split).reduce((a, b) => a + b, 0);
         const capacity = Math.floor(
           ((settings.endHour - settings.startHour) * 3600000) / (settings.gapMinMs * 1.2));
         if (queued > capacity) {
           await notify(
-            `⚠️ *${queued} reminders queued, room for about ${capacity}* today.\n` +
+            `⚠️ *${describeQueue(split)} reminders queued, room for about ${capacity}* today.\n` +
             `The ${queued - capacity} at the back roll into tomorrow one day more overdue.\n` +
             `Clear them by hand with \`dmlist\` / \`dmlist2\` / \`dmlist3\` if you want them out today.`);
         }
@@ -974,8 +1014,13 @@ ${detail || ''}
         `${(state.handed || []).length} handed to you today, ${state.pushed.length} done in total.\n` +
         `The bot is still pacing the queue; it sends you a link instead of messaging them.`;
     }
+    // The split, not just a total. A backlog and a runaway look identical as one number.
+    const left = describeQueue(countByCohort({
+      members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog(),
+    }));
     const what = auto ? 'sent by the bot' : 'pushed';
-    return `${down}${s} · ${auto ? '🤖 auto-send' : '👍 manual links'} — ${state.pushed.length} ${what} today ` +
+    return `${down}${s} · ${auto ? '🤖 auto-send' : '👍 manual links'} — ${state.pushed.length} ${what} today, ` +
+      `${left} still queued ` +
       `(window ${settings.startHour}:00–${settings.endHour}:00, ` +
       `${auto ? `≥${Math.round(settings.gapMinMs / 60000)}m apart, gap adapts to the queue` :
                 `${Math.round(settings.gapMinMs / 60000)}-${Math.round(settings.gapMaxMs / 60000)}m apart`})`;
@@ -1053,7 +1098,7 @@ ${detail || ''}
       const qr = (cyc.qr !== r.billingDate && (r.stage === 'msg1' || cyc.cycle !== r.billingDate))
         ? ' 📷' : '';
       const age = r.overdueDays === 0 ? 'due today' : `${r.overdueDays}d over`;
-      return `${String(i + 1).padStart(3)}. ~${t}  ${STAGE_LABEL[r.stage]} · ${r.name} · ₹${r.fee} · ${age}${qr}`;
+      return `${String(i + 1).padStart(3)}. ~${t}  ${labelFor(r)} · ${r.name} · ₹${r.fee} · ${age}${qr}`;
     };
 
     const body = fits.map(line).join('\n');
@@ -1064,7 +1109,12 @@ ${detail || ''}
         `\nClear them by hand with \`dmlist\` / \`dmlist2\` / \`dmlist3\` to get them out today.`
       : '';
 
-    return `${head}${state.pushed.length} done · ${queue.length} to go · order is exact, ` +
+    // Split by cohort: a plan 50 rows long is a backlog draining behind today's ladder, not
+    // a runaway, and the header is where that has to be visible.
+    const split = countByCohort({
+      members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog(),
+    });
+    return `${head}${state.pushed.length} done · ${describeQueue(split)} to go · order is exact, ` +
       `times are estimates (📷 = carries the QR)\n━━━━━━━━━━━━━━━━━\n${body}${tail}`;
   }
 
@@ -1103,7 +1153,7 @@ ${detail || ''}
     // from the sheet as it stands. Passing 0 would hand back the 2h cap and idle away the
     // rest of the window. store.getAll() is the cache the last refresh filled — a tick will
     // refresh it properly before anything is sent.
-    scheduleNext(auto ? countRemaining({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() }) : 0);
+    scheduleNext(auto ? countByCohort({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() }) : {});
   }
 
   // contactLog is read-only, and exists so `dmlist missed` can ask the same question the

@@ -87,7 +87,8 @@ test('drip plan lists the day in order and marks who carries the QR', async () =
   const out = await engine.plan();
 
   assert.ok(out.indexOf('DueGuy') < out.indexOf('FinalGuy'), 'the plan is not in send order');
-  assert.match(out, /2 to go/);
+  // The count carries its cohort split — a long plan is a backlog, not a runaway.
+  assert.match(out, /2 \(1 due, 1 final\) to go/);
   // 📷 marks the QR. DueGuy is msg1 so carries it; FinalGuy has had no contact this cycle,
   // so they carry one too — that is the "chased with no way to pay" hole staying shut.
   // Counted in the row body only; the header carries one as a legend.
@@ -381,7 +382,7 @@ test('status says so when the socket is down, and not when it is up', () => {
 
 // ── the 'missed' cohort in the queue ───────────────────────────────────────────
 
-test('the queue works due first, then missed, then the chase-ups', () => {
+test('the queue works due first, then the chase-ups, then the missed backlog', () => {
   const members = [
     member('FinalGuy', '9000000006', 6),
     member('NudgeGuy', '9000000005', 5),
@@ -389,7 +390,8 @@ test('the queue works due first, then missed, then the chase-ups', () => {
     member('DueGuy', '9000000000', 0),
   ];
   const q = buildDripQueue({ members, config: makeConfig() });
-  assert.deepEqual(q.map(r => r.name), ['DueGuy', 'MissedGuy', 'NudgeGuy', 'FinalGuy']);
+  // A day-6 member loses their last notice forever if the backlog jumps ahead of them.
+  assert.deepEqual(q.map(r => r.name), ['DueGuy', 'NudgeGuy', 'FinalGuy', 'MissedGuy']);
 });
 
 test('a member reached this cycle is not queued again as missed', () => {
