@@ -209,7 +209,25 @@ export function createLedger(config, store, log) {
       // would otherwise report ₹1022.4999999999999.
       out[label] = Math.round(rows.reduce((sum, r) => sum + (Number(r[col]) || 0), 0) * 100) / 100;
     }
-    return Object.keys(out).length > 0 ? out : null;
+    if (Object.keys(out).length === 0) return null;
+
+    // Which of the asked-for dates every bot has NOT reported yet. Without this a window
+    // containing today is silently short a whole day: the LOG is written at 9 PM, so a
+    // `weekly` run at teatime sums six days and prints a seven-day heading over it — which
+    // is exactly how 01-09's ₹1190 went missing from a 26-08 → 01-09 total.
+    //
+    // A date is complete only when every bot the LOG has ever seen has a row for it. A
+    // cheaper "any row at all" test would call 10 PM complete on the night bot-nitin has
+    // written and the three bots on the other VPS have not.
+    const logRows = await read();
+    const roster = new Set(logRows.map(r => r.bot));
+    const wrote = new Map();
+    for (const r of logRows) {
+      if (!wrote.has(r.date)) wrote.set(r.date, new Set());
+      wrote.get(r.date).add(r.bot);
+    }
+    const missing = dates.filter(d => (wrote.get(d)?.size || 0) < roster.size);
+    return { sums: out, missing };
   }
 
   async function status() {

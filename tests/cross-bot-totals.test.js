@@ -22,12 +22,12 @@ const store = (members = []) => ({
 });
 
 // Stands in for the real ledger: records what it was asked for, answers with fixed figures.
-function fakeLedger(sums = { "From friends' bots": 175, 'Total per person': 580 }) {
+function fakeLedger(sums = { "From friends' bots": 175, 'Total per person': 580 }, missing = []) {
   const asked = [];
   return {
     asked,
     enabled: true,
-    sumFor: async (dates) => { asked.push(dates); return sums; },
+    sumFor: async (dates) => { asked.push(dates); return { sums, missing }; },
   };
 }
 
@@ -122,21 +122,30 @@ test('the labels and columns bot-nitin ships are the ones the sheet actually has
   }
 });
 
-test('an all-zero block says why, instead of looking broken', async () => {
-  // Today's figures are legitimately ₹0 until the 10 PM write, while the bot's own revenue
-  // above is already non-zero. Unexplained, that reads as a bug.
-  const zero = { enabled: true, sumFor: async () => ({ "From friends' bots": 0, 'Total per person': 0 }) };
-  const out = await createReportHandlers(store(), cfg(), Date.now(), log, zero).handleSummary([]);
-  assert.match(out, /shared sheet fills at 10 PM and 5 AM/);
+test('a window missing a day says which day, instead of quietly under-reporting', async () => {
+  // The bug this guards: a 26-08 -> 01-09 weekly summed six days and printed a seven-day
+  // heading over it, because the shared sheet had no 01-09 rows yet at 8 PM.
+  const today = ddmmyyyy(new Date());
+  const short = fakeLedger({ "From friends' bots": 975, 'Total per person': 4755 }, [today]);
+  const out = await createReportHandlers(store(), cfg(), Date.now(), log, short).handleWeekly();
+  assert.match(out, new RegExp(`Not counted yet: ${today}`));
+  assert.match(out, /shared sheet fills at 9 PM and 5 AM/);
 
-  const nonzero = fakeLedger();
-  const out2 = await createReportHandlers(store(), cfg(), Date.now(), log, nonzero).handleSummary([]);
-  assert.doesNotMatch(out2, /not written for this window yet/, 'the note is noise once there is data');
+  // Four or more missing days would be a wall of dates — count them instead.
+  const many = fakeLedger({ "From friends' bots": 0, 'Total per person': 0 }, ['a', 'b', 'c', 'd']);
+  const out2 = await createReportHandlers(store(), cfg(), Date.now(), log, many).handleWeekly();
+  assert.match(out2, /Not counted yet: 4 of 7 days/);
 });
 
-test('a part-zero window is real data, not a pending one', async () => {
-  const partial = { enabled: true, sumFor: async () => ({ "From friends' bots": 0, 'Total per person': 405 }) };
-  const out = await createReportHandlers(store(), cfg(), Date.now(), log, partial).handleSummary([]);
-  assert.doesNotMatch(out, /not written for this window yet/);
+test('a complete window carries no note — the figure stands on its own', async () => {
+  const out = await createReportHandlers(store(), cfg(), Date.now(), log, fakeLedger()).handleSummary([]);
+  assert.doesNotMatch(out, /Not counted yet/);
+  assert.match(out, /Total per person: +₹580/);
+});
+
+test('a genuinely zero day that IS written reads as zero, not as pending', async () => {
+  const zero = fakeLedger({ "From friends' bots": 0, 'Total per person': 0 }, []);
+  const out = await createReportHandlers(store(), cfg(), Date.now(), log, zero).handleSummary([]);
+  assert.doesNotMatch(out, /Not counted yet/);
   assert.match(out, /From friends' bots: +₹0/);
 });

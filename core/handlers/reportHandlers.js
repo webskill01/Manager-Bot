@@ -128,20 +128,21 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
   // on any failure — a Sheets hiccup must never cost someone their whole revenue report.
   async function allBotsBlock(label, dates) {
     try {
-      const sums = await ledger?.sumFor(dates);
-      if (!sums) return '';
+      const res = await ledger?.sumFor(dates);
+      if (!res) return '';
+      const { sums, missing = [] } = res;
       const width = Math.max(...Object.keys(sums).map(k => k.length)) + 1;
       const lines = Object.entries(sums)
         .map(([k, v]) => `   ${`${k}:`.padEnd(width)} ₹${v}`)
         .join('\n');
-      // These figures come from the shared sheet, which every bot writes at 10 PM and again
-      // at 5 AM — so for TODAY, and for yesterday before the morning pass, they legitimately
-      // read ₹0 while this bot's own revenue above is already non-zero. Unexplained that
-      // looks broken, so say where the number comes from exactly when it is all zeroes.
-      const pending = Object.values(sums).every(v => v === 0)
-        ? '\n   (the shared sheet fills at 10 PM and 5 AM — not written for this window yet)'
-        : '';
-      return `\n\n🌐 ALL BOTS — ${label}\n${lines}${pending}`;
+      // The shared sheet fills at 9 PM and again at 5 AM, so a window containing today — or
+      // yesterday, before the morning pass — sums FEWER days than its heading names. Silent,
+      // that is simply a wrong number: a 26-08 → 01-09 weekly reported ₹4755 over six days
+      // while 01-09 sat unwritten. Name the days that are not in the figure instead.
+      const note = missing.length === 0 ? ''
+        : `\n   ⏳ Not counted yet: ${missing.length > 3 ? `${missing.length} of ${dates.length} days` : missing.join(', ')}`
+        + `\n      (the shared sheet fills at 9 PM and 5 AM)`;
+      return `\n\n🌐 ALL BOTS — ${label}\n${lines}${note}`;
     } catch (err) {
       log?.warn?.(`⚠️  Cross-bot totals unavailable: ${err.message}`);
       return '';
