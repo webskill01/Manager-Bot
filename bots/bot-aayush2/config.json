@@ -8,16 +8,12 @@
   "split": {
     "shares": [
       {
-        "label": "Aayush",
+        "label": "Nitin",
         "percent": 50
       },
       {
-        "label": "Nitin",
-        "percent": 25
-      },
-      {
         "label": "Tanishq",
-        "percent": 25
+        "percent": 50
       }
     ]
   },
@@ -76,11 +72,10 @@
   },
   "allowedNumbers": [
     "6283380110",
-    "9914623976",
-    "7696311496"
+    "9914623976"
   ],
   "dripIds": [
-    "5832606609"
+    "5332135237"
   ],
   "drip": {
     "startHour": 9,
@@ -90,8 +85,7 @@
   },
   "allowedTelegramIds": [
     "5332135237",
-    "7985971941",
-    "5832606609"
+    "7985971941"
   ],
   "schedule": {
     "morningDigest": "0 6 * * *",
