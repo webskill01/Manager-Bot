@@ -71,6 +71,7 @@ test('an authorized operator reaches onCommand and gets the reply back', async (
   const api = fakeTelegram([update(1, 777, 'summary')]);
   const { listener, seen } = listenerOn(api, { allowedIds: [777] });
   await listener.start();
+  await listener.idle();   // start() returns when polling stops; the queued command may still be running
   assert.deepEqual(seen, ['summary']);
   assert.deepEqual(api.sent, [{ chatId: 777, text: 'ok: summary' }]);
 });
@@ -79,6 +80,7 @@ test('an unknown sender runs nothing and is answered with silence', async () => 
   const api = fakeTelegram([update(1, 666, 'kick 9855112233')]);
   const { listener, seen } = listenerOn(api, { allowedIds: [777] });
   await listener.start();
+  await listener.idle();   // start() returns when polling stops; the queued command may still be running
   assert.deepEqual(seen, [], 'a stranger got a command executed');
   assert.deepEqual(api.sent, [], 'replying at all confirms the bot exists to a stranger');
 });
@@ -87,6 +89,7 @@ test('bootstrap mode hands back the sender id and still runs no commands', async
   const api = fakeTelegram([update(1, 555, 'add Raju 9855112233')]);
   const { listener, seen } = listenerOn(api, { allowedIds: [], bootstrapMode: true });
   await listener.start();
+  await listener.idle();   // start() returns when polling stops; the queued command may still be running
   assert.deepEqual(seen, [], 'bootstrap mode must not execute commands');
   assert.equal(api.sent.length, 1);
   assert.match(api.sent[0].text, /555/, 'the operator was not told their own id');
@@ -100,6 +103,7 @@ test('a reply longer than one Telegram message is split, never dropped', async (
   });
   api.listener = listener;
   await listener.start();
+  await listener.idle();   // start() returns when polling stops; the queued command may still be running
   assert.equal(api.sent.length, 3, `9000 chars should split into 3 messages, got ${api.sent.length}`);
   assert.equal(api.sent.map(s => s.text).join('').length, 9000, 'characters were lost in chunking');
 });
@@ -114,6 +118,7 @@ test('an array reply is sent as ordered parts, behind the slow-command ack', asy
   });
   api.listener = listener;
   await listener.start();
+  await listener.idle();   // start() returns when polling stops; the queued command may still be running
   assert.match(api.sent[0].text, /Got it/, 'no receipt for a slow command');
   assert.deepEqual(api.sent.slice(1).map(s => s.text), ['part one', 'part two']);
 });
@@ -122,6 +127,7 @@ test('a quick lookup gets no ack — just the answer', async () => {
   const api = fakeTelegram([update(1, 777, 'summary')]);
   const { listener } = listenerOn(api, { allowedIds: [777] });
   await listener.start();
+  await listener.idle();   // start() returns when polling stops; the queued command may still be running
   assert.equal(api.sent.length, 1, `quick commands must not be double-messaged: ${JSON.stringify(api.sent)}`);
 });
 
@@ -135,6 +141,7 @@ test('the offset advances past a command that throws, so it is never replayed', 
   });
   api.listener = listener;
   await listener.start();
+  await listener.idle();   // start() returns when polling stops; the queued command may still be running
   assert.deepEqual(seen, ['boom', 'summary'], 'a throwing command stopped the batch');
 });
 
@@ -312,6 +319,7 @@ test('/start becomes help — it is Telegram\'s handshake, not a typed command',
   const api = fakeTelegram([update(1, 777, '/start')]);
   const { listener, seen } = listenerOn(api, { allowedIds: [777] });
   await listener.start();
+  await listener.idle();   // start() returns when polling stops; the queued command may still be running
   assert.deepEqual(seen, ['help']);
 });
 
@@ -319,6 +327,7 @@ test('a slashed command is unwrapped to the real one', async () => {
   const api = fakeTelegram([update(1, 777, '/summary')]);
   const { listener, seen } = listenerOn(api, { allowedIds: [777] });
   await listener.start();
+  await listener.idle();   // start() returns when polling stops; the queued command may still be running
   assert.deepEqual(seen, ['summary']);
 });
 
@@ -329,6 +338,7 @@ test('arguments survive the unwrap, including two-word commands', async () => {
   ]);
   const { listener, seen } = listenerOn(api, { allowedIds: [777] });
   await listener.start();
+  await listener.idle();   // start() returns when polling stops; the queued command may still be running
   assert.deepEqual(seen, ['kick 9855112233', 'start removal'],
     '"start removal" is a real command — only a BARE /start means help');
 });
@@ -337,6 +347,7 @@ test('the @botname suffix Telegram adds in groups is stripped', async () => {
   const api = fakeTelegram([update(1, 777, '/summary@sheet_manager1_bot')]);
   const { listener, seen } = listenerOn(api, { allowedIds: [777] });
   await listener.start();
+  await listener.idle();   // start() returns when polling stops; the queued command may still be running
   assert.deepEqual(seen, ['summary']);
 });
 
@@ -344,6 +355,7 @@ test('an unslashed command is passed through untouched', async () => {
   const api = fakeTelegram([update(1, 777, 'renewed 9855112233')]);
   const { listener, seen } = listenerOn(api, { allowedIds: [777] });
   await listener.start();
+  await listener.idle();   // start() returns when polling stops; the queued command may still be running
   assert.deepEqual(seen, ['renewed 9855112233']);
 });
 
@@ -384,6 +396,7 @@ test('commands queued while the bot was down are discarded, not replayed', async
   });
   api.listener = listener;
   await listener.start();
+  await listener.idle();   // start() returns when polling stops; the queued command may still be running
 
   assert.ok(drained, 'the backlog was never drained');
   assert.deepEqual(seen, [], 'a command queued while the bot was down was executed again');

@@ -34,6 +34,7 @@ import { createSheetClient } from './sheetClient.js';
 import { createMemberStore } from './memberStore.js';
 import { createGroupManager } from './groupManager.js';
 import { createCommandParser, isSlowCommand } from './commandParser.js';
+import { createCommandQueue } from './commandQueue.js';
 import { createScheduler } from './scheduler.js';
 import { createReminderSender, renderSendLog } from './reminderSender.js';
 import { createOverdueEngine } from './overdueEngine.js';
@@ -111,6 +112,10 @@ export async function startBot(config, log, authDir) {
   // merely accepted. Re-attached per socket below — listeners do not survive a reconnect.
   const deliveryTracker = createDeliveryTracker(log);
   const scheduler = createScheduler(config, log);
+  // ONE queue for the whole process, shared with the Telegram listener below. Slow commands
+  // (sheet writes, group ops, member DMs) run strictly one at a time whichever transport
+  // they arrive on; quick lookups skip it entirely and answer while one is still running.
+  const commandQueue = createCommandQueue(log);
   const reminderSender = createReminderSender(config, log);
   // notifyTelegram is a hoisted function declaration, so passing it here — above its
   // definition — is fine, and it is what turns these engines' failures from a pm2 line
@@ -311,22 +316,9 @@ export async function startBot(config, log, authDir) {
     // we detect it at send time and drop the reply rather than crashing on the new socket.
     const activeSock = sock;
 
-    // Instant receipt ack for slow/mutating commands (add, approve, renewed, kick, …) so the
-    // operator can tell the command actually reached the bot — the real result still follows
-    // once the work finishes. Quick lookups reply directly and are skipped here.
-    if (isSlowCommand(text)) {
-      const label = text.trim().split(/\s+/).slice(0, 2).join(' ');
-      try {
-        if (activeSock === sock && sock?.user) {
-          await sock.sendMessage(replyJid, { text: `⏳ Got it — working on "${label}"…` });
-        }
-      } catch (err) {
-        log.warn(`⚠️  Ack send failed: ${err.message}`);
-      }
-    }
-
-    const reply = await commandParser.parse(text);
-    if (reply) {
+    const execute = async () => {
+      const reply = await commandParser.parse(text);
+      if (!reply) return;
       try {
         if (activeSock !== sock || !sock?.user) {
           log.warn(`⚠️  Session ended while processing "${text.substring(0, 40)}" — reply dropped`);
@@ -344,7 +336,36 @@ export async function startBot(config, log, authDir) {
       } catch (err) {
         log.error(`❌ Send failed: ${err.message}`);
       }
+    };
+
+    // Instant receipt ack for slow/mutating commands (add, approve, renewed, kick, …) so the
+    // operator can tell the command actually reached the bot — the real result still follows
+    // once the work finishes. Quick lookups reply directly and are skipped here.
+    //
+    // Slow ones then go on the shared queue and this handler RETURNS. Two things depend on
+    // that: messages.upsert walks its batch with an await, so a slow command used to hold up
+    // every message behind it in the same batch; and on a dual bot the same queue is what
+    // stops a WhatsApp `approve` pacing group adds against a Telegram one.
+    if (isSlowCommand(text)) {
+      const label = text.trim().split(/\s+/).slice(0, 2).join(' ');
+      // Queue first, tell the operator second — the receipt is a WhatsApp round-trip, and
+      // nothing should be able to arrive in the gap and read the queue as emptier than it is.
+      const { running, waiting } = commandQueue.status();
+      const ahead = running || waiting[waiting.length - 1] || null;
+      commandQueue.enqueue(label, execute);
+      try {
+        if (activeSock === sock && sock?.user) {
+          await sock.sendMessage(replyJid, { text: ahead
+            ? `⏳ Queued behind "${ahead}" — I'll start "${label}" the moment it finishes.`
+            : `⏳ Got it — working on "${label}"…` });
+        }
+      } catch (err) {
+        log.warn(`⚠️  Ack send failed: ${err.message}`);
+      }
+      return;
     }
+
+    await execute();
   }
 
   async function connectToWhatsApp() {
@@ -885,6 +906,9 @@ export async function startBot(config, log, authDir) {
       botName: config.botName,
       profile: config.profile,
       log,
+      // Same queue the WhatsApp handler uses: on a dual bot the two transports drive one
+      // socket and one sheet, so "one slow command at a time" has to mean one across BOTH.
+      queue: commandQueue,
       onCommand: async (text, reply) => {
         // The parser is built as soon as connectToWhatsApp() constructs a socket object,
         // which happens even on a number that will be refused — so this window is the few

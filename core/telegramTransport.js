@@ -1,4 +1,5 @@
 import { isSlowCommand } from './commandParser.js';
+import { createCommandQueue } from './commandQueue.js';
 import { HELP_CATEGORIES } from './helpText.js';
 
 // The Telegram Bot API half of a bot, with nothing above it: no sheet, no store, no
@@ -202,8 +203,12 @@ const inlineKeyboard = (rows) =>
 // onCommand(text, reply) — `reply` sends back to the chat the command came from, chunked.
 // Return value is ignored: replying is the callback's job, so a caller can send progress
 // mid-command rather than only at the end.
-export function createTelegramListener({ token, allowedIds = [], bootstrapMode = false, botName, profile = 'full', log, onCommand, fetchImpl = globalThis.fetch }) {
+export function createTelegramListener({ token, allowedIds = [], bootstrapMode = false, botName, profile = 'full', log, onCommand, fetchImpl = globalThis.fetch, queue = null }) {
   const allowed = new Set(allowedIds);
+  // Shared with the WhatsApp side on a dual bot — index.js passes its own — so a Telegram
+  // `approve` and a WhatsApp `approve` cannot both be pacing group adds at the same time.
+  // A Telegram-only bot has no second transport to share with and makes its own.
+  const slowQueue = queue || createCommandQueue(log);
   const menu = MENUS[profile] || MENUS.full;
   let offset = 0;
   let stopped = false;
@@ -321,12 +326,34 @@ export function createTelegramListener({ token, allowedIds = [], bootstrapMode =
     // Instant receipt for commands that do sheet writes or network calls before replying,
     // so the operator can tell it landed. Quick lookups answer immediately and skip this.
     if (isSlowCommand(text)) {
-      const label = text.split(/\s+/).slice(0, 2).join(' ');
-      try { await send(chatId, `⏳ Got it — working on "${label}"…`); }
-      catch (err) { log.warn(`⚠️  Ack send failed: ${err.message}`); }
+      await ackAndQueue(text, chatId, text.split(/\s+/).slice(0, 2).join(' '));
+      return;
     }
 
     await run(text, chatId);
+  }
+
+  // The receipt, then the work — and the work is NOT awaited by the caller, because the
+  // caller is the poll loop. Awaiting it here is what used to stop the bot collecting any
+  // further update for the whole two minutes an `approve` takes.
+  //
+  // The receipt says which of the two situations this is. "Working on" while the command is
+  // in fact sitting behind another one reads, from the operator's phone, exactly like a bot
+  // that has hung — which is the complaint this whole change came from.
+  async function ackAndQueue(text, chatId, label) {
+    // Read the queue, then join it, and only THEN send the receipt. Sending first put a
+    // network round-trip between arrival and enqueue, so two slow commands landing in the
+    // same poll batch both read the queue as empty and both said "working on" — while one
+    // of them was, correctly, about to wait.
+    const { running, waiting } = slowQueue.status();
+    const ahead = running || waiting[waiting.length - 1] || null;
+    slowQueue.enqueue(label, () => run(text, chatId));
+
+    const receipt = ahead
+      ? `⏳ Queued behind "${ahead}" — I'll start "${label}" the moment it finishes.`
+      : `⏳ Got it — working on "${label}"…`;
+    try { await send(chatId, receipt); }
+    catch (err) { log.warn(`⚠️  Ack send failed: ${err.message}`); }
   }
 
   // Shared by a typed command and a tapped follow-up button — a button IS its command, so
@@ -366,8 +393,8 @@ export function createTelegramListener({ token, allowedIds = [], bootstrapMode =
 
     log.info(`📥 Telegram button from ${from}: "${text}"`);
     if (isSlowCommand(text)) {
-      try { await send(chatId, `⏳ Got it — working on "${text}"…`); }
-      catch (err) { log.warn(`⚠️  Ack send failed: ${err.message}`); }
+      await ackAndQueue(text, chatId, text);
+      return;
     }
     await run(text, chatId);
   }
@@ -425,8 +452,12 @@ export function createTelegramListener({ token, allowedIds = [], bootstrapMode =
           // already done — must not be replayed on the next poll. This is also what makes
           // the WhatsApp path's seenMessageIds dedup map unnecessary here.
           offset = u.update_id + 1;
-          try { await handleUpdate(u); }
-          catch (err) { log.error(`❌ Telegram message error: ${err.message}`); }
+          // NOT awaited. Every slow command is serialized by slowQueue, so nothing here can
+          // overlap that must not; what this buys is the poll loop staying free to collect
+          // the next command while a long one runs. Awaiting it was the whole bug.
+          // Tracked, not awaited: idle() must still be able to say when everything has
+          // finished, and a quick lookup is never queued.
+          slowQueue.track(handleUpdate(u).catch(err => log.error(`❌ Telegram message error: ${err.message}`)));
         }
       } catch (err) {
         if (stopped) return;
@@ -476,6 +507,10 @@ export function createTelegramListener({ token, allowedIds = [], bootstrapMode =
   return {
     connect,
     handleUpdate,
+    // handleUpdate returns as soon as a slow command is QUEUED, not when it finishes.
+    // Await this to wait for the work itself — shutdown wants it, and so does any test
+    // that asserts on what a slow command sent.
+    idle: slowQueue.idle,
     start: poll,
     stop: () => { stopped = true; },
     broadcast,

@@ -142,6 +142,7 @@ test('a tapped button runs exactly what a typed command would', async () => {
   });
   await tg.connect();
   await tg.handleUpdate({ callback_query: { id: 'q1', from: { id: 1 }, message: { chat: { id: 9 } }, data: 'drip stop' } });
+  await tg.idle();   // handleUpdate returns once a slow command is queued, not when it is done
   assert.deepEqual(ran, ['drip stop']);
   // The spinner must be stopped whatever else happens.
   assert.ok(calls.some(c => c.method === 'answerCallbackQuery'), 'button left spinning');
@@ -156,6 +157,7 @@ test('a stranger tapping a button gets the spinner stopped and nothing else', as
     fetchImpl: stubFetch(calls),
   });
   await tg.handleUpdate({ callback_query: { id: 'q1', from: { id: 999 }, message: { chat: { id: 9 } }, data: 'stop removal' } });
+  await tg.idle();   // handleUpdate returns once a slow command is queued, not when it is done
   assert.deepEqual(ran, []);
   assert.ok(calls.some(c => c.method === 'answerCallbackQuery'));
   assert.ok(!calls.some(c => c.method === 'sendMessage'));
@@ -169,6 +171,7 @@ test('buttons ride the LAST chunk, never a middle one', async () => {
     fetchImpl: stubFetch(calls),
   });
   await tg.handleUpdate({ message: { from: { id: 1 }, chat: { id: 9 }, text: 'drip' } });
+  await tg.idle();   // handleUpdate returns once a slow command is queued, not when it is done
   // `drip` is a slow command, so the ⏳ ack precedes the answer — it is not part of it.
   const sends = calls.filter(c => c.method === 'sendMessage' && !c.body.text.startsWith('⏳'));
   assert.equal(sends.length, 2);
@@ -184,6 +187,7 @@ test('no follow-up buttons under a refusal', async () => {
     fetchImpl: stubFetch(calls),
   });
   await tg.handleUpdate({ message: { from: { id: 1 }, chat: { id: 9 }, text: 'drip' } });
+  await tg.idle();   // handleUpdate returns once a slow command is queued, not when it is done
   const send = calls.find(c => c.method === 'sendMessage');
   assert.equal(send.body.reply_markup?.inline_keyboard, undefined);
 });
