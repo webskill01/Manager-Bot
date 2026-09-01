@@ -50,6 +50,31 @@ const DEFAULT_GAP_CAP_MS = 2 * 60 * 60 * 1000;
 // lands somewhere in a ~60 min spread and never at a recognisable time.
 const DEFAULT_FIRST_DELAY_MAX_MS = 40 * 60 * 1000;
 
+// One tick's batch, both modes. Manual has always pushed three links per buzz — one member
+// from each cohort — and auto now works the queue the same way, because that is the shape
+// that was actually verified: a week of hand-sent reminders at three per push, 18-25 min
+// apart, delivered fine on a number that had just come off a restriction.
+//
+// Auto used to take ONE member per tick, and the arithmetic is why it could not stay there.
+// A 929-member sheet queues ~53 a day across the four cohorts; a 12-hour window at the 20 min
+// floor holds ~30 sends. One-per-tick therefore dropped the last ~23 members EVERY day, and
+// they came back tomorrow one day more overdue — a backlog that grows on its own. Three per
+// tick clears the same queue in the same window.
+//
+// The account-level rate this implies is the manual rate, not a new one: ~3 messages every
+// ~24 min ≈ 7-9 an hour, which is what the operator's thumb was already doing all week. The
+// bot is a linked device on that same number, so WhatsApp sees no difference in volume — only
+// in which device transmits. Lower it to 1 to get the old one-per-tick behaviour back.
+const DEFAULT_BATCH_SIZE = 3;
+
+// Spacing INSIDE a batch. Three messages in the same second is the one way a batched drip is
+// louder than the thumb it replaces: a human tapping three links from Telegram takes the best
+// part of a minute each, reading the name, waiting for the chat to open, attaching the QR.
+// sendLikeHuman's typing simulation covers the last few seconds before each message; this
+// covers the gap between them. A batch therefore spreads over ~1.5-6 min inside a ~24 min gap.
+const DEFAULT_MSG_GAP_MIN_MS = 40 * 1000;
+const DEFAULT_MSG_GAP_MAX_MS = 3 * 60 * 1000;
+
 export function dripSettings(config) {
   const d = config.drip || {};
   const auto = d.mode === 'auto';
@@ -61,13 +86,20 @@ export function dripSettings(config) {
     gapMaxMs: d.gapMaxMs ?? DEFAULT_GAP_MAX_MS,
     gapCapMs: d.gapCapMs ?? DEFAULT_GAP_CAP_MS,
     firstDelayMaxMs: d.firstDelayMaxMs ?? DEFAULT_FIRST_DELAY_MAX_MS,
+    batchSize: Math.max(1, d.batchSize ?? DEFAULT_BATCH_SIZE),
+    msgGapMinMs: d.msgGapMinMs ?? DEFAULT_MSG_GAP_MIN_MS,
+    msgGapMaxMs: d.msgGapMaxMs ?? DEFAULT_MSG_GAP_MAX_MS,
   };
 }
 
-// How long to wait before the next auto send: the rest of the window divided by everyone
-// still owed a message, so a 10-person day paces itself at ~70 min and a 35-person day
-// closes up to the 20 min floor on its own. No table of rates to maintain, and no day where
-// the queue empties by 9 AM and the number then transmits nothing for nine hours.
+// How long to wait before the next auto send: the rest of the window divided by the SLOTS
+// still to fill, so a 10-slot day paces itself at ~70 min and a 35-slot day closes up to the
+// 20 min floor on its own. No table of rates to maintain, and no day where the queue empties
+// by 9 AM and the number then transmits nothing for nine hours.
+//
+// A slot is a tick, not a member — one tick carries settings.batchSize members. scheduleNext
+// does that division, deliberately, so this function stays a pure "N gaps into M ms" and the
+// floor keeps meaning what the tests assert about it.
 //
 // Floor first, cap second, then up to +40% of wobble. The wobble only ever ADDS: a ±20%
 // either way reads as the obvious choice and is wrong, because 20 minutes minus 20% is 16,
@@ -199,15 +231,29 @@ export function planTimes(queue, settings, { from = new Date(), endHour } = {}) 
   const end = new Date(from);
   end.setHours(endHour ?? settings.endHour, 0, 0, 0);
   const WOBBLE = 1.2;   // mean of the +0..40% adaptiveGapMs adds, so times land mid-spread
+  // The queue moves in batches, so the clock does too: a full gap in front of each batch, and
+  // the mean intra-batch spacing between its members. Planning one gap per MEMBER is what made
+  // this read three times too slow and flagged ordinary days as overflowing.
+  const perBatch = Math.max(1, settings.batchSize || 1);
+  const msgGap = ((settings.msgGapMinMs ?? 0) + (settings.msgGapMaxMs ?? 0)) / 2;
+  // Hold back the last batch's own internal gaps. Dividing the whole window between batches
+  // spends minutes the final batch still needs for the messages inside it, and the plan then
+  // reports an ordinary day as running two or three minutes over — the cry-wolf this whole
+  // function is careful about everywhere else. At run time nothing needs this: the intra-batch
+  // sleeps happen before scheduleNext measures what is left, so the pacing self-corrects.
+  const budgetEnd = end - (perBatch - 1) * msgGap;
   let at = from.getTime();
   return queue.map((row, i) => {
-    const remaining = queue.length - i;
-    const even = remaining > 0 ? (end - at) / remaining : settings.gapCapMs * WOBBLE;
-    const gap = Math.min(
-      Math.max(even, settings.gapMinMs * WOBBLE),
-      settings.gapCapMs * WOBBLE,
-    );
-    at += gap;
+    if (i % perBatch === 0) {
+      const batchesLeft = Math.ceil((queue.length - i) / perBatch);
+      const even = batchesLeft > 0 ? (budgetEnd - at) / batchesLeft : settings.gapCapMs * WOBBLE;
+      at += Math.min(
+        Math.max(even, settings.gapMinMs * WOBBLE),
+        settings.gapCapMs * WOBBLE,
+      );
+    } else {
+      at += msgGap;
+    }
     return { ...row, at: new Date(at), late: at > end.getTime() };
   });
 }
@@ -283,10 +329,9 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     log.info(`📤 Handed ${row.name} (${row.phone}) to the operator — ${reason}`);
   }
 
-  // The previous auto-send, held until the next tick can ask whether it landed. In memory on
-  // purpose: a restart loses at most one pending check, and persisting it would mean a file
-  // write per send to buy back one line of an evening report.
-  let lastSend = null;
+  // The previous tick's auto-sends, held until the next tick can ask whether they landed.
+  // One entry per message, so a batch of three is three checks rather than one.
+  let pending = [];
 
   let failStreak = 0;
   const FAIL_LIMIT = config.drip?.failLimit ?? 5;
@@ -295,7 +340,9 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   }
   if (auto) {
     log.info(`💧 Drip AUTO — the bot sends, ${settings.startHour}:00-${settings.endHour}:00, ` +
-             `≥${Math.round(settings.gapMinMs / 60000)}m apart, gap adapts to the queue`);
+             `${settings.batchSize} per batch ` +
+             `${Math.round(settings.msgGapMinMs / 1000)}-${Math.round(settings.msgGapMaxMs / 1000)}s apart, ` +
+             `batches ≥${Math.round(settings.gapMinMs / 60000)}m apart, gap adapts to the queue`);
   }
 
   // ── Are they still in the groups? ──────────────────────────────────────────
@@ -397,6 +444,24 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     return sock.sendMessage(jid, content);
   }
 
+  // Put the account back to "offline" when a batch is done.
+  //
+  // The socket connects with markOnlineOnConnect:false (core/index.js), so it starts invisible
+  // — but 'composing' flips the account to available for as long as WhatsApp cares to hold it,
+  // and nothing ever flipped it back. The result is a number that is never seen to leave: it
+  // appears, types, and then just stays there until the next reminder. A real operator's phone
+  // shows up, sends, and drops to "last seen at". This is that drop.
+  //
+  // Honest about what it buys: presence is NOT a documented or demonstrated ban signal — bans
+  // track message volume, reachouts to non-contacts, and block/report rate, none of which this
+  // touches. It is cheap coherence, not protection. What it DOES fix for certain is a linked
+  // device that reports itself permanently online suppressing push notifications on the
+  // operator's own phone, which is the thing that broke the manual drip in July.
+  async function goOffline(sock) {
+    try { await sock?.sendPresenceUpdate?.('unavailable'); }
+    catch (err) { log.warn(`⚠️  Going offline failed: ${err.message}`); }
+  }
+
   // One reminder, sent by the bot. Returns false rather than throwing when the socket is not
   // there, so tick() can retry the same member shortly instead of burning their slot.
   async function autoSend(row) {
@@ -453,10 +518,15 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     // `pid` is what lets the check survive a restart honestly — see checkLastSend. The
     // tracker keeps its receipts in memory, so the process that sent a message is the only
     // one that can ever say what became of it.
-    lastSend = receipt?.key?.id
-      ? { id: receipt.key.id, name: row.name, phone: row.phone, at: Date.now(), row, pid: process.pid }
-      : null;
-    if (!lastSend) log.warn(`⚠️  No message id back for ${row.phone} — delivery cannot be confirmed`);
+    //
+    // A LIST, because a tick now sends a batch. Holding only the most recent one meant two of
+    // every three sends were never checked at all — and an unchecked send is exactly the
+    // failure this reports as a success.
+    if (receipt?.key?.id) {
+      pending.push({ id: receipt.key.id, name: row.name, phone: row.phone, at: Date.now(), row, pid: process.pid });
+    } else {
+      log.warn(`⚠️  No message id back for ${row.phone} — delivery cannot be confirmed`);
+    }
 
     log.info(`💧 Auto-sent ${labelFor(row)} → ${row.name} (${row.phone})${tag}`);
     return true;
@@ -560,8 +630,12 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   function scheduleNext(split = {}) {
     clearTimer();
     const remaining = Object.values(split).reduce((a, b) => a + b, 0);
+    // Batches left, not members left. Dividing the window by members would pace a 53-member
+    // day as 53 gaps, hit the floor, and then stop a third of the way through it at 6 PM
+    // having sent everyone — the day would end hours early and the floor would look broken.
+    const batchesLeft = Math.ceil(remaining / settings.batchSize);
     const gap = auto
-      ? adaptiveGapMs(remaining, msLeftInWindow(), settings)
+      ? adaptiveGapMs(batchesLeft, msLeftInWindow(), settings)
       : randomBetween(settings.gapMinMs, settings.gapMaxMs);
     log.info(`💧 Next ${auto ? 'auto send' : 'drip push'} in ${Math.round(gap / 60000)}m` +
              (auto ? ` (${describeQueue(split)} left)` : ''));
@@ -606,13 +680,23 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   // sent a reminder at 17:38, the process restarted at 17:43, and the tick that followed had
   // nothing to check — no delivery, no report, no handoff, and no ping to say so. A deploy
   // is not a delivery receipt.
+  // A tick sends a batch, so this asks the question once per message in it. `state.lastSend`
+  // is read as a one-element list so a bot that restarts across this upgrade still checks the
+  // send it made under the old shape. ponytail: shim, not a migration — state resets at
+  // midnight anyway.
   async function checkLastSend(state) {
-    const prev = lastSend || state.lastSend;
-    if (!auto || !prev) return;
-    lastSend = null;
+    const prevs = pending.length
+      ? pending
+      : (state.pending || [state.lastSend].filter(Boolean));
+    if (!auto || prevs.length === 0) return;
+    pending = [];
+    state.pending = null;
     state.lastSend = null;
     saveState(state);
+    for (const prev of prevs) await checkOne(prev, state);
+  }
 
+  async function checkOne(prev, state) {
     // A DIFFERENT process cannot answer the question. The tracker holds its receipts in
     // memory, so after a restart every id looks exactly like one nothing ever came back
     // about — and reporting that as "it never left the bot" is a guess dressed up as a fact.
@@ -710,101 +794,144 @@ ${detail || ''}
 
     await store.refresh();
     const members = store.getAll();
-    const batch = buildDripBatch({ members, config, pushed: state.pushed, contactLog: loadQrLog(), max: auto ? 1 : 3 });
+    const batch = buildDripBatch({
+      members, config, pushed: state.pushed, contactLog: loadQrLog(), max: settings.batchSize,
+    });
     if (batch.length === 0) return finish(state);
 
     if (auto) {
-      // Gone from every group → no message, and no slot spent either: mark them done for
-      // today and come straight back for the next member rather than idling a full gap.
       const sock = sender.getSock?.();
-      if (sock?.user && !(await stillInGroups(batch[0].phone, sock))) {
-        log.info(`👋 Skipped ${batch[0].name} (${batch[0].phone}) — not in any group any more`);
-        state.pushed = [...state.pushed, String(batch[0].phone)];
-        state.left = [...(state.left || []), `${batch[0].name} ${batch[0].phone}`];
-        saveState(state);
-        // Said now, not only in tonight's summary. These are the two things the operator can
-        // actually act on the same day — kick them from the sheet, or fix a wrong number —
-        // and a line buried in pm2 logs is a line nobody reads. The end-of-day report keeps
-        // listing them too, so a missed push is not a lost record.
-        await notify(
-          `👋 *${batch[0].name}* (${batch[0].phone}) is not in any group any more — not messaged.\n` +
-          `\`kick ${batch[0].phone}\` so they stop coming round.`);
-        return tick();
-      }
+      // Has anything in this batch actually gone out? Decides whether the NEXT member waits
+      // for an intra-batch gap — a skip or a handoff transmitted nothing, so the member after
+      // it should not be held back as if it had.
+      let transmitted = false;
+      // Set when the socket is merely not ready yet: abandon the rest of the batch and come
+      // back in five minutes with everyone still owed their message.
+      let held = false;
+      // Rows that cost nothing — nobody was messaged and no operator was buzzed. A batch made
+      // entirely of these should not idle a full gap.
+      let skipped = 0;
 
-      // Link-only: the account is restricted, so an attempt would be a rejected reachout and
-      // nothing else. Skip straight to the operator, keep the pacing, keep the queue moving.
-      if (state.linkOnly) {
-        await handToOperator(batch[0], state.linkOnlyReason || 'the bot cannot send today');
-        state.pushed = [...state.pushed, String(batch[0].phone)];
-        state.handed = [...(state.handed || []), `${batch[0].name} ${batch[0].phone}`];
-        saveState(state);
-        return scheduleNext(countByCohort({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
-      }
-
-      // Recorded only on a send that actually happened. A member whose message failed is
-      // still owed one and must come back around, not be marked done by a socket hiccup.
-      let ok = false;
-      let why = 'socket not ready';
-      try { ok = await autoSend(batch[0]); }
-      catch (err) {
-        why = err.message;
-        log.error(`❌ Auto-send to ${batch[0].phone} failed: ${err.message}`);
-      }
-
-      // WhatsApp says there is no account on that number. Not a failure to retry — retrying
-      // it every five minutes would burn the day on one bad row — and emphatically not a
-      // silent success either. Mark it handled, name it in tonight's report, move on.
-      if (ok === 'unreachable') {
-        log.warn(`📵 ${batch[0].name} (${batch[0].phone}) is not on WhatsApp — nothing sent`);
-        state.pushed = [...state.pushed, String(batch[0].phone)];
-        state.unreachable = [...(state.unreachable || []), `${batch[0].name} ${batch[0].phone}`];
-        saveState(state);
-        await notify(
-          `📵 *${batch[0].name}* (${batch[0].phone}) is not on WhatsApp — nothing could be sent.\n` +
-          `Check the number in the sheet, or \`skip ${batch[0].phone}\`.`);
-        return tick();
-      }
-
-      if (!ok) {
-        // A socket that is merely not ready yet is worth ONE quick retry — a reconnect takes
-        // seconds and the member keeps their slot. Anything else, or a second failure, goes
-        // straight to the operator: the member is owed their reminder today, and which
-        // channel carries it matters far less than whether it arrives at all.
-        const firstTry = !(state.retried || []).includes(String(batch[0].phone));
-        if (firstTry && /socket/i.test(why)) {
-          state.retried = [...(state.retried || []), String(batch[0].phone)];
-          saveState(state);
-          return retrySoon();
+      for (const row of batch) {
+        if (transmitted) {
+          const gap = randomBetween(settings.msgGapMinMs, settings.msgGapMaxMs);
+          // Logged, not just slept: the spacing inside a batch is the whole point of the
+          // batch, and "3 sends at 09:14" in pm2 with no line between them is indistinguishable
+          // from the blast this exists to prevent.
+          log.info(`💧 Next in this batch in ${Math.round(gap / 1000)}s`);
+          await pause(gap);
         }
 
-        await handToOperator(batch[0], why);
-        state.pushed = [...state.pushed, String(batch[0].phone)];
-        state.handed = [...(state.handed || []), `${batch[0].name} ${batch[0].phone}`];
-        saveState(state);
-
-        // The streak still matters, but it now means "the bot cannot send at all today"
-        // rather than "stop chasing people". Five in a row flips the whole day to link-only,
-        // which keeps every remaining member on schedule without another rejected reachout.
-        if (++failStreak >= FAIL_LIMIT && !state.linkOnly) {
-          state.linkOnly = true;
-          state.linkOnlyReason = why;
+        // Gone from every group → no message, and no slot spent either: mark them done for
+        // today and move straight to the next member of the batch.
+        if (sock?.user && !(await stillInGroups(row.phone, sock))) {
+          log.info(`👋 Skipped ${row.name} (${row.phone}) — not in any group any more`);
+          state.pushed = [...state.pushed, String(row.phone)];
+          state.left = [...(state.left || []), `${row.name} ${row.phone}`];
           saveState(state);
-          log.warn(`📤 ${failStreak} failures in a row — link-only for the rest of today`);
+          // Said now, not only in tonight's summary. These are the two things the operator can
+          // actually act on the same day — kick them from the sheet, or fix a wrong number —
+          // and a line buried in pm2 logs is a line nobody reads. The end-of-day report keeps
+          // listing them too, so a missed push is not a lost record.
           await notify(
-            `📤 *Handing today over to you* — ${failStreak} sends failed in a row.\n` +
-            `Last error: ${why}\n\n` +
-            `The bot will keep working the queue on the same schedule and send you a link ` +
-            `for each person instead of messaging them itself. Nobody is skipped.`);
+            `👋 *${row.name}* (${row.phone}) is not in any group any more — not messaged.\n` +
+            `\`kick ${row.phone}\` so they stop coming round.`);
+          skipped++;
+          continue;
         }
-        return scheduleNext(countByCohort({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
+
+        // Link-only: the account is restricted, so an attempt would be a rejected reachout and
+        // nothing else. Skip straight to the operator, keep the pacing, keep the queue moving.
+        if (state.linkOnly) {
+          await handToOperator(row, state.linkOnlyReason || 'the bot cannot send today');
+          state.pushed = [...state.pushed, String(row.phone)];
+          state.handed = [...(state.handed || []), `${row.name} ${row.phone}`];
+          saveState(state);
+          continue;
+        }
+
+        // Recorded only on a send that actually happened. A member whose message failed is
+        // still owed one and must come back around, not be marked done by a socket hiccup.
+        let ok = false;
+        let why = 'socket not ready';
+        try { ok = await autoSend(row); }
+        catch (err) {
+          why = err.message;
+          log.error(`❌ Auto-send to ${row.phone} failed: ${err.message}`);
+        }
+
+        // WhatsApp says there is no account on that number. Not a failure to retry — retrying
+        // it every five minutes would burn the day on one bad row — and emphatically not a
+        // silent success either. Mark it handled, name it in tonight's report, move on.
+        if (ok === 'unreachable') {
+          log.warn(`📵 ${row.name} (${row.phone}) is not on WhatsApp — nothing sent`);
+          state.pushed = [...state.pushed, String(row.phone)];
+          state.unreachable = [...(state.unreachable || []), `${row.name} ${row.phone}`];
+          saveState(state);
+          await notify(
+            `📵 *${row.name}* (${row.phone}) is not on WhatsApp — nothing could be sent.\n` +
+            `Check the number in the sheet, or \`skip ${row.phone}\`.`);
+          skipped++;
+          continue;
+        }
+
+        if (!ok) {
+          // A socket that is merely not ready yet is worth ONE quick retry — a reconnect takes
+          // seconds and the member keeps their slot. Anything else, or a second failure, goes
+          // straight to the operator: the member is owed their reminder today, and which
+          // channel carries it matters far less than whether it arrives at all.
+          //
+          // The whole rest of the batch is abandoned with it, unmarked: a socket that is not
+          // there for this member is not there for the next two either, and attempting them
+          // would spend three handoffs on one reconnect.
+          const firstTry = !(state.retried || []).includes(String(row.phone));
+          if (firstTry && /socket/i.test(why)) {
+            state.retried = [...(state.retried || []), String(row.phone)];
+            saveState(state);
+            held = true;
+            break;
+          }
+
+          await handToOperator(row, why);
+          state.pushed = [...state.pushed, String(row.phone)];
+          state.handed = [...(state.handed || []), `${row.name} ${row.phone}`];
+          saveState(state);
+
+          // The streak still matters, but it now means "the bot cannot send at all today"
+          // rather than "stop chasing people". Five in a row flips the whole day to link-only,
+          // which keeps every remaining member on schedule without another rejected reachout.
+          if (++failStreak >= FAIL_LIMIT && !state.linkOnly) {
+            state.linkOnly = true;
+            state.linkOnlyReason = why;
+            saveState(state);
+            log.warn(`📤 ${failStreak} failures in a row — link-only for the rest of today`);
+            await notify(
+              `📤 *Handing today over to you* — ${failStreak} sends failed in a row.\n` +
+              `Last error: ${why}\n\n` +
+              `The bot will keep working the queue on the same schedule and send you a link ` +
+              `for each person instead of messaging them itself. Nobody is skipped.`);
+          }
+          continue;
+        }
+
+        failStreak = 0;
+        transmitted = true;
+        state.pushed = [...state.pushed, String(row.phone)];
+        // On disk, not just in memory: a restart before the next tick is what silently ate the
+        // delivery check for Vikramjeet on 25-08-2026.
+        state.pending = pending;
+        saveState(state);
       }
-      failStreak = 0;
-      state.pushed = [...state.pushed, String(batch[0].phone)];
-      // On disk, not just in memory: a restart before the next tick is what silently ate the
-      // delivery check for Vikramjeet on 25-08-2026.
-      state.lastSend = lastSend;
-      saveState(state);
+
+      // Back to "last seen at" until the next batch. See goOffline — a number that is never
+      // seen to leave is the one part of this the recipient can actually notice.
+      if (transmitted) await goOffline(sock);
+
+      if (held) return retrySoon();
+      // Nothing transmitted and nothing handed over: every row was a member who had already
+      // left or a number with no account. They cost no message and no operator attention, so
+      // come straight back for the next batch rather than idling the gap they did not use.
+      if (!transmitted && skipped === batch.length) return tick();
       return scheduleNext(countByCohort({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
     }
 
@@ -932,8 +1059,11 @@ ${detail || ''}
       try {
         const split = countByCohort({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() });
         const queued = Object.values(split).reduce((a, b) => a + b, 0);
+        // Batches the window holds × members per batch. Counting batches alone under-reported
+        // capacity threefold and cried overflow on ordinary days.
         const capacity = Math.floor(
-          ((settings.endHour - settings.startHour) * 3600000) / (settings.gapMinMs * 1.2));
+          ((settings.endHour - settings.startHour) * 3600000) / (settings.gapMinMs * 1.2),
+        ) * settings.batchSize;
         if (queued > capacity) {
           await notify(
             `⚠️ *${describeQueue(split)} reminders queued, room for about ${capacity}* today.\n` +

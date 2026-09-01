@@ -159,6 +159,18 @@ The July 2026 rework exists because payment-demand DMs are our #1 ban signal. Ru
 > What has NOT changed: no bot sends anything to a **member** on a schedule. The drip pushes
 > links to *you*; you send them. That distinction is the whole design.
 
+> **01 Sep 2026 — bot-nitin only: the drip now sends by itself.** The line above still holds
+> for the three friend bots, which have no socket and cannot do otherwise. bot-nitin is in
+> `"drip": { "mode": "auto" }` and transmits over its own linked device, 6 AM-6 PM.
+>
+> The rate is unchanged from what the thumb was doing: three messages per batch, 40-180 s
+> apart inside the batch, batches ≥18 min apart and stretched to fill the window. What is
+> gone is the failure mode that caused BOTH bans — a stack of unseen Telegram pushes cleared
+> by hand in one sitting. The bot cannot fail to notice its own timer.
+>
+> `drip stop` still ends the day, and five failed sends in a row hand the whole remaining
+> queue back to you as links automatically.
+
 - ✅ **Group reminder mode is the default for fragile numbers.** One tagged digest in the paid group replaces
   all cold DMs. Members are in that group by choice — near-zero report risk.
 - ✅ **No message tags more than 20 people.** Larger lists split automatically and are spaced apart. Bulk
@@ -174,6 +186,9 @@ The July 2026 rework exists because payment-demand DMs are our #1 ban signal. Ru
 - ❌ Don't send reminders late at night (recipients report night-time business messages far more).
 
 ### The drip (18 Aug 2026) — the bot paces you, you still send
+
+*On the friend bots.* On bot-nitin the same pacing now drives the bot's own socket — see the 01 Sep 2026 note
+above; everything below about spacing, volume and catch-up still applies, it is just the bot obeying it.
 
 Reminders are sent **by hand**, from your own phone, and that has not changed. What changed is that you no
 longer have to remember. From 9 AM the bot pushes you up to three tap-to-send links per Telegram message,

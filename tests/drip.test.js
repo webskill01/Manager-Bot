@@ -362,7 +362,7 @@ function fakeSock() {
     sock: {
       user: { id: 'bot' },
       async presenceSubscribe(jid) { presence.push('sub:' + jid); },
-      async sendPresenceUpdate(state, jid) { presence.push(state + ':' + jid); },
+      async sendPresenceUpdate(state, jid) { presence.push(jid ? state + ':' + jid : state); },
       async sendMessage(jid, msg) { sent.push({ jid, msg }); },
     },
   };
@@ -386,17 +386,22 @@ test('auto mode sends over WhatsApp itself and pushes no link', async () => {
   assert.equal(sent[0].jid, '919000000001@s.whatsapp.net');
   assert.ok(sent[0].msg.text.includes('A'), 'the reminder text did not reach the member');
   assert.deepEqual(notices, [], 'auto mode must not buzz the operator per send');
-  // Typing before the message, stopped after — the cheapest human tell there is.
+  // Typing before the message, stopped after, then the account drops back to "last seen at"
+  // instead of sitting online until the next reminder — the cheapest human tells there are.
   assert.deepEqual(presence, [
     'sub:919000000001@s.whatsapp.net',
     'composing:919000000001@s.whatsapp.net',
     'paused:919000000001@s.whatsapp.net',
+    'unavailable',
   ]);
   assert.ok(engine.status().includes('auto-send'));
 });
 
-test('one member per tick in auto mode, not the manual three', async () => {
-  const { sock, sent } = fakeSock();
+// Auto mode works the queue in the same batches manual mode pushes — one member per cohort,
+// three per tick. It used to take one, which on a 929-member sheet left ~23 members unsent
+// every single day; see DEFAULT_BATCH_SIZE for the arithmetic.
+test('a tick sends the whole batch, one member per cohort', async () => {
+  const { sock, sent, presence } = fakeSock();
   const members = [member('A', '9000000001', 0), member('B', '9000000003', 5), member('C', '9000000005', 6)];
   const engine = createDripEngine(
     engineCfg({ drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } }),
@@ -405,7 +410,37 @@ test('one member per tick in auto mode, not the manual three', async () => {
     { getSock: () => sock, warmingUp: () => false },
   );
   await engine.tick();
-  assert.equal(sent.length, 1);
+  assert.equal(sent.length, 3);
+  // Online for the batch, offline once at the end of it — not once per message.
+  assert.equal(presence.filter(p => p === 'unavailable').length, 1);
+});
+
+// The batch is the ban risk this change introduces, and the gap between its messages is the
+// whole mitigation. Asserted through the log line rather than the clock so the check costs
+// nothing: two gaps for three messages, none in front of the first, each inside the range.
+test('the messages of a batch are spaced, and the first one is not delayed', async () => {
+  const { sock, sent } = fakeSock();
+  const lines = [];
+  const log = { info: (t) => lines.push(t), warn: () => {}, error: () => {} };
+  const members = [member('A', '9000000001', 0), member('B', '9000000003', 5), member('C', '9000000005', 6)];
+  const engine = createDripEngine(
+    engineCfg({ drip: {
+      mode: 'auto', startHour: 0, endHour: 24, humanDelay: false,
+      msgGapMinMs: 30000, msgGapMaxMs: 90000,
+    } }),
+    log, { refresh: async () => {}, getAll: () => members },
+    { autoRenewDue: async () => [] }, async () => {},
+    { getSock: () => sock, warmingUp: () => false },
+  );
+  await engine.tick();
+
+  const gaps = lines.filter(t => t.includes('Next in this batch'))
+    .map(t => Number(t.match(/(\d+)s/)[1]));
+  assert.equal(sent.length, 3);
+  assert.equal(gaps.length, 2, 'three messages need two gaps, and none before the first');
+  for (const g of gaps) {
+    assert.ok(g >= 30 && g <= 90, `gap ${g}s fell outside the configured 30-90s`);
+  }
 });
 
 // A socket hiccup must not mark someone as reminded — they are still owed a message.
@@ -473,7 +508,8 @@ test('a QR list rotates per member, and one path still works', async () => {
 // hides for a week.
 test('arm warns when the day does not fit, and stays quiet when it does', async () => {
   const { sock } = fakeSock();
-  const many = Array.from({ length: 60 }, (_, i) => member('M' + i, '90000' + String(i).padStart(5, '0'), 0));
+  // 12h / (20m x 1.2) = 30 batches x 3 per batch = ~90 members a day. 120 overflows it.
+  const many = Array.from({ length: 120 }, (_, i) => member('M' + i, '90000' + String(i).padStart(5, '0'), 0));
   const build = (members) => {
     const notices = [];
     const engine = createDripEngine(
@@ -487,8 +523,8 @@ test('arm warns when the day does not fit, and stays quiet when it does', async 
 
   const busy = build(many);
   await busy.engine.arm();
-  assert.equal(busy.notices.length, 1, 'a 60-deep queue armed silently');
-  assert.match(busy.notices[0], /60 reminders queued, room for about 3\d/);
+  assert.equal(busy.notices.length, 1, 'a 120-deep queue armed silently');
+  assert.match(busy.notices[0], /120 reminders queued, room for about 90/);
 
   const quiet = build(many.slice(0, 5));
   await quiet.engine.arm();

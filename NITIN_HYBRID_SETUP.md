@@ -576,18 +576,38 @@ formulas. If the bots wrote money too there would be two answers to "what did we
 
 ## Until the Cloud API is live: the drip
 
-Cloud API is blocked on billing, so reminders are still sent **by hand**. The drip removes the
-part you kept getting wrong — remembering — without touching the part that keeps you safe.
+Cloud API is blocked on billing, so reminders do not go through Meta. The drip removes the part
+you kept getting wrong — remembering — without touching the part that keeps you safe.
 
-At 9 AM a `drip-arm` cron builds the day's three queues (due today, day-5, day-6) and then
-pushes you one Telegram message every 18–25 minutes until 9 PM, each carrying up to three
-tap-to-send `wa.me` links — one per queue. You tap, WhatsApp opens with the message typed,
-you hit send. It leaves from your own phone as a normal human message.
+**Auto since 01 Sep 2026.** At 6 AM a `drip-arm` cron builds the day's four queues (due today,
+day-5, day-6, and the missed backlog) and the bot then sends them itself over its own linked
+device until 6 PM. Both crons and the first send carry jitter, so nothing lands at a time
+anyone could set a watch by: `drip-arm` fires 06:00–06:20, and the day's first message goes out
+up to 40 minutes after that.
+
+The pacing is exactly what the thumb was doing before, because that is the cadence that was
+verified working for a week after the restriction lifted:
+
+- **three per batch** — one member from each cohort, same as the links it used to push
+- **40–180 s between the messages of a batch**, on top of a per-message typing simulation
+- **≥18 min between batches**, stretched to fill the window so a light day is not front-loaded
+- the account goes back to **offline / "last seen at"** after each batch instead of sitting
+  online all day
 
 ```json
 "dripIds": ["5332135237"],
-"drip": { "startHour": 9, "endHour": 21, "gapMinMs": 1080000, "gapMaxMs": 1500000 }
+"drip": {
+  "mode": "auto", "startHour": 6, "endHour": 18,
+  "gapMinMs": 1080000, "gapMaxMs": 1500000,
+  "gapCapMs": 7200000, "firstDelayMaxMs": 2400000
+}
 ```
+
+Optional knobs, all defaulted: `batchSize` (3 — set 1 for the old one-at-a-time behaviour),
+`msgGapMinMs` / `msgGapMaxMs` (40000 / 180000).
+
+Anything the bot cannot send it hands back to you as a tap-to-send link, and five failures in a
+row hand over the whole rest of the day. `drip stop` ends it.
 
 `dripIds` is who gets buzzed — deliberately **not** `allowedTelegramIds`, which stays as the
 command allow-list so Tanishq keeps command access and the digests without ~34 buzzes a day.

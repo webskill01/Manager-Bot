@@ -488,7 +488,9 @@ export async function startBot(config, log, authDir) {
                 overdueEngine.resume(store, getSock, getBroadcastJids);
               }
               // NOT gated on usesCloudApi: the drip is what runs precisely while the Cloud
-              // API is still blocked on billing, and it transmits nothing over WhatsApp.
+              // API is still blocked on billing. In manual mode it transmits nothing over
+              // WhatsApp; in auto mode (bot-nitin) it does, under its own pacing — resume()
+              // only ever re-arms a timer, it never replays a missed send.
               dripEngine?.resume();
             }, msLeft + 1000);
           } else {
