@@ -10,11 +10,13 @@
 // what a count is worth. Fees change; a formula in one place changes with them, and a fee
 // duplicated into four bot configs does not.
 
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { google } from 'googleapis';
-import { datesBetween } from '../core/ledger.js';
-import { formatDate, loadConfig } from '../core/globalConfig.js';
+// datesBetween lives in globalConfig; ledger.js imports it but never re-exported it, so the
+// old '../core/ledger.js' import here threw before main() ever ran.
+import { formatDate, parseDate, datesBetween, loadConfig } from '../core/globalConfig.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -30,10 +32,28 @@ const HEADER = [
 ];
 
 // ₹90 a head on bot-nitin (joins and renewals price the same), and a flat ₹25 per head from
-// each friend bot — that is what they actually remit, regardless of what they charge.
+// a friend bot — that is what they actually remit, regardless of what they charge.
 const OUR_RATE = cfg.joining.fee;      // 90
 const THEIR_CUT = 25;
 const OUR_SHARE = 2;                   // revenue by us splits two ways
+
+// 01-09-2026: bot-abhi and bot-aayush2 stopped being friend bots. We run them, so their
+// revenue is ours IN FULL and splits two ways, instead of them remitting ₹25 a head.
+//
+// Date-aware rather than a flat rewrite, and that is the whole point of this constant. Rows
+// before the takeover keep the old shape because that is what actually happened and what was
+// actually settled with Abhinav and Aayush; recomputing August at the new split would book
+// revenue nobody ever paid us. bot-sachin2 is unaffected — still a friend bot, still ₹25.
+const TAKEOVER = '01-09-2026';
+
+// Read raw, NOT through loadConfig: loadConfig writes a bot's .env into process.env and is
+// therefore one-bot-per-process. Only the price is wanted here anyway.
+const feeOf = (bot) =>
+  JSON.parse(fs.readFileSync(path.join(ROOT, 'bots', bot, 'config.json'), 'utf8')).joining.fee;
+const ABHI_FEE = feeOf('bot-abhi');        // 100
+const AAYUSH_FEE = feeOf('bot-aayush2');   // 99
+
+const onOrAfter = (date, cutoff) => parseDate(date) >= parseDate(cutoff);
 
 // The tab name is ALWAYS quoted. "LOG" is also a Sheets function (LOG(value, base)), so a
 // bare LOG!$C:$C parses as a call and every formula returns #N/A "Argument must be a range".
@@ -48,7 +68,17 @@ const both = (bot, row) =>
 const one = (col, bot, row) =>
   `SUMIFS(${T}!$${col}:$${col},${T}!$A:$A,$A${row},${T}!$B:$B,"${bot}")`;
 
-function formulaRow(row) {
+function formulaRow(row, date) {
+  const ours = onOrAfter(date, TAKEOVER);
+  // H  REVENUE BY US — everything we own outright, at each bot's own price.
+  const byUs = ours
+    ? `=(B${row}+C${row})*${OUR_RATE}+D${row}*${ABHI_FEE}+F${row}*${AAYUSH_FEE}`
+    : `=(B${row}+C${row})*${OUR_RATE}`;
+  // J  REVENUE BY THEM — already a PER-PERSON figure (L adds it whole), because ₹25 is what
+  // each of us receives per head from a 50-25-25 bot. After the takeover only Sachin's is one.
+  const byThem = ours
+    ? `=E${row}*${THEIR_CUT}`
+    : `=(D${row}+E${row}+F${row})*${THEIR_CUT}`;
   return [
     `=${one('C', 'bot-nitin', row)}`,          // B  NEW JOINED
     `=${one('D', 'bot-nitin', row)}`,          // C  RENEWED (weighted: a half-price one is 0.5)
@@ -56,9 +86,9 @@ function formulaRow(row) {
     `=${both('bot-sachin2', row)}`,            // E  SACHIN
     `=${both('bot-aayush2', row)}`,            // F  AAYUSH
     0,                                          // G  BOT 2 — no such bot yet
-    `=(B${row}+C${row})*${OUR_RATE}`,          // H  REVENUE BY US
+    byUs,                                       // H  REVENUE BY US
     `=H${row}/${OUR_SHARE}`,                   // I  PER PERSON BY US
-    `=(D${row}+E${row}+F${row})*${THEIR_CUT}`, // J  REVENUE BY THEM
+    byThem,                                     // J  REVENUE BY THEM
     `=G${row}*${THEIR_CUT}`,                   // K  BOT 2 REVENUE
     `=I${row}+J${row}+K${row}`,                // L  TOTAL PER PERSON
   ];
@@ -123,7 +153,7 @@ async function main() {
     spreadsheetId,
     range: `${SUMMARY}!B2:L${dates.length + 1}`,
     valueInputOption: 'USER_ENTERED',
-    requestBody: { values: dates.map((_, i) => formulaRow(i + 2)) },
+    requestBody: { values: dates.map((d, i) => formulaRow(i + 2, d)) },
   });
 
   console.log(`✅ ${SUMMARY}: ${dates.length} rows, ${startDate} → ${through}`);
