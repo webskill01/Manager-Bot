@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { randomBetween, todayStr, friendlyDate, sleep, normalizePhone, pickVariant, resolveWhatsAppJid } from './globalConfig.js';
+import { randomBetween, todayStr, friendlyDate, sleep, normalizePhone, pickVariant, resolveWhatsAppJid, lidFor } from './globalConfig.js';
 import { buildDmList } from './dmList.js';
 import { usesCloudApi } from './cloudApiSender.js';
 
@@ -355,48 +355,72 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   //
   // One fetch a day, held in memory. groupFetchAllParticipating is a single round trip for
   // every group at once; the per-group loop is the fallback for a Baileys build without it.
-  let roster = null;          // Set<phone10>, or null when unknown
+  // { phones, lids, groups } — or null when the roster cannot be trusted today.
+  let roster = null;
   let rosterDay = null;
 
+  // Reads EVERY paid group, and says which ones it managed to read.
+  //
+  // Which ones matters more than how many participants came back. A member of this sheet is
+  // typically in one or two of the twelve city groups, so a roster missing ONE group is not
+  // slightly incomplete for everybody — it is completely wrong for exactly the people whose
+  // only group it was, and they are the ones reported as having left. That is the false
+  // "not in any group" the operator kept having to check by hand.
+  //
+  // groupFetchAllParticipating is a single round trip for all of them; the per-group loop is
+  // the fallback for a Baileys build without it, and now also fills whatever the bulk call
+  // left out — it returns the groups the socket has, which is not always the groups we asked
+  // about.
   async function loadRoster(sock) {
-    const phones = new Set();
-    let metas = null;
+    const want = config.paidGroups || [];
+    const byId = new Map();
     try {
       if (typeof sock.groupFetchAllParticipating === 'function') {
-        metas = Object.values(await sock.groupFetchAllParticipating())
-          .filter(m => config.paidGroups?.includes(m.id));
+        for (const m of Object.values(await sock.groupFetchAllParticipating() || {})) {
+          if (want.includes(m?.id)) byId.set(m.id, m);
+        }
       }
     } catch (err) { log.warn(`⚠️  Roster fetch failed: ${err.message}`); }
 
-    if (!metas) {
-      metas = [];
-      for (const id of config.paidGroups || []) {
-        try { metas.push(await sock.groupMetadata(id)); }
-        catch (err) { log.warn(`⚠️  Roster: group ${id} unreadable — ${err.message}`); }
-        await sleep(1200);
-      }
+    for (const id of want) {
+      if (byId.has(id)) continue;
+      try { byId.set(id, await sock.groupMetadata(id)); }
+      catch (err) { log.warn(`⚠️  Roster: group ${id} unreadable — ${err.message}`); }
+      await sleep(1200);
     }
 
-    for (const meta of metas) {
+    const phones = new Set();
+    const lids = new Set();
+    for (const meta of byId.values()) {
       for (const p of meta?.participants || []) {
-        // LID-addressed groups report p.id as @lid, with the phone JID on p.phoneNumber.
+        // LID-addressed groups report p.id as @lid, with the phone JID on p.phoneNumber —
+        // when they report it at all. A participant that resolves to no phone is NOT proof
+        // of anything about phones; it is a second name for someone, so keep it as one.
         const jid = p.phoneNumber || p.jid || p.id || '';
-        if (!jid.endsWith('@s.whatsapp.net')) continue;
-        const ph = normalizePhone(jid.replace('@s.whatsapp.net', '').replace(/\D/g, ''));
-        if (ph && ph.length >= 10) phones.add(ph);
+        if (jid.endsWith('@s.whatsapp.net')) {
+          const ph = normalizePhone(jid.replace('@s.whatsapp.net', '').replace(/\D/g, ''));
+          if (ph && ph.length >= 10) phones.add(ph);
+        }
+        for (const alt of [p.id, p.lid, p.jid]) {
+          if (typeof alt === 'string' && alt.endsWith('@lid')) lids.add(normalizeLid(alt));
+        }
       }
     }
-    return phones;
+    return { phones, lids, groups: new Set(byId.keys()) };
   }
 
-  // Fail OPEN, on purpose and in three separate places: an unreadable roster, a roster that
-  // resolved implausibly few phones, and any thrown error all mean "send anyway".
+  // `12345:6@lid` and `12345@lid` are the same participant. Compared as strings otherwise.
+  const normalizeLid = (v) => `${String(v).split('@')[0].split(':')[0]}@lid`;
+
+  // Fail OPEN, on purpose and in five separate places: an unreadable roster, a roster that
+  // missed even one paid group, a roster that resolved implausibly few members, a member we
+  // cannot name in the way the group named them, and any thrown error — all mean "send
+  // anyway".
   //
   // The asymmetry is the whole design. Wrongly skipping a paying member costs real money and
   // is invisible — nobody complains that they were NOT asked to pay. Wrongly messaging one
-  // person who left costs one possible report. In LID-era groups a chunk of participants
-  // cannot be resolved to a phone number at all, so a strict gate would quietly mute most of
-  // the sheet; the half-of-active floor is what catches that before it happens.
+  // person who left costs one possible report. So absence has to be PROVEN, and a roster can
+  // only prove absence about groups it actually read and identities it can actually match.
   async function stillInGroups(phone, sock) {
     const today = todayStr();
     if (rosterDay !== today) {
@@ -404,16 +428,40 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
       try { roster = await loadRoster(sock); }
       catch (err) { roster = null; log.warn(`⚠️  Roster unavailable: ${err.message}`); }
 
+      const want = config.paidGroups || [];
       const active = store.getAll().filter(m => m.status === 'ACTIVE').length;
-      if (roster && roster.size < active / 2) {
-        log.warn(`⚠️  Roster resolved only ${roster.size} phones against ${active} active ` +
+      const known = roster ? roster.phones.size + roster.lids.size : 0;
+      if (roster && roster.groups.size < want.length) {
+        const missing = want.filter(id => !roster.groups.has(id));
+        log.warn(`⚠️  Roster read ${roster.groups.size}/${want.length} paid groups — skipping ` +
+                 `the group check today (missing ${missing.join(', ')})`);
+        roster = null;
+      } else if (roster && known < active / 2) {
+        log.warn(`⚠️  Roster resolved only ${known} participants against ${active} active ` +
                  `members — too few to trust, skipping the group check today`);
         roster = null;
       } else if (roster) {
-        log.info(`👥 Roster — ${roster.size} phones across ${config.paidGroups?.length || 0} groups`);
+        log.info(`👥 Roster — ${roster.phones.size} phones + ${roster.lids.size} lids across ` +
+                 `${roster.groups.size} groups`);
       }
     }
-    return roster ? roster.has(normalizePhone(phone)) : true;
+    if (!roster) return true;
+    if (roster.phones.has(normalizePhone(phone))) return true;
+
+    // Not in the phone set. That is not absence yet: in LID-era groups a large share of
+    // participants arrive as an @lid with no phone attached, so the member may well be
+    // sitting right there under a name we have not resolved. Ask Baileys which @lid belongs
+    // to this number and look for that instead.
+    let lid = null;
+    try { lid = await lidFor(sock, `91${normalizePhone(phone)}@s.whatsapp.net`); }
+    catch (err) { log.warn(`⚠️  LID lookup failed for ${phone}: ${err.message}`); }
+    if (lid && roster.lids.has(normalizeLid(lid))) return true;
+
+    // No LID on file for them AND the roster is carrying participants nobody could name:
+    // "absent from the half of the roster we can read" is not absence. Say they are in.
+    if (!lid && roster.lids.size > 0) return true;
+
+    return false;
   }
 
   // What a real person does before a message appears: their client subscribes to the other
@@ -684,7 +732,10 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   // is read as a one-element list so a bot that restarts across this upgrade still checks the
   // send it made under the old shape. ponytail: shim, not a migration — state resets at
   // midnight anyway.
-  async function checkLastSend(state) {
+  //
+  // `last` is set by finish(): the window has closed, nothing will tick again, so anything
+  // still unresolved is reported now rather than given another grace period it will never get.
+  async function checkLastSend(state, { last = false } = {}) {
     const prevs = pending.length
       ? pending
       : (state.pending || [state.lastSend].filter(Boolean));
@@ -693,28 +744,57 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     state.pending = null;
     state.lastSend = null;
     saveState(state);
-    for (const prev of prevs) await checkOne(prev, state);
+    for (const prev of prevs) await checkOne(prev, state, { last });
+    // checkOne can put a message BACK on the list for one more look. Persist that, or a
+    // restart in the next gap loses it exactly the way state.pending was added to prevent.
+    if (pending.length) { state.pending = pending; saveState(state); }
   }
 
-  async function checkOne(prev, state) {
-    // A DIFFERENT process cannot answer the question. The tracker holds its receipts in
-    // memory, so after a restart every id looks exactly like one nothing ever came back
-    // about — and reporting that as "it never left the bot" is a guess dressed up as a fact.
-    // Say what is actually known, hand the member over, and let the cycle record forget them
-    // so the 'missed' cohort recovers them if the operator does not.
+  // Written down for the evening, not buzzed about.
+  //
+  // The cycle record is deliberately LEFT ALONE here, unlike a hard failure. This message
+  // reached WhatsApp; it is sitting on their servers waiting for a phone to come online. A
+  // member whose contact record is torn up comes back through the 'missed' cohort and gets a
+  // SECOND copy of a message that was always going to arrive — which is the duplicate the
+  // operator was seeing, dressed up as a rescue.
+  function noteUnconfirmed(prev, state, why) {
+    log.warn(`⚠️  ${prev.name} (${prev.phone}) — ${why}`);
+    state.undelivered = [...(state.undelivered || []), `${prev.name} ${prev.phone} — ${why}`];
+    saveState(state);
+  }
+
+  // Exactly one thing earns a buzz: a message that PROVABLY never left the bot. Everything
+  // else the operator gets told about at the end of the day and nowhere else.
+  //
+  // This used to hand the member over on any verdict that was not a confirmed delivery, and
+  // that is what produced "the bot could not reach them" for people who had just been
+  // messaged. Two of the three branches below are cases where the message DID go out, so the
+  // operator tapping the link sent a second copy of a reminder that had already landed —
+  // and after enough of those, the pings that DO matter stop being read.
+  async function checkOne(prev, state, { last = false } = {}) {
+    const v = tracker.verdict(prev.id);
+    if (v.ok) return;
+
+    // A DIFFERENT process sent this one. Its verdict is still worth asking for — a receipt
+    // that arrives after the reconnect lands in THIS tracker and proves delivery outright,
+    // which is why the question comes first — but a PENDING from it proves nothing at all:
+    // the receipt may simply have come in while the process was down. Unknown is unknown, and
+    // the one thing unknown must never become is a request to send it again.
     if (prev.pid !== process.pid) {
-      const why = 'the bot restarted before it could check — delivery unknown';
-      log.warn(`⚠️  ${prev.name} (${prev.phone}) — ${why}`);
-      state.undelivered = [...(state.undelivered || []), `${prev.name} ${prev.phone} — ${why}`];
-      saveState(state);
-      forgetContact(prev.row);
-      if (prev.row) await handToOperator(prev.row, why);
-      return;
+      return noteUnconfirmed(prev, state, 'the bot restarted before it could check — delivery unknown');
     }
 
-    const { ok, fatal, why, detail } = tracker.verdict(prev.id);
-    if (ok) return;
+    // Soft: WhatsApp accepted the message and no device has confirmed it yet. A recipient
+    // with their phone off is indistinguishable from this and clears on its own, so give it
+    // one more tick before it is even written down — and never ask for a resend. See
+    // deliveryTracker: one of these means nothing, twelve of eighteen means the number is
+    // being filtered, and only the evening count can tell those two apart.
+    if (!v.hard) {
+      if (!last && !prev.rechecked) { pending.push({ ...prev, rechecked: true }); return; }
+      return noteUnconfirmed(prev, state, v.why);
+    }
 
+    const { fatal, why, detail } = v;
     log.warn(`⚠️  ${prev.name} (${prev.phone}) — ${why}`);
     state.undelivered = [...(state.undelivered || []), `${prev.name} ${prev.phone} — ${why}`];
     saveState(state);
@@ -972,7 +1052,7 @@ ${detail || ''}
     if (state.done) return;
     // Before the report is built, so the day's LAST send makes it into `undelivered` like
     // every other. Nothing ticks after the window closes, so this was its only chance.
-    await checkLastSend(state);
+    await checkLastSend(state, { last: true });
     state.done = true;
     saveState(state);
     await store.refresh();
@@ -991,10 +1071,17 @@ ${detail || ''}
     // Sent by the operator's thumb instead of the socket. Not a failure — a different
     // delivery path — so they are counted apart from both the sent and the lost.
     const handed = state.handed || [];
+    // The number the operator actually wants: how many of the day's sends WhatsApp
+    // confirmed reached a phone. "31 sent" was never the question — sendMessage returning
+    // is not delivery, which is the whole reason deliveryTracker exists — and without this
+    // line the only way to tell a good day from a filtered number was to count the list
+    // underneath it.
+    const sentByBot = state.pushed.length - gone.length - dead.length - handed.length;
+    const confirmed = sentByBot - lost.length;
     await notify(
       `💧 *${auto ? 'Auto-send finished' : 'Drip finished'}* — ${friendlyDate()}\n` +
-      `${state.pushed.length - gone.length - dead.length - handed.length} ` +
-      `${auto ? 'sent by the bot' : 'pushed'}` +
+      `${sentByBot} ${auto ? 'sent by the bot' : 'pushed'}` +
+      (auto ? ` (${confirmed} confirmed delivered by WhatsApp)` : '') +
       (handed.length > 0 ? `, ${handed.length} handed to you` : '') +
       (left > 0
         ? `, ${left} NOT reached today (they roll into tomorrow one day more overdue).`
@@ -1007,17 +1094,19 @@ ${detail || ''}
         ? `\n\n📵 *Not on WhatsApp — nothing could be sent* (${dead.length}):\n${dead.join('\n')}\n` +
           `Check the number in the sheet, or \`skip\` them.`
         : '') +
-      // The line that would have caught this on day one. Everything above is a message the
-      // bot knowingly did not send; this is one it believed it had.
       (handed.length > 0
         ? `\n\n📤 *Handed to you as links* (${handed.length}):\n${handed.join('\n')}\n` +
           (state.linkOnly ? `Reason: ${state.linkOnlyReason}` : '')
         : '') +
+      // The one list on here that is NOT a failure. These messages left the bot and are
+      // sitting on WhatsApp's servers waiting for a phone to come online — which is why
+      // nothing above buzzed the operator about them and why re-sending is a duplicate.
       (lost.length > 0
-        ? `\n\n⚠️ *Sent but NOT confirmed delivered* (${lost.length} of ${state.pushed.length}):\n` +
+        ? `\n\n❓ *Sent, delivery not confirmed yet* (${lost.length} of ${sentByBot}):\n` +
           `${lost.join('\n')}\n` +
-          `Re-send with \`remind [phone]\`. If this list is most of the day, the number is ` +
-          `being filtered rather than these members being offline.`
+          `A phone that is switched off looks exactly like this and clears on its own — ` +
+          `don't re-send, it would be a second copy. If this is most of the day, the number ` +
+          `is being filtered rather than these members being asleep.`
         : ''),
     );
     log.info(`💧 ${auto ? 'Auto-send' : 'Drip'} finished — ${state.pushed.length} sent, ${left} unreached`);

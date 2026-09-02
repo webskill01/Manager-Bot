@@ -460,7 +460,10 @@ function engineOver(dir, members, notices, verdict) {
   );
 }
 
-test('a send the previous process made is reported as unknown, not as a failure', async () => {
+// The message went out; only the ANSWER was lost with the process. Reported, never handed
+// back — asking the operator to re-send a message that almost certainly landed is how the
+// handoff ping stopped meaning anything.
+test('a send the previous process made is reported as unknown, not asked to be re-sent', async () => {
   const dir = tmp('drip-restart-');
   const { m } = stagedRestart(dir, { pid: process.pid + 1 });
   const notices = [];
@@ -468,20 +471,37 @@ test('a send the previous process made is reported as unknown, not as a failure'
   // must not be used: this process cannot know, and saying so is the whole point.
   await engineOver(dir, [m], notices, { ok: false, hard: true, fatal: false, why: 'never acknowledged' }).tick();
 
-  const handoff = notices.find(n => n.includes('Send it yourself'));
-  assert.ok(handoff, 'the operator was told nothing');
-  assert.match(handoff, /restarted before it could check/);
-  assert.doesNotMatch(handoff, /never acknowledged/, 'a guess was reported as a fact');
+  assert.deepEqual(notices.filter(n => n.includes('Send it yourself')), [],
+    'a message that had already gone out was handed back to be sent again');
 
   const state = JSON.parse(fs.readFileSync(path.join(dir, 'drip-state.json'), 'utf8'));
   assert.equal(state.lastSend, null, 'the check must not run twice');
   assert.match(state.undelivered.join(''), /Vikram/);
+  assert.match(state.undelivered.join(''), /restarted before it could check/);
+  assert.doesNotMatch(state.undelivered.join(''), /never acknowledged/, 'a guess was reported as a fact');
+  // ...and the cycle record stands, so 'missed' does not queue a duplicate for them either.
+  assert.ok(JSON.parse(fs.readFileSync(path.join(dir, 'qr-sent.json'), 'utf8'))['9000000001']);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('an unproven send stops counting as contact, so missed can recover them', async () => {
-  const dir = tmp('drip-forget-');
+// A receipt that arrives AFTER the reconnect lands in the new process's tracker like any
+// other. Asking it before falling back to "unknown" is free, and it turns a restart inside
+// the gap from a permanent question mark into an ordinary delivered message.
+test('a receipt that arrives after the restart still proves delivery', async () => {
+  const dir = tmp('drip-restart-ok-');
   const { m } = stagedRestart(dir, { pid: process.pid + 1 });
+  const notices = [];
+  await engineOver(dir, [m], notices, { ok: true, status: 3 }).tick();
+
+  const state = JSON.parse(fs.readFileSync(path.join(dir, 'drip-state.json'), 'utf8'));
+  assert.equal((state.undelivered || []).length, 0, 'a delivered message was reported as unknown');
+  assert.deepEqual(notices.filter(n => n.includes('Send it yourself')), []);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a send that never left stops counting as contact, so missed can recover them', async () => {
+  const dir = tmp('drip-forget-');
+  const { m } = stagedRestart(dir, { pid: process.pid });
   await engineOver(dir, [m], [], { ok: false, hard: true, fatal: false, why: 'x' }).tick();
 
   const qr = JSON.parse(fs.readFileSync(path.join(dir, 'qr-sent.json'), 'utf8'));
@@ -493,14 +513,17 @@ test('an unproven send stops counting as contact, so missed can recover them', a
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('a confirmed failure in the SAME process also releases the cycle record', async () => {
+// The one verdict that still earns a buzz: the message provably never left the bot, so the
+// member really is owed one and the operator's thumb is the only thing that can deliver it.
+test('a message that never left is handed over, and releases the cycle record', async () => {
   const dir = tmp('drip-failed-');
   const { m } = stagedRestart(dir, { pid: process.pid });
   const notices = [];
-  await engineOver(dir, [m], notices, { ok: false, hard: false, fatal: false, why: 'their phone is off' }).tick();
+  await engineOver(dir, [m], notices,
+    { ok: false, hard: true, fatal: false, why: 'never acknowledged — it did not leave the bot' }).tick();
 
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'qr-sent.json'), 'utf8'))['9000000001'], undefined);
-  assert.match(notices.find(n => n.includes('Send it yourself')), /their phone is off/);
+  assert.match(notices.find(n => n.includes('Send it yourself')), /did not leave the bot/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

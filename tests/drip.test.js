@@ -716,7 +716,10 @@ const GROUPS = ['120363000000000001@g.us', '120363000000000002@g.us'];
 
 // A socket whose groups contain exactly `phones`. Counts roster reads so the "once a day"
 // promise is actually checked rather than assumed.
-function sockWithGroups(phones) {
+// `lids` maps a phone to the @lid Baileys has cached for it, which is how the engine matches
+// a member the groups only ever named by LID. A phone absent from BOTH maps is one the bot
+// has never messaged, and no roster can prove anything about them.
+function sockWithGroups(phones, lids = {}) {
   const sent = [];
   const state = { fetches: 0 };
   return {
@@ -725,12 +728,18 @@ function sockWithGroups(phones) {
       user: { id: 'bot' },
       async presenceSubscribe() {}, async sendPresenceUpdate() {},
       async sendMessage(jid, msg) { sent.push({ jid, msg }); },
+      signalRepository: {
+        lidMapping: {
+          getLIDForPN: async (jid) => lids[jid.replace(/\D/g, '').slice(-10)] || null,
+        },
+      },
       async groupFetchAllParticipating() {
         state.fetches++;
         return Object.fromEntries(GROUPS.map((id, i) => [id, {
           id,
-          // Split across the two groups, and throw in a LID-only participant: those cannot be
-          // resolved to a phone and must simply not count either way.
+          // Split across the two groups, and throw in a LID-only participant: a real LID-era
+          // group is full of them, and they are why absence from the PHONE set alone proves
+          // nothing.
           participants: [
             ...phones.filter((_, n) => n % 2 === i).map(p => ({ id: `${p}@s.whatsapp.net` })),
             { id: '99887766554433@lid' },
@@ -748,7 +757,9 @@ const rosterCfg = (dir) => ({
 
 test('a member who left every group is not messaged, and is named at day end', async () => {
   const inGroups = ['9000000001', '9000000002', '9000000004'];
-  const { sock, sent } = sockWithGroups(inGroups);
+  // Walked has a LID on file — the bot has messaged them before — and it is in neither group,
+  // so their absence is PROVEN rather than merely unresolved.
+  const { sock, sent } = sockWithGroups(inGroups, { '9000000003': '11112222333344@lid' });
   const notices = [];
   const members = [
     member('Stayed1', '9000000001', 0),
@@ -772,6 +783,57 @@ test('a member who left every group is not messaged, and is named at day end', a
   const report = notices.at(-1);
   assert.match(report, /Left the groups — not messaged\* \(1\)/);
   assert.match(report, /Walked 9000000003/, 'the operator cannot act on a name they never see');
+});
+
+// The false "not in any group" the operator kept having to check by hand. In a LID-era group
+// most participants arrive as an @lid with no phone attached, so a member who is sitting right
+// there can be absent from the phone set. Absent-and-unidentifiable is not absent.
+test('a member the roster cannot name is sent to, not reported as having left', async () => {
+  const { sock, sent } = sockWithGroups(['9000000001', '9000000002']);   // no LID mapping at all
+  const notices = [];
+  const members = [
+    member('Known', '9000000001', 0),
+    member('Unnameable', '9000000003', 0),
+  ];
+  const engine = createDripEngine(
+    rosterCfg(tempBotDir()), quietLog, { refresh: async () => {}, getAll: () => members },
+    { autoRenewDue: async () => [] }, async (t) => { notices.push(t); },
+    { getSock: () => sock, warmingUp: () => false },
+  );
+  await engine.tick();   // one due member per tick — buildDripBatch takes one per cohort
+  await engine.tick();
+
+  assert.ok(sent.map(s => s.jid).includes('919000000003@s.whatsapp.net'),
+    'a member the roster simply could not name was reported as having walked out');
+  assert.deepEqual(notices.filter(n => n.includes('not in any group any more')), []);
+});
+
+// A roster that missed even ONE paid group is not slightly incomplete — it is completely wrong
+// about everyone whose only group it was, and they are exactly who gets flagged.
+test('a roster that could not read every paid group proves nothing', async () => {
+  const sent = [];
+  const sock = {
+    user: { id: 'bot' },
+    async presenceSubscribe() {}, async sendPresenceUpdate() {},
+    async sendMessage(jid, msg) { sent.push({ jid, msg }); },
+    signalRepository: { lidMapping: { getLIDForPN: async () => '55556666777788@lid' } },
+    // Only the first group comes back, and the per-group fallback cannot read the second.
+    async groupFetchAllParticipating() {
+      return { [GROUPS[0]]: { id: GROUPS[0], participants: [{ id: '9000000001@s.whatsapp.net' }] } };
+    },
+    async groupMetadata() { throw new Error('not-authorized'); },
+  };
+  const notices = [];
+  const members = [member('InTheOtherGroup', '9000000002', 0)];
+  const engine = createDripEngine(
+    rosterCfg(tempBotDir()), quietLog, { refresh: async () => {}, getAll: () => members },
+    { autoRenewDue: async () => [] }, async (t) => { notices.push(t); },
+    { getSock: () => sock, warmingUp: () => false },
+  );
+  await engine.tick();
+
+  assert.equal(sent.length, 1, 'a half-read roster silenced a member of the group it never read');
+  assert.deepEqual(notices.filter(n => n.includes('not in any group any more')), []);
 });
 
 test('the roster is read once for the whole day, not once per send', async () => {
