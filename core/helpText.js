@@ -56,6 +56,7 @@ function fullBodies(config) {
 • addsilent [Name] [phone]  →  sheet only, no links, NOT counted as new member
 • rejoin [phone] / [phone] [day]
 • kick [phone]
+• remove [phone] [phone2] ...  →  sheet only, no group calls (they already left)
 • skip [phone] [reason]  /  unskip [phone]
 • delay [phone] [days]  →  hide from removal list N days (still overdue; default 1)
 • delayall [days]  →  preview delaying EVERYONE overdue (billing dates unchanged)
@@ -139,10 +140,6 @@ ${auto ? `
   The QR goes with the FIRST message each member gets in a billing cycle,
   whichever one that is — so somebody missed on their due date still gets
   it with their day-${nudge} message. It is not re-sent later in the same cycle.
-
-  Before each send it checks the member is still IN one of your groups.
-  Anyone who left is skipped and listed at day end — \`kick\` them so they
-  stop coming round. If the group list can't be read, it sends anyway.
 
   If more people are queued than the day has room for, it says so at ${dripStart} AM.
   The overflow rolls to tomorrow; clear it by hand with dmlist if you'd
@@ -288,6 +285,7 @@ Once kicked, they vanish from "pending" and "log" for good.`,
 
     cleanup: `🧹 CLEANUP
 • kick [phone]  →  remove from all groups
+• remove [phone] ...  →  sheet only, for anyone already out
 • kickghosts / kickghosts confirm / stop kickghosts`,
   };
 }

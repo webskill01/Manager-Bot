@@ -184,6 +184,27 @@ test('kick marks REMOVED in the sheet and says which groups to clear', async () 
   assert.ok(!/Removed .* from \d+\/\d+ groups/.test(reply), `kick claimed a group removal:\n${reply}`);
 });
 
+// The bulk-removal escape hatch. These people are already out of every group, so `kick` would
+// spend twelve WhatsApp calls discovering that; the sheet is the only thing left to correct.
+test('remove writes the sheet and makes no group call at all', async () => {
+  const store = fakeStore([
+    { name: 'Raju', phone: '9855112233', status: 'ACTIVE' },
+    { name: 'Gone', phone: '9855112234', status: 'REMOVED' },
+  ]);
+  let groupCalls = 0;
+  const gm = { removeFromAllGroups: async () => { groupCalls++; return { removed: [], failed: [] }; } };
+  const h = createMemberHandlers(store, gm, tgConfig(), log);
+
+  const reply = await h.handleRemove(['9855112233', '9855112234', '9999999999']);
+
+  assert.equal(groupCalls, 0, 'remove touched WhatsApp');
+  assert.equal(store.findByPhone('9855112233').status, 'REMOVED');
+  assert.equal(store.writes.length, 1, 'it rewrote a row that was already REMOVED');
+  assert.match(reply, /Marked REMOVED: 1/);
+  assert.match(reply, /Already REMOVED \(1\)/);
+  assert.match(reply, /Not in the sheet \(1\): 9999999999/);
+});
+
 test('kick on an unknown number updates nothing but still gives instructions', async () => {
   const store = fakeStore();
   const gm = createManualGroupManager(tgConfig(), log);

@@ -74,7 +74,12 @@
     "9914623976"
   ],
   "dripIds": [
-    "5332135237"
+    "7985971941"
+  ],
+  "reportIds": [
+    "5332135237",
+    "7985971941",
+    "5932459548"
   ],
   "drip": {
     "startHour": 9,
@@ -97,23 +102,36 @@
   },
   "messages": {
     "reminder": [
-      "Hlo veer\nAjj tuhadi singh travels monthly paid groups di last date hai 🚨🚨\n\nRepay krdeo",
-      "Hlo {name} veer ssa 🙏\nAjj tuhadi Singh Travels monthly paid groups di last date hai 🚨🚨\n\nIste 100rs Repay krdo ji",
-      "Sat Sri Akal {name} veer 🙏\nTuhadi Singh Travels monthly paid groups di date ajj {date} nu hai 🚨🚨\n\n100rs repay krdo ji"
+      "Sat Sri Akal {name} veer 🙏\nTuhada Singh Travels paid groups da mahina {date} nu pura ho gya hai ji\n100rs repay krdo ji",
+      "Hlo {name} veer ssa 🙏\nAjj {date} nu tuhadi Singh Travels monthly paid groups di date hai ji\nIste 100rs repay krdo ji",
+      "{name} veer Sat Sri Akal 🙏\nTuhadi paid groups di repay date {date} di hai ji\n100rs repay krke dss deo ji",
+      "Sat Sri Akal {name} veer 🙏\nSingh Travels paid groups da ik mahina {date} nu pura ho gya ji\nAgle mahine lyi 100rs repay krdo",
+      "Hlo {name} veer 🙏\n{date} nu tuhada mahina pura ho gya hai ji\nIste 100rs repay kr deo, main note kr launga ji",
+      "{name} veer ssa 🙏\nTuhadi Singh Travels di monthly date {date} nu aa gyi hai ji\nQR te 100rs repay krke dss deo ji"
     ],
     "referralReminder": [
-      "Hlo veer\nAjj tuhadi singh travels monthly paid groups di last date hai 🚨🚨\n\nRepay krdeo",
-      "Hlo {name} veer ssa 🙏\nAjj tuhadi Singh Travels monthly paid groups di last date hai 🚨🚨\n\nIste 100rs Repay krdo ji",
-      "Sat Sri Akal {name} veer 🙏\nTuhadi Singh Travels monthly paid groups di date ajj {date} nu hai 🚨🚨\n\n100rs repay krdo ji"
+      "Sat Sri Akal {name} veer 🙏\nTuhadi Singh Travels paid groups di date {date} nu aa gyi hai ji\nIss mahine lyi 100rs repay krdo ji",
+      "Hlo {name} veer ssa 🙏\n{date} nu tuhada mahina pura ho gya si ji\n100rs repay krke dss deo ji",
+      "{name} veer 🙏\nSingh Travels monthly paid groups da repay {date} nu due hai ji\n100rs kr deo ji",
+      "Sat Sri Akal {name} veer 🙏\nTuhada ik mahina {date} nu pura ho gya hai ji\nKirpa krke 100rs repay krdo ji",
+      "Hlo {name} veer 🙏\nTuhadi paid groups di monthly date {date} di si ji\nIste 100rs repay kr deo ji",
+      "{name} veer ssa 🙏\n{date} nu mahina pura ho gya ji, 100rs repay krdo\nMain note kr launga ji"
     ],
     "overdue": [
-      "Hlo veer\ntuhadi monthly paid group di date nikal gyi hai 🚨 🚨 \nrepay krdo",
-      "Hlo {name} veer 🙏\nTuhadi monthly paid group di date nikal gyi hai 🚨🚨\nRepay krdo ji",
-      "{name} veer ssa 🙏\nTuhadi Singh Travels paid group di date {date} nu lang gyi si 🚨\nKirpa krke repay krdo ji"
+      "Sat Sri Akal {name} veer 🙏\n🚨 Ajj tuhadi repay di LAST date hai ji\n100rs repay krke dss deo ji",
+      "{name} veer 🙏\n🚨🚨 Tuhadi paid groups di date {date} nu lang gyi si\nAjj last din hai ji — 100rs repay krdo",
+      "Hlo {name} veer ssa 🙏\n🚨 Repay di last date ajj hai ji\nAjj hi 100rs kr deo, groups chalu rehnge ji",
+      "{name} veerji 🚨🚨\nTuhada repay hje pending hai ji te ajj last date hai\n100rs krke dss deo ji 🙏",
+      "Sat Sri Akal {name} veer 🙏\n🚨 Ajj akhri din hai repay da ji\n100rs repay krdo, ni ta groups cho naam kataona pauga ji",
+      "Hlo {name} veer 🙏\n🚨 Date {date} nu nikal chuki hai, ajj last chance hai ji\nAjj 100rs repay krke dss deo ji"
     ],
     "finalReminder": [
-      "Hnji Veerji krna ji repay ?",
-      "Hnji {name} veerji, repay krna hai ji ?"
+      "Hnji {name} veerji 🙏\nRepay krna hai ja nahi, dss deo ji ?",
+      "{name} veer ssa 🙏\nGroups ch rehna hai ji ? Hn ja na, ik vaari dss deo",
+      "Hnji veerji, tuhada repay hje ni hoya\nAge chalauna hai ji ? dss deo 🙏",
+      "{name} veerji 🙏\nAkhri vaar puch reha ha ji — repay krna hai ?",
+      "Hnji {name} veer, groups chalu rakhne ne ja nahi ji ? dss deo",
+      "{name} veer 🙏\nDss deo ji — repay kr rhe ho ja naam kat deiye groups cho ?"
     ],
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
   },

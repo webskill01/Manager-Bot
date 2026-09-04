@@ -83,6 +83,8 @@ export async function startBot(config, log) {
   const dripEngine = isTracker(config) ? null : createDripEngine(
     config, log, store, reminderSender,
     (text) => notifyTelegram(text, config.dripIds),
+    null,
+    (text) => notifyTelegram(text, config.reportIds),
   );
   const scheduler = createScheduler(config, log);
 
@@ -186,7 +188,7 @@ export async function startBot(config, log) {
     });
   } else {
     scheduler.start({
-      morningDigest:  async () => { await notifyTelegram(await commandParser.runReport('digest')); },
+      morningDigest:  async () => { await notifyTelegram(await commandParser.runReport('digest'), config.reportIds); },
       eveningSummary: async () => {
         // Own row first, THEN read. The 9 PM ledger job already ran an hour ago, so
         // this is belt-and-braces against the one case the hour of clearance cannot
@@ -195,7 +197,7 @@ export async function startBot(config, log) {
         // report worse. Never let a Sheets hiccup here cost the whole summary.
         try { await ledger.writeToday(); }
         catch (err) { log.warn(`⚠️  Pre-summary ledger write failed: ${err.message}`); }
-        await notifyTelegram(await commandParser.runReport('summary'));
+        await notifyTelegram(await commandParser.runReport('summary'), config.reportIds);
       },
       dripArm: () => dripEngine.arm(),
       // Sheet writes only — nothing is sent to any member, so these are safe on every

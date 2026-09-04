@@ -132,9 +132,10 @@ export function createGroupManager(sock, config, log) {
   function rejoinAdd(phone, name) {
     return enqueue(() => _addToAllGroups(phone, name));
   }
+  // No cooldown check: a kick the operator typed should happen when they typed it, not ten
+  // minutes after whatever batch ran last. The per-group gap inside the loop stays — that is
+  // the one that keeps twelve removals from looking like a blast.
   function removeFromAllGroups(phone) {
-    const blocked = checkCooldown('Kick');
-    if (blocked) return Promise.resolve({ removed: [], failed: [], blocked });
     return enqueue(() => _removeFromAllGroups(phone));
   }
 

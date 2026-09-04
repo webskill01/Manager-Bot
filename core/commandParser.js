@@ -22,7 +22,7 @@ const checksendAt = new Map();
 // (find/status/summary/stats/due/pending/refs/help/…) reply immediately and need no ack.
 const SLOW_COMMANDS = new Set([
   'add', 'addsilent', 'addnew', 'approve', 'approveall', 'reject', 'rejectall',
-  'kick', 'rejoin', 'sendlinks', 'links', 'refreshlinks', 'groupcheck', 'remind', 'renewed', 'advance',
+  'kick', 'remove', 'rejoin', 'sendlinks', 'links', 'refreshlinks', 'groupcheck', 'remind', 'renewed', 'advance',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
   'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip', 'ledger', 'checknum', 'checksend',
 ]);
@@ -615,6 +615,8 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
                  `add [Name] [phone]        →  new paying member (counts as join revenue)\n` +
                  `addsilent [Name] [phone]  →  existing member, NOT counted as a new join`;
         case 'kick':       return memberH.handleKick(mergePhoneFromStart(args));
+        // Sheet only, no group calls — for the ones who already left. See handleRemove.
+        case 'remove':     return memberH.handleRemove(args);
         case 'skip':       return memberH.handleSkip(mergePhoneFromStart(args));
         case 'unskip':     return memberH.handleUnskip(mergePhoneFromStart(args));
         case 'delay':      return memberH.handleDelay(mergePhoneFromStart(args));

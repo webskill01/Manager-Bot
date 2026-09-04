@@ -270,8 +270,8 @@ test('a number WhatsApp does not know is reported, never silently counted as sen
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// Fails OPEN, exactly like the roster check: wrongly skipping someone who pays is invisible
-// and costs money, so only an explicit "does not exist" may stop a send.
+// Fails OPEN: wrongly skipping someone who pays is invisible and costs money, so only an
+// explicit "does not exist" may stop a send.
 test('a lookup that errors still sends, to the phone JID', async () => {
   const dir = tmp('addr-');
   const { sock, sent } = addressableSock({ '919000000001': 'throw' });
@@ -295,28 +295,6 @@ test('an unreachable member is passed over and the queue keeps moving', async ()
 });
 
 // ── telling the operator, not the log file ────────────────────────────────────
-
-test('a member who left the groups is pushed to Telegram when it happens', async () => {
-  const dir = tmp('notify-');
-  const notices = [];
-  const { sock } = addressableSock({ '919000000001': '919000000001@s.whatsapp.net' });
-  // A roster that resolves plenty of phones but not this member's.
-  sock.groupFetchAllParticipating = async () => ({
-    g1: { id: 'g1@g.us', participants: [{ phoneNumber: '919999999999@s.whatsapp.net' }] },
-  });
-  const engine = createDripEngine(
-    makeConfig({ botDir: dir, paidGroups: ['g1@g.us'],
-      drip: { mode: 'auto', startHour: 0, endHour: 24, humanDelay: false } }),
-    quietLog, { refresh: async () => {}, getAll: () => [member('Vivek', '9000000001', 0)] },
-    { autoRenewDue: async () => [] }, async (t) => { notices.push(t); },
-    { getSock: () => sock, warmingUp: () => false },
-  );
-  await engine.tick();
-
-  assert.ok(notices.some(n => n.includes('Vivek') && n.includes('not in any group')),
-    'the operator only found out from the log');
-  fs.rmSync(dir, { recursive: true, force: true });
-});
 
 test('a dead number is pushed to Telegram, not just written to the log', async () => {
   const dir = tmp('notify-');
@@ -460,10 +438,11 @@ function engineOver(dir, members, notices, verdict) {
   );
 }
 
-// The message went out; only the ANSWER was lost with the process. Reported, never handed
-// back — asking the operator to re-send a message that almost certainly landed is how the
-// handoff ping stopped meaning anything.
-test('a send the previous process made is reported as unknown, not asked to be re-sent', async () => {
+// The message went out; only the ANSWER was lost with the process. Nothing is said about it at
+// all — asking the operator to re-send a message that almost certainly landed is how the
+// handoff ping stopped meaning anything, and "delivery unknown" in the evening report is a
+// worry with no action attached to it.
+test('a send the previous process made is not reported, and not asked to be re-sent', async () => {
   const dir = tmp('drip-restart-');
   const { m } = stagedRestart(dir, { pid: process.pid + 1 });
   const notices = [];
@@ -476,9 +455,7 @@ test('a send the previous process made is reported as unknown, not asked to be r
 
   const state = JSON.parse(fs.readFileSync(path.join(dir, 'drip-state.json'), 'utf8'));
   assert.equal(state.lastSend, null, 'the check must not run twice');
-  assert.match(state.undelivered.join(''), /Vikram/);
-  assert.match(state.undelivered.join(''), /restarted before it could check/);
-  assert.doesNotMatch(state.undelivered.join(''), /never acknowledged/, 'a guess was reported as a fact');
+  assert.equal(state.undelivered, undefined, 'a guess was reported as a fact');
   // ...and the cycle record stands, so 'missed' does not queue a duplicate for them either.
   assert.ok(JSON.parse(fs.readFileSync(path.join(dir, 'qr-sent.json'), 'utf8'))['9000000001']);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -502,7 +479,7 @@ test('a receipt that arrives after the restart still proves delivery', async () 
 test('a send that never left stops counting as contact, so missed can recover them', async () => {
   const dir = tmp('drip-forget-');
   const { m } = stagedRestart(dir, { pid: process.pid });
-  await engineOver(dir, [m], [], { ok: false, hard: true, fatal: false, why: 'x' }).tick();
+  await engineOver(dir, [m], [], { ok: false, hard: true, fatal: true, why: 'x', detail: '' }).tick();
 
   const qr = JSON.parse(fs.readFileSync(path.join(dir, 'qr-sent.json'), 'utf8'));
   assert.equal(qr['9000000001'], undefined, 'the cycle record still claims they were reached');
@@ -513,17 +490,17 @@ test('a send that never left stops counting as contact, so missed can recover th
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// The one verdict that still earns a buzz: the message provably never left the bot, so the
-// member really is owed one and the operator's thumb is the only thing that can deliver it.
-test('a message that never left is handed over, and releases the cycle record', async () => {
+// The one verdict that still earns a buzz: WhatsApp rejected the send outright, so the member
+// really is owed one and the operator's thumb is the only thing that can deliver it.
+test('a rejected message is handed over, and releases the cycle record', async () => {
   const dir = tmp('drip-failed-');
   const { m } = stagedRestart(dir, { pid: process.pid });
   const notices = [];
   await engineOver(dir, [m], notices,
-    { ok: false, hard: true, fatal: false, why: 'never acknowledged — it did not leave the bot' }).tick();
+    { ok: false, hard: true, fatal: true, detail: '', why: 'your account is RESTRICTED [463]' }).tick();
 
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'qr-sent.json'), 'utf8'))['9000000001'], undefined);
-  assert.match(notices.find(n => n.includes('Send it yourself')), /did not leave the bot/);
+  assert.match(notices.find(n => n.includes('Send it yourself')), /RESTRICTED/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

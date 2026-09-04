@@ -81,3 +81,22 @@ test('a concurrent refresh queues instead of doubling the call rate', async () =
   await Promise.all([gm.getAllInviteLinks(), gm.getAllInviteLinks()]);
   assert.equal(maxInFlight, 1, 'two refreshes must not interleave — that is what tripped the limiter');
 });
+
+// `kick` keeps the per-group gap — twelve removals in one second is a blast whoever typed it —
+// but it must not be refused because some other batch finished nine minutes ago. It is
+// hand-typed, one person at a time, and the operator waiting out a cooldown they cannot see is
+// the command silently doing nothing.
+test('a manual kick is paced per group but never blocked by the batch cooldown', async () => {
+  const at = [];
+  const sock = { async groupParticipantsUpdate() { at.push(Date.now()); } };
+  // A cooldown long enough to block a paced batch outright.
+  const gm = createGroupManager(sock, { ...config, rateLimits: { ...config.rateLimits, batchCooldownMs: 600000 } }, log);
+
+  const first = await gm.removeFromAllGroups('9855112233');
+  const second = await gm.removeFromAllGroups('9855112234');
+
+  assert.equal(first.removed.length, 12);
+  assert.equal(second.blocked, undefined, 'the second kick was blocked by the batch cooldown');
+  const gaps = at.slice(1, 12).map((t, n) => t - at[n]);
+  assert.ok(gaps.every(g => g >= 8), `unpaced removal found — gaps ${gaps.join(',')}`);
+});

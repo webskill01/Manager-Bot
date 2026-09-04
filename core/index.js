@@ -144,6 +144,7 @@ export async function startBot(config, log, authDir) {
       config, log, store, reminderSender,
       (text) => notifyTelegram(text, config.dripIds),
       { getSock, warmingUp, tracker: deliveryTracker },
+      (text) => notifyTelegram(text, config.reportIds),
     );
   }
 
@@ -583,8 +584,13 @@ export async function startBot(config, log, authDir) {
               // deliver through notifyTelegram — never broadcast(), whose WhatsApp half is
               // the traffic that got numbers banned. A token-less bot spreads nothing here
               // and so registers none of these jobs at all. That absence IS the safety gate.
+              //
+              // Addressed to dripIds, not to everyone allowed to type commands. Those are two
+              // different lists on purpose: allowedTelegramIds is the security boundary, and a
+              // bot the partners can all command is not necessarily a bot they all want the
+              // 9 PM summary from. dripIds is who asked to be told, so it is who gets told.
               ...(config.usesTelegram ? {
-                morningDigest:  async () => { await notifyTelegram(await commandParser.runReport('digest')); },
+                morningDigest:  async () => { await notifyTelegram(await commandParser.runReport('digest'), config.reportIds); },
                 eveningSummary: async () => {
                   // Own row first, THEN read. The 9 PM ledger job already ran an hour ago, so
                   // this is belt-and-braces against the one case the hour of clearance cannot
@@ -593,7 +599,7 @@ export async function startBot(config, log, authDir) {
                   // report worse. Never let a Sheets hiccup here cost the whole summary.
                   try { await ledger.writeToday(); }
                   catch (err) { log.warn(`⚠️  Pre-summary ledger write failed: ${err.message}`); }
-                  await notifyTelegram(await commandParser.runReport('summary'));
+                  await notifyTelegram(await commandParser.runReport('summary'), config.reportIds);
                 },
                 // Not gated on warm-up: warm-up keeps a freshly linked WhatsApp number
                 // quiet, and the drip never transmits on it.

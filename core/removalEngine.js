@@ -177,8 +177,9 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
       if (index + 1 < state.members.length) {
         const gapMs = randomBetween(MIN_GAP_MS, MAX_GAP_MS);
         const gapMin = Math.round(gapMs / 60000);
+        // Logged, not sent. The ETA is a guess the operator has no use for, and a second
+        // Telegram buzz per person turns a 20-person kickall into 40 notifications.
         log.info(`⏰ Kickall: next removal in ~${gapMin}min`);
-        await notify(`⏰ Next removal in ~${gapMin} min...`);
         scheduleNext(index + 1, gapMs);
       } else {
         await finishKickall(state);

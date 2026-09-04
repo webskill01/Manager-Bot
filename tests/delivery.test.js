@@ -126,7 +126,11 @@ function engineWith(dir, members, sock, tracker, notices) {
   );
 }
 
-test('a message that never left is handed to the operator on the next tick', async () => {
+// Silence is not evidence. An id nothing has come back about used to be handed to the operator
+// as "the bot could not reach them" — but a missed receipt looks exactly like a message that
+// never left, and the operator paid for the guess by re-sending reminders that had landed.
+// Only an explicit rejection is acted on now; see the 463 test below.
+test('a send nothing came back about is never reported', async () => {
   const dir = tmp('deliv-');
   const notices = [];
   const tracker = createDeliveryTracker(quietLog);   // told nothing → everything stays PENDING
@@ -134,13 +138,14 @@ test('a message that never left is handed to the operator on the next tick', asy
   const engine = engineWith(dir, members, sockThatReturns(['id-A', 'id-B']), tracker, notices);
 
   await engine.tick();
-  assert.deepEqual(notices, [], 'it complained before any grace period had passed');
   await engine.tick();
 
-  // Not merely reported — handed over, with the link, so the member still gets chased.
-  const handoff = notices.find(n => n.includes('Send it yourself') && n.includes('A'));
-  assert.ok(handoff, 'a message that never left was still counted as sent');
-  assert.ok(handoff.includes('wa.me/919000000001'), 'the handoff carried no tap-to-send link');
+  assert.deepEqual(notices.filter(n => n.includes('Send it yourself')), [],
+    'a message with no receipt was reported as one the bot could not send');
+  const state = JSON.parse(fs.readFileSync(path.join(dir, 'drip-state.json'), 'utf8'));
+  assert.equal(state.undelivered, undefined, 'a guess was written into the evening report');
+  // The cycle record stands, so 'missed' does not queue a second copy either.
+  assert.ok(JSON.parse(fs.readFileSync(path.join(dir, 'qr-sent.json'), 'utf8'))['9000000001']);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -161,14 +166,10 @@ test('a delivered message is never reported', async () => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-// A phone that is merely switched off looks exactly like this, so it must not buzz — but it
-// must still be counted, because twelve of eighteen is a filtered number, not twelve holidays.
-//
-// It must ALSO not be handed to the operator. WhatsApp has the message and will deliver it the
-// moment that phone comes online; a tap-to-send link is a request for a SECOND copy of a
-// reminder that was never lost. That handoff is what had the operator being told "the bot could
-// not reach them" about people it had just reached.
-test('accepted-but-undelivered is counted for the evening, not buzzed about', async () => {
+// A phone that is merely switched off looks exactly like this. WhatsApp has the message and
+// will deliver it the moment that phone comes online, so there is nothing to say about it —
+// not a buzz, and not a line in the evening report the operator would only worry at.
+test('accepted-but-undelivered is not reported at all', async () => {
   const dir = tmp('deliv-');
   const notices = [];
   const tracker = createDeliveryTracker(quietLog);
@@ -179,18 +180,15 @@ test('accepted-but-undelivered is counted for the evening, not buzzed about', as
 
   await engine.tick();
   ev.emit('messages.update', [{ key: { id: 'id-A' }, update: { status: STATUS.SERVER_ACK } }]);
-  await engine.tick();   // first look: still soft, so it gets one more gap to clear on its own
-  await engine.tick();   // second look: still soft, now it goes in the evening's count
+  await engine.tick();
+  await engine.tick();
 
-  // B never got a receipt at all — a real hard failure, and it is meant to be handed over.
-  // A is the one WhatsApp acknowledged, and A must not be.
-  assert.deepEqual(notices.filter(n => n.includes('Send it yourself') && n.includes('9000000001')), [],
+  assert.deepEqual(notices.filter(n => n.includes('Send it yourself')), [],
     'a message WhatsApp is holding was reported as one the bot could not send');
   assert.deepEqual(notices.filter(n => n.includes('Handing today over')), [],
     'one switched-off phone flipped the whole day to link-only');
   const state = JSON.parse(fs.readFileSync(path.join(dir, 'drip-state.json'), 'utf8'));
-  assert.ok(state.undelivered.some(u => u.includes('9000000001')),
-    'it was not recorded for the evening report');
+  assert.equal(state.undelivered, undefined, 'it went into the evening report anyway');
   // The cycle record stays: the message went out, so 'missed' must not queue a second one.
   const qr = JSON.parse(fs.readFileSync(path.join(dir, 'qr-sent.json'), 'utf8'));
   assert.ok(qr['9000000001'], 'a sent message was forgotten and will be sent again');

@@ -130,6 +130,22 @@ test('every shipped config still parses and keeps its amounts consistent', () =>
   }
 });
 
+// Three lists, three different questions. reportIds is who wants to see how the day went —
+// all three partners, on every bot. dripIds is who WORKS the queue, and must stay one person:
+// two people tapping the same link batch send the same member the same reminder twice.
+// allowedTelegramIds is neither — it is the command security boundary.
+test('every bot reports to all three partners but hands its links to one', () => {
+  const cfgs = BOTS.map(b => JSON.parse(fs.readFileSync(`bots/${b}/config.json`, 'utf8')));
+  const first = [...cfgs[0].reportIds].sort();
+  assert.equal(first.length, 3, `reportIds should name all three partners, saw ${first.join(',')}`);
+  for (const [i, cfg] of cfgs.entries()) {
+    assert.deepEqual([...cfg.reportIds].sort(), first, `${BOTS[i]} reports to a different set`);
+    assert.equal(cfg.dripIds.length, 1, `${BOTS[i]}: link batches go to ${cfg.dripIds.length} people`);
+    assert.ok(cfg.allowedTelegramIds.includes(cfg.dripIds[0]),
+      `${BOTS[i]}: the operator getting the links cannot run a command on the bot`);
+  }
+});
+
 test('no config still carries the "knra" misspelling of "krna"', () => {
   for (const bot of BOTS) {
     const raw = fs.readFileSync(`bots/${bot}/config.json`, 'utf8');

@@ -60,6 +60,27 @@ test('a member is NOT marked REMOVED when the socket drops mid-removal', async (
   fs.rmSync(botDir, { recursive: true, force: true });
 });
 
+// One buzz per person, and it says what happened. The "next removal in ~22 min" line that used
+// to follow every one of them doubled the notification count to deliver a guess.
+test('a removal is announced once, with no ETA for the next one', async () => {
+  const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rem-'));
+  const store = makeStore([makeMember('9000000001'), makeMember('9000000002')]);
+  const sock = { user: { id: 'me' }, async groupParticipantsUpdate() {} };
+  const notices = [];
+  const engine = createRemovalEngine(makeConfig(botDir), log, () => sock, store, () => [],
+    async (t) => { notices.push(t); });
+
+  engine.kickall();
+  await new Promise(r => setTimeout(r, 200));
+
+  assert.equal(notices.filter(n => n.includes('removed from')).length, 1);
+  assert.deepEqual(notices.filter(n => n.includes('Next removal')), [],
+    'the ETA ping is still being sent');
+
+  engine.stopKickall();
+  fs.rmSync(botDir, { recursive: true, force: true });
+});
+
 test('resume() is safe to call repeatedly and processes at most one member per grace window', async () => {
   const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rem-'));
   const config = makeConfig(botDir);

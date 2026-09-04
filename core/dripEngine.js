@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { randomBetween, todayStr, friendlyDate, sleep, normalizePhone, pickVariant, resolveWhatsAppJid, lidFor } from './globalConfig.js';
+import { randomBetween, todayStr, friendlyDate, sleep, normalizePhone, pickVariant, resolveWhatsAppJid } from './globalConfig.js';
 import { buildDmList } from './dmList.js';
 import { usesCloudApi } from './cloudApiSender.js';
 
@@ -291,7 +291,11 @@ export function withinWindow(when, settings) {
 // wires no tracker, so core/telegram.js and every existing test are unaffected by this.
 const NO_TRACKER = { verdict: () => ({ ok: true, status: null }) };
 
-export function createDripEngine(config, log, store, reminderSender, notify, sender = null) {
+// `notify` reaches the one operator who sends this bot's messages; `report` reaches everyone
+// who wants to see how the day went. Only the end-of-day report uses the second one — every
+// other message in here is a link to tap or a number to fix, which belongs to whoever is
+// actually working the queue. Defaults to `notify`, so a caller with one audience keeps it.
+export function createDripEngine(config, log, store, reminderSender, notify, sender = null, report = notify) {
   const tracker = sender?.tracker || NO_TRACKER;
   const stateFile = path.join(config.botDir, 'drip-state.json');
   // phone → the billingDate of the cycle we last sent that member a QR in. Survives restarts
@@ -343,125 +347,6 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
              `${settings.batchSize} per batch ` +
              `${Math.round(settings.msgGapMinMs / 1000)}-${Math.round(settings.msgGapMaxMs / 1000)}s apart, ` +
              `batches ≥${Math.round(settings.gapMinMs / 60000)}m apart, gap adapts to the queue`);
-  }
-
-  // ── Are they still in the groups? ──────────────────────────────────────────
-  //
-  // The sheet says who SHOULD be paying; only WhatsApp knows who is still in the groups.
-  // Someone who left is the single most likely person to press "report" — they are being
-  // asked for ₹90 for a room they walked out of — and reports, not volume, are what get a
-  // number banned. Rare, per the operator, which is exactly why it is worth catching: a
-  // handful of reports is all it takes.
-  //
-  // One fetch a day, held in memory. groupFetchAllParticipating is a single round trip for
-  // every group at once; the per-group loop is the fallback for a Baileys build without it.
-  // { phones, lids, groups } — or null when the roster cannot be trusted today.
-  let roster = null;
-  let rosterDay = null;
-
-  // Reads EVERY paid group, and says which ones it managed to read.
-  //
-  // Which ones matters more than how many participants came back. A member of this sheet is
-  // typically in one or two of the twelve city groups, so a roster missing ONE group is not
-  // slightly incomplete for everybody — it is completely wrong for exactly the people whose
-  // only group it was, and they are the ones reported as having left. That is the false
-  // "not in any group" the operator kept having to check by hand.
-  //
-  // groupFetchAllParticipating is a single round trip for all of them; the per-group loop is
-  // the fallback for a Baileys build without it, and now also fills whatever the bulk call
-  // left out — it returns the groups the socket has, which is not always the groups we asked
-  // about.
-  async function loadRoster(sock) {
-    const want = config.paidGroups || [];
-    const byId = new Map();
-    try {
-      if (typeof sock.groupFetchAllParticipating === 'function') {
-        for (const m of Object.values(await sock.groupFetchAllParticipating() || {})) {
-          if (want.includes(m?.id)) byId.set(m.id, m);
-        }
-      }
-    } catch (err) { log.warn(`⚠️  Roster fetch failed: ${err.message}`); }
-
-    for (const id of want) {
-      if (byId.has(id)) continue;
-      try { byId.set(id, await sock.groupMetadata(id)); }
-      catch (err) { log.warn(`⚠️  Roster: group ${id} unreadable — ${err.message}`); }
-      await sleep(1200);
-    }
-
-    const phones = new Set();
-    const lids = new Set();
-    for (const meta of byId.values()) {
-      for (const p of meta?.participants || []) {
-        // LID-addressed groups report p.id as @lid, with the phone JID on p.phoneNumber —
-        // when they report it at all. A participant that resolves to no phone is NOT proof
-        // of anything about phones; it is a second name for someone, so keep it as one.
-        const jid = p.phoneNumber || p.jid || p.id || '';
-        if (jid.endsWith('@s.whatsapp.net')) {
-          const ph = normalizePhone(jid.replace('@s.whatsapp.net', '').replace(/\D/g, ''));
-          if (ph && ph.length >= 10) phones.add(ph);
-        }
-        for (const alt of [p.id, p.lid, p.jid]) {
-          if (typeof alt === 'string' && alt.endsWith('@lid')) lids.add(normalizeLid(alt));
-        }
-      }
-    }
-    return { phones, lids, groups: new Set(byId.keys()) };
-  }
-
-  // `12345:6@lid` and `12345@lid` are the same participant. Compared as strings otherwise.
-  const normalizeLid = (v) => `${String(v).split('@')[0].split(':')[0]}@lid`;
-
-  // Fail OPEN, on purpose and in five separate places: an unreadable roster, a roster that
-  // missed even one paid group, a roster that resolved implausibly few members, a member we
-  // cannot name in the way the group named them, and any thrown error — all mean "send
-  // anyway".
-  //
-  // The asymmetry is the whole design. Wrongly skipping a paying member costs real money and
-  // is invisible — nobody complains that they were NOT asked to pay. Wrongly messaging one
-  // person who left costs one possible report. So absence has to be PROVEN, and a roster can
-  // only prove absence about groups it actually read and identities it can actually match.
-  async function stillInGroups(phone, sock) {
-    const today = todayStr();
-    if (rosterDay !== today) {
-      rosterDay = today;
-      try { roster = await loadRoster(sock); }
-      catch (err) { roster = null; log.warn(`⚠️  Roster unavailable: ${err.message}`); }
-
-      const want = config.paidGroups || [];
-      const active = store.getAll().filter(m => m.status === 'ACTIVE').length;
-      const known = roster ? roster.phones.size + roster.lids.size : 0;
-      if (roster && roster.groups.size < want.length) {
-        const missing = want.filter(id => !roster.groups.has(id));
-        log.warn(`⚠️  Roster read ${roster.groups.size}/${want.length} paid groups — skipping ` +
-                 `the group check today (missing ${missing.join(', ')})`);
-        roster = null;
-      } else if (roster && known < active / 2) {
-        log.warn(`⚠️  Roster resolved only ${known} participants against ${active} active ` +
-                 `members — too few to trust, skipping the group check today`);
-        roster = null;
-      } else if (roster) {
-        log.info(`👥 Roster — ${roster.phones.size} phones + ${roster.lids.size} lids across ` +
-                 `${roster.groups.size} groups`);
-      }
-    }
-    if (!roster) return true;
-    if (roster.phones.has(normalizePhone(phone))) return true;
-
-    // Not in the phone set. That is not absence yet: in LID-era groups a large share of
-    // participants arrive as an @lid with no phone attached, so the member may well be
-    // sitting right there under a name we have not resolved. Ask Baileys which @lid belongs
-    // to this number and look for that instead.
-    let lid = null;
-    try { lid = await lidFor(sock, `91${normalizePhone(phone)}@s.whatsapp.net`); }
-    catch (err) { log.warn(`⚠️  LID lookup failed for ${phone}: ${err.message}`); }
-    if (lid && roster.lids.has(normalizeLid(lid))) return true;
-
-    // No LID on file for them AND the roster is carrying participants nobody could name:
-    // "absent from the half of the roster we can read" is not absence. Say they are in.
-    if (!lid && roster.lids.size > 0) return true;
-
-    return false;
   }
 
   // What a real person does before a message appears: their client subscribes to the other
@@ -715,27 +600,12 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     saveQrLog(log_);
   }
 
-  // Did the PREVIOUS one land?
+  // Was the PREVIOUS one REJECTED?
   //
   // Asked on the next tick rather than on a timer because the gap is 15-45 minutes, which is
-  // a generous grace period for free. A hard failure means the message never left and is
-  // worth a buzz; a soft one is indistinguishable from the recipient having their phone off,
-  // so it only goes in tonight's count. See deliveryTracker for why those two must not be
-  // reported the same way.
-  //
-  // The record is held in state as well as in memory. It used to be in-process only, and a
-  // restart inside the gap threw the question away in silence: on 25-08-2026 Vikramjeet was
-  // sent a reminder at 17:38, the process restarted at 17:43, and the tick that followed had
-  // nothing to check — no delivery, no report, no handoff, and no ping to say so. A deploy
-  // is not a delivery receipt.
-  // A tick sends a batch, so this asks the question once per message in it. `state.lastSend`
-  // is read as a one-element list so a bot that restarts across this upgrade still checks the
-  // send it made under the old shape. ponytail: shim, not a migration — state resets at
-  // midnight anyway.
-  //
-  // `last` is set by finish(): the window has closed, nothing will tick again, so anything
-  // still unresolved is reported now rather than given another grace period it will never get.
-  async function checkLastSend(state, { last = false } = {}) {
+  // a generous grace period for free. Only an account-level rejection is acted on — see
+  // checkOne — so a send nothing came back about is simply dropped, not chased.
+  async function checkLastSend(state) {
     const prevs = pending.length
       ? pending
       : (state.pending || [state.lastSend].filter(Boolean));
@@ -744,67 +614,29 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     state.pending = null;
     state.lastSend = null;
     saveState(state);
-    for (const prev of prevs) await checkOne(prev, state, { last });
-    // checkOne can put a message BACK on the list for one more look. Persist that, or a
-    // restart in the next gap loses it exactly the way state.pending was added to prevent.
-    if (pending.length) { state.pending = pending; saveState(state); }
+    for (const prev of prevs) await checkOne(prev, state);
   }
 
-  // Written down for the evening, not buzzed about.
+  // Only ONE verdict is acted on: WhatsApp rejected the send with an ACCOUNT-level code
+  // (463 — restricted from starting new chats). It is a fact about the number, it arrives as
+  // an explicit rejection, and it changes what the bot does for the rest of the day.
   //
-  // The cycle record is deliberately LEFT ALONE here, unlike a hard failure. This message
-  // reached WhatsApp; it is sitting on their servers waiting for a phone to come online. A
-  // member whose contact record is torn up comes back through the 'missed' cohort and gets a
-  // SECOND copy of a message that was always going to arrive — which is the duplicate the
-  // operator was seeing, dressed up as a rescue.
-  function noteUnconfirmed(prev, state, why) {
-    log.warn(`⚠️  ${prev.name} (${prev.phone}) — ${why}`);
-    state.undelivered = [...(state.undelivered || []), `${prev.name} ${prev.phone} — ${why}`];
-    saveState(state);
-  }
-
-  // Exactly one thing earns a buzz: a message that PROVABLY never left the bot. Everything
-  // else the operator gets told about at the end of the day and nowhere else.
-  //
-  // This used to hand the member over on any verdict that was not a confirmed delivery, and
-  // that is what produced "the bot could not reach them" for people who had just been
-  // messaged. Two of the three branches below are cases where the message DID go out, so the
-  // operator tapping the link sent a second copy of a reminder that had already landed —
-  // and after enough of those, the pings that DO matter stop being read.
-  async function checkOne(prev, state, { last = false } = {}) {
+  // Everything else is a guess. "Accepted, no receipt yet" is exactly what a switched-off
+  // phone looks like, and "nothing came back" is what a missed receipt looks like — both were
+  // being reported as undelivered, which put the operator on the hook for re-sending messages
+  // that had already landed. A guess is not worth a notification, so nothing else is reported.
+  async function checkOne(prev, state) {
     const v = tracker.verdict(prev.id);
-    if (v.ok) return;
+    if (v.ok || !v.fatal) return;
 
-    // A DIFFERENT process sent this one. Its verdict is still worth asking for — a receipt
-    // that arrives after the reconnect lands in THIS tracker and proves delivery outright,
-    // which is why the question comes first — but a PENDING from it proves nothing at all:
-    // the receipt may simply have come in while the process was down. Unknown is unknown, and
-    // the one thing unknown must never become is a request to send it again.
-    if (prev.pid !== process.pid) {
-      return noteUnconfirmed(prev, state, 'the bot restarted before it could check — delivery unknown');
-    }
-
-    // Soft: WhatsApp accepted the message and no device has confirmed it yet. A recipient
-    // with their phone off is indistinguishable from this and clears on its own, so give it
-    // one more tick before it is even written down — and never ask for a resend. See
-    // deliveryTracker: one of these means nothing, twelve of eighteen means the number is
-    // being filtered, and only the evening count can tell those two apart.
-    if (!v.hard) {
-      if (!last && !prev.rechecked) { pending.push({ ...prev, rechecked: true }); return; }
-      return noteUnconfirmed(prev, state, v.why);
-    }
-
-    const { fatal, why, detail } = v;
+    const { why, detail } = v;
     log.warn(`⚠️  ${prev.name} (${prev.phone}) — ${why}`);
-    state.undelivered = [...(state.undelivered || []), `${prev.name} ${prev.phone} — ${why}`];
-    saveState(state);
     // The bot believed this one went and it did not, so the cycle record must stop claiming
     // they have heard from us — otherwise 'missed' skips the one member it was built for.
     forgetContact(prev.row);
 
-    // Retroactive handoff. The bot believed this one went; it did not, and the member is
-    // still owed their reminder — so it goes to the operator like any other failure
-    // rather than being left as a line in tonight's report.
+    // Retroactive handoff. The member is still owed their reminder, and this one provably
+    // never arrived — the rejection said so.
     if (prev.row) await handToOperator(prev.row, why);
 
     // A fatal code is about the ACCOUNT, not this member: every further attempt today
@@ -816,7 +648,7 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     // WhatsApp has already restricted is what turns a restriction into a ban, and it buys
     // nothing, because not one of them can land. Going link-only keeps the collection
     // running at full rate while the account stops digging.
-    if (fatal && !state.linkOnly) {
+    if (!state.linkOnly) {
       state.linkOnly = true;
       state.linkOnlyReason = why;
       saveState(state);
@@ -900,24 +732,6 @@ ${detail || ''}
           // from the blast this exists to prevent.
           log.info(`💧 Next in this batch in ${Math.round(gap / 1000)}s`);
           await pause(gap);
-        }
-
-        // Gone from every group → no message, and no slot spent either: mark them done for
-        // today and move straight to the next member of the batch.
-        if (sock?.user && !(await stillInGroups(row.phone, sock))) {
-          log.info(`👋 Skipped ${row.name} (${row.phone}) — not in any group any more`);
-          state.pushed = [...state.pushed, String(row.phone)];
-          state.left = [...(state.left || []), `${row.name} ${row.phone}`];
-          saveState(state);
-          // Said now, not only in tonight's summary. These are the two things the operator can
-          // actually act on the same day — kick them from the sheet, or fix a wrong number —
-          // and a line buried in pm2 logs is a line nobody reads. The end-of-day report keeps
-          // listing them too, so a missed push is not a lost record.
-          await notify(
-            `👋 *${row.name}* (${row.phone}) is not in any group any more — not messaged.\n` +
-            `\`kick ${row.phone}\` so they stop coming round.`);
-          skipped++;
-          continue;
         }
 
         // Link-only: the account is restricted, so an attempt would be a rejected reachout and
@@ -1050,46 +864,27 @@ ${detail || ''}
   async function finish(state) {
     clearTimer();
     if (state.done) return;
-    // Before the report is built, so the day's LAST send makes it into `undelivered` like
-    // every other. Nothing ticks after the window closes, so this was its only chance.
-    await checkLastSend(state, { last: true });
+    // Before the report is built — nothing ticks after the window closes, so a rejection on
+    // the day's last send has no other chance to be seen.
+    await checkLastSend(state);
     state.done = true;
     saveState(state);
     await store.refresh();
     const left = countRemaining({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() });
-    // The people who left are the reason the group check exists, and a check whose findings
-    // nobody sees is a check that fixes one day and nothing after it. Named here so the
-    // operator can kick them from the sheet and stop them coming back round tomorrow.
-    const gone = state.left || [];
-    // Numbers WhatsApp has no account for. Separate from `gone` because the fix is different:
-    // someone who left the groups gets kicked from the sheet, someone whose number is dead
-    // needs the number corrected or the member removed. Both used to be invisible.
+    // Numbers WhatsApp has no account for — nothing could be sent, and the fix is the number
+    // in the sheet, not the member. Invisible before this line existed.
     const dead = state.unreachable || [];
-    // Sent, believed delivered, and never confirmed. The only failure mode the bot used to
-    // report as a success.
-    const lost = state.undelivered || [];
     // Sent by the operator's thumb instead of the socket. Not a failure — a different
-    // delivery path — so they are counted apart from both the sent and the lost.
+    // delivery path — so they are counted apart from the ones the bot sent.
     const handed = state.handed || [];
-    // The number the operator actually wants: how many of the day's sends WhatsApp
-    // confirmed reached a phone. "31 sent" was never the question — sendMessage returning
-    // is not delivery, which is the whole reason deliveryTracker exists — and without this
-    // line the only way to tell a good day from a filtered number was to count the list
-    // underneath it.
-    const sentByBot = state.pushed.length - gone.length - dead.length - handed.length;
-    const confirmed = sentByBot - lost.length;
-    await notify(
+    const sentByBot = state.pushed.length - dead.length - handed.length;
+    await report(
       `💧 *${auto ? 'Auto-send finished' : 'Drip finished'}* — ${friendlyDate()}\n` +
       `${sentByBot} ${auto ? 'sent by the bot' : 'pushed'}` +
-      (auto ? ` (${confirmed} confirmed delivered by WhatsApp)` : '') +
       (handed.length > 0 ? `, ${handed.length} handed to you` : '') +
       (left > 0
         ? `, ${left} NOT reached today (they roll into tomorrow one day more overdue).`
         : `, nobody still waiting. 👍`) +
-      (gone.length > 0
-        ? `\n\n👋 *Left the groups — not messaged* (${gone.length}):\n${gone.join('\n')}\n` +
-          `\`kick\` them so they stop coming round.`
-        : '') +
       (dead.length > 0
         ? `\n\n📵 *Not on WhatsApp — nothing could be sent* (${dead.length}):\n${dead.join('\n')}\n` +
           `Check the number in the sheet, or \`skip\` them.`
@@ -1097,16 +892,6 @@ ${detail || ''}
       (handed.length > 0
         ? `\n\n📤 *Handed to you as links* (${handed.length}):\n${handed.join('\n')}\n` +
           (state.linkOnly ? `Reason: ${state.linkOnlyReason}` : '')
-        : '') +
-      // The one list on here that is NOT a failure. These messages left the bot and are
-      // sitting on WhatsApp's servers waiting for a phone to come online — which is why
-      // nothing above buzzed the operator about them and why re-sending is a duplicate.
-      (lost.length > 0
-        ? `\n\n❓ *Sent, delivery not confirmed yet* (${lost.length} of ${sentByBot}):\n` +
-          `${lost.join('\n')}\n` +
-          `A phone that is switched off looks exactly like this and clears on its own — ` +
-          `don't re-send, it would be a second copy. If this is most of the day, the number ` +
-          `is being filtered rather than these members being asleep.`
         : ''),
     );
     log.info(`💧 ${auto ? 'Auto-send' : 'Drip'} finished — ${state.pushed.length} sent, ${left} unreached`);

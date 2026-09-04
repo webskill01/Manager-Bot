@@ -285,6 +285,33 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return reply;
   }
 
+  // Mark them REMOVED in the sheet and touch WhatsApp not at all.
+  //
+  // For the people who are already out of the groups. `kick` would walk all twelve groups to
+  // find that out — twelve no-op calls and a minute of waiting per person — when the sheet is
+  // the only thing that still says otherwise. Takes several numbers at once, because these
+  // turn up in batches.
+  async function handleRemove(args) {
+    const phones = args.map(a => normalizePhone(a)).filter(p => p.length === 10);
+    if (phones.length === 0) return '❌ Format: remove [phone] [phone2] ...';
+
+    const done = [], already = [], missing = [];
+    for (const phone of phones) {
+      const member = store.findByPhone(phone);
+      if (!member) { missing.push(phone); continue; }
+      if (member.status === 'REMOVED') { already.push(`${member.name} (${phone})`); continue; }
+      await store.update(phone, { status: 'REMOVED' });
+      log.info(`🚫 Marked REMOVED in sheet (no group op): ${member.name} (${phone})`);
+      done.push(`${member.name} (${phone})`);
+    }
+
+    return `✅ Marked REMOVED: ${done.length}` +
+      (done.length ? `\n${done.join('\n')}` : '') +
+      (already.length ? `\n\nAlready REMOVED (${already.length}):\n${already.join('\n')}` : '') +
+      (missing.length ? `\n\n❌ Not in the sheet (${missing.length}): ${missing.join(', ')}` : '') +
+      `\n\n_Sheet only — nobody was removed from any group._`;
+  }
+
   async function handleSkip(args) {
     if (args.length < 2) return '❌ Missing arguments. Format: skip [phone] [reason]';
     const phone = normalizePhone(args[0]);
@@ -755,5 +782,5 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return `✅ Rejected ${phone} in ${rejected}/${found} group(s)${failed > 0 ? ` (${failed} failed)` : ''}`;
   }
 
-  return { handleAdd, handleSilentAdd, handleKick, handleSkip, handleUnskip, handleDelay, handleDelayAll, handleLinks, handleRefreshLinks, handleSetLink, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
+  return { handleAdd, handleSilentAdd, handleKick, handleRemove, handleSkip, handleUnskip, handleDelay, handleDelayAll, handleLinks, handleRefreshLinks, handleSetLink, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
 }

@@ -125,6 +125,7 @@ export function loadConfig(botDir) {
     config.allowedTelegramIds = (config.allowedTelegramIds || []).map(Number).filter(Number.isFinite);
     config.bootstrapMode = config.allowedTelegramIds.length === 0;
     config.dripIds = resolveDripIds(config);
+    config.reportIds = resolveReportIds(config);
   }
 
   if (!fs.existsSync(config.serviceAccountPath)) {
@@ -173,9 +174,11 @@ export function pickVariant(value, phone, date = todayStr(), seq = null) {
   return value[h % value.length];
 }
 
-// Who receives the drip. Deliberately NOT allowedTelegramIds: that list is the command
-// security boundary and must keep covering every partner, but on a friend bot only the
-// friend actually sends the messages — buzzing the other two ~34 times a day is pure noise.
+// Who receives the drip's WORK: the tap-to-send link batches, the handoffs, the day's
+// capacity warning. Deliberately NOT allowedTelegramIds: that list is the command security
+// boundary and must keep covering every partner, but only ONE person actually sends a given
+// bot's messages — buzzing the other two ~34 times a day is pure noise, and two people
+// working the same batch double-messages the member.
 // Absent or empty → everyone allowed, which is the right default for a one-operator bot.
 //
 // Returned as strings. These are only ever passed to Telegram's chat_id (which takes
@@ -185,6 +188,15 @@ export function resolveDripIds(config) {
   const ids = (config?.dripIds || []).map(String).filter(Boolean);
   if (ids.length > 0) return ids;
   return (config?.allowedTelegramIds || []).map(String).filter(Boolean);
+}
+
+// Who receives the day's REPORTS: the morning digest, the 9 PM summary, the drip's end-of-day
+// report. A different question from who does the sending — every partner wants to see how the
+// day went on every bot, and none of them wants another partner's link batches. Falls back to
+// dripIds, so a bot that never names one behaves exactly as it did before.
+export function resolveReportIds(config) {
+  const ids = (config?.reportIds || []).map(String).filter(Boolean);
+  return ids.length > 0 ? ids : resolveDripIds(config);
 }
 
 export function isTracker(config) {

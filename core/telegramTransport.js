@@ -77,6 +77,7 @@ const MENUS = {
     ['add', '[Name] [phone] → send links + record as NEW'],
     ['rejoin', '[phone] → reactivate an old member'],
     ['kick', '[phone] → remove from all groups'],
+    ['remove', '[phone] ... → mark REMOVED in the sheet only, no group calls'],
     ['renewed', '[phone] → log a renewal payment'],
     ['advance', '[phone] [months] → paid several months up front'],
     ['remind', '[phone] → send reminder + QR by hand'],
