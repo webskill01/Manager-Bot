@@ -47,7 +47,7 @@ import { createGhostRemovalEngine } from './ghostRemovalEngine.js';
 // catchupEngine.js stays on disk but is deliberately NOT wired: every one of its stages
 // posts a group @mention message, which is the path being retired. Reminders are manual
 // (`dmlist`) until the Cloud API cutover. Delete the file once that has run a clean month.
-import { isTracker } from './globalConfig.js';
+import { isTracker, detectPublicHost } from './globalConfig.js';
 import { usesCloudApi } from './cloudApiSender.js';
 import { createTelegramListener } from './telegramTransport.js';
 import { markLinkedAt, getLinkedAt, inWarmup } from './warmup.js';
@@ -866,7 +866,8 @@ export async function startBot(config, log, authDir) {
     });
 
     app.listen(port, '0.0.0.0', () => {
-      const host = process.env.PUBLIC_HOST || 'localhost';
+      // Detected, not configured — see detectPublicHost. PUBLIC_HOST is its NAT fallback.
+      const host = detectPublicHost();
       log.info(`🌐 HTTP server: http://${host}:${port}`);
       log.info(`📱 Scan page:   http://${host}:${port}/   (shareable)`);
       log.info(`💚 Health:      http://${host}:${port}/health`);

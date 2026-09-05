@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
 export function loadConfig(botDir) {
@@ -260,6 +261,33 @@ export function needsFollowUp(member, followUpDays = 3, now = new Date()) {
   if (!called) return true;   // called but undated → always worth chasing
   const days = Math.round((now.setHours(0, 0, 0, 0) - called.setHours(0, 0, 0, 0)) / 86400000);
   return days >= followUpDays;
+}
+
+// The scan-page URL is handed to whoever owns the phone, usually on another network, so it
+// has to carry the box's real public IP. PUBLIC_HOST used to be that answer and it drifted:
+// ecosystem.config.cjs still had bot-aayush2 on 217.217.249.93 long after it moved, and the
+// bot cheerfully printed a link to a VPS it was not running on. A hand-maintained IP per bot
+// is one `pm2 deploy` away from lying again, so ask the machine instead.
+//
+// First non-internal, non-private IPv4 bound to an interface. These VPSes bind their public
+// IPv4 directly, so that address IS what the outside world dials. Behind NAT nothing matches
+// and PUBLIC_HOST takes over — still the right override there, since only the operator knows
+// the far side of the NAT.
+//
+// ponytail: os.networkInterfaces(), not an ipify lookup — a boot-time HTTP call to someone
+// else's uptime, to print one log line, is a dependency the bot does not need.
+// `ifaces` is injectable for the test; nothing in the bot passes it.
+export function detectPublicHost(ifaces = os.networkInterfaces()) {
+  const isPrivate = /^(10\.|127\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/;
+  for (const addrs of Object.values(ifaces)) {
+    for (const a of addrs || []) {
+      // Node 18 reports family as 'IPv4'; older/other runtimes use the number 4.
+      if ((a.family === 'IPv4' || a.family === 4) && !a.internal && !isPrivate.test(a.address)) {
+        return a.address;
+      }
+    }
+  }
+  return process.env.PUBLIC_HOST || 'localhost';
 }
 
 export function randomBetween(min, max) {
