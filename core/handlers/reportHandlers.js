@@ -43,11 +43,18 @@ function inMonth(dateStr, mm, yyyy) {
 export function splitRenewals(paidRenewals, config) {
   const { fullAmount, referralAmount } = config.renewal;
   const hasReferralTier = referralAmount !== fullAmount;
-  return {
-    full: paidRenewals.filter(m => !hasReferralTier || Number(m.paidLast) !== referralAmount),
-    referral: hasReferralTier ? paidRenewals.filter(m => Number(m.paidLast) === referralAmount) : [],
-    revenue: paidRenewals.reduce((s, m) => s + (Number(m.paidLast) || 0), 0),
-  };
+  const full = paidRenewals.filter(m => !hasReferralTier || Number(m.paidLast) !== referralAmount);
+  const referral = hasReferralTier ? paidRenewals.filter(m => Number(m.paidLast) === referralAmount) : [];
+  return { full, referral, revenue: paid(paidRenewals) };
+}
+
+// Cash actually banked by a set of members — the only thing any rupee figure in this file is
+// allowed to be derived from. `count × list price` is the same number for an ordinary
+// renewal and a wrong one for every advance: a 3-month advance is one member holding
+// paidLast 270, so `1 full @ ₹90 = ₹90` sat under a `Today's Revenue: ₹270` total in the
+// same report and neither line said which was the lie.
+export function paid(members) {
+  return members.reduce((s, m) => s + (Number(m.paidLast) || 0), 0);
 }
 
 // Checks lastUpdated against a given date string ("DD-MM-YYYY") — handles both storage formats
@@ -57,6 +64,20 @@ function isUpdatedOn(lastUpdated, dateStr) {
   // Old ISO format: convert DD-MM-YYYY → YYYY-MM-DD for comparison
   const [d, m, y] = dateStr.split('-');
   return lastUpdated.startsWith(`${y}-${m}-${d}`);
+}
+
+// A join and a renewal are ONE event only when they happened on the same day — an existing
+// member re-added with `add` and immediately renewed. On different days they are two separate
+// payments, and both were really taken.
+//
+// dailyBreakdown has always used this same-day rule, and the shared ledger is built from it.
+// The week/month aggregates used a same-PERIOD rule instead ("renewed this month → not a join
+// this month"), which threw away the joining fee of anyone who joined early in a month and
+// renewed later in it — so `monthly` and `revenue` reported LESS than the sum of the daily
+// summaries they cover. One rule, in one place, for all of them.
+function renewedOnJoinDay(m) {
+  const join = toDDMMYYYY(m.joinDate);
+  return !!join && !!m.lastRenewed && isUpdatedOn(m.lastRenewed, join);
 }
 
 // One day's money, as DATA rather than as a rendered report.
@@ -390,11 +411,11 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
     if (totalRenewals > 0) {
       msg += `♻️ Renewals: ${renewalCountLabel}\n`;
       if (fullRenewals.length > 0) {
-        msg += `   • ${fullRenewals.length} full @ ₹${config.renewal.fullAmount} = ₹${fullRenewals.length * config.renewal.fullAmount}\n`;
+        msg += `   • ${fullRenewals.length} full @ ₹${config.renewal.fullAmount} = ₹${paid(fullRenewals)}\n`;
         msg += fullRenewals.map(m => `      ${m.name} • ${m.phone}`).join('\n') + '\n';
       }
       if (referralRenewals.length > 0) {
-        msg += `   • ${referralRenewals.length} referral @ ₹${config.renewal.referralAmount} = ₹${referralRenewals.length * config.renewal.referralAmount}\n`;
+        msg += `   • ${referralRenewals.length} referral @ ₹${config.renewal.referralAmount} = ₹${paid(referralRenewals)}\n`;
         msg += referralRenewals.map(m => `      ${m.name} • ${m.phone}`).join('\n') + '\n';
       }
       if (autoRenewedToday.length > 0) {
@@ -478,17 +499,20 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
 
     // Renewals: only count entries where the "renewed" command was actually run this month.
     // Uses lastRenewed (set exclusively by handleRenewed) so kicks/skips/other ops don't pollute the count.
-    const renewedThisMonth = all.filter(m => m.lastRenewed && isUpdatedThisMonth(m.lastRenewed));
+    const renewedThisMonth = all.filter(m => m.lastRenewed && isUpdatedThisMonth(m.lastRenewed) && Number(m.renewals) > 0);
+    const paidRenewedThisMonth = renewedThisMonth.filter(m => Number(m.paidLast) !== 0);
+    const autoRenewedThisMonth = renewedThisMonth.filter(m => Number(m.paidLast) === 0);
     const { full: fullRenewals, referral: referralRenewals, revenue: renewalRevenue } =
-      splitRenewals(renewedThisMonth.filter(m => Number(m.paidLast) !== 0), config);
+      splitRenewals(paidRenewedThisMonth, config);
 
     // New joins this month (by joinDate) — excludes silent adds (paidLast 0) and anyone already
     // counted as a renewal this month, so a same-month add+renew isn't billed twice (matches monthly).
-    const renewedPhonesThisMonth = new Set(renewedThisMonth.map(m => m.phone));
     const joinsThisMonth = all.filter(m => {
       if (!m.joinDate || m.joinDate.length < 10) return false;
       if (!isPaidJoinRow(m)) return false;
-      if (renewedPhonesThisMonth.has(m.phone)) return false;
+      // Joining on the 3rd and renewing on the 28th is two payments, both really taken.
+      // Only a same-DAY add+renew is one event — see renewedOnJoinDay.
+      if (renewedOnJoinDay(m)) return false;
       if (!hasForwardBilling(m)) return false;
       return m.joinDate.slice(3, 5) === mm && m.joinDate.slice(6, 10) === yyyy;
     });
@@ -500,11 +524,15 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
     let msg = `💰 Revenue — ${monthName} ${yyyy}\n\n`;
     msg += `Total: ₹${totalRevenue}\n`;
     msg += `${formatSplit(totalRevenue, config, '')}\n\n`;
-    msg += `♻️ Renewals: ${renewedThisMonth.length} (₹${renewalRevenue})\n`;
+    msg += `♻️ Renewals: ${paidRenewedThisMonth.length} (₹${renewalRevenue})\n`;
     if (fullRenewals.length > 0)
-      msg += `   • ${fullRenewals.length} full @ ₹${config.renewal.fullAmount}\n`;
+      msg += `   • ${fullRenewals.length} full @ ₹${config.renewal.fullAmount} = ₹${paid(fullRenewals)}\n`;
     if (referralRenewals.length > 0)
-      msg += `   • ${referralRenewals.length} referral @ ₹${config.renewal.referralAmount}\n`;
+      msg += `   • ${referralRenewals.length} referral @ ₹${config.renewal.referralAmount} = ₹${paid(referralRenewals)}\n`;
+    // Free 2-ref renewals brought in nothing and were never part of the ₹ figure. Counting
+    // them in the same number made "Renewals: 12 (₹990)" read as an arithmetic error.
+    if (autoRenewedThisMonth.length > 0)
+      msg += `   • ${autoRenewedThisMonth.length} ref-free @ ₹0 (2 refs)\n`;
     if (joinsThisMonth.length > 0)
       msg += `\n➕ New joins: ${joinsThisMonth.length} (₹${joinRevenue})`;
     msg += await allBotsBlock(`${monthName} ${yyyy}`, datesInMonth(now.getMonth() + 1, now.getFullYear()));
@@ -703,10 +731,9 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
       const label = d.toLocaleString('en-IN', { month: 'short', year: 'numeric' });
 
       const renewed  = all.filter(m => m.lastRenewed && inMonth(m.lastRenewed, mm, yyyy));
-      // A member renewed this month is counted as a renewal, not also a join — otherwise a
-      // same-month add+renew is billed twice (matches summary/monthly).
-      const renewedPhones = new Set(renewed.map(m => m.phone));
-      const joins    = all.filter(m => isPaidJoinRow(m) && inMonth(m.joinDate, mm, yyyy) && !renewedPhones.has(m.phone) && hasForwardBilling(m));
+      // Only a same-DAY add+renew is one event; a join and a later renewal in the same month
+      // are two payments (see renewedOnJoinDay).
+      const joins    = all.filter(m => isPaidJoinRow(m) && inMonth(m.joinDate, mm, yyyy) && !renewedOnJoinDay(m) && hasForwardBilling(m));
       const revenue  = renewed.reduce((s, m) => s + (Number(m.paidLast) || 0), 0)
                      + joins.length * config.joining.fee;
 
@@ -786,8 +813,15 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
 
     const rate = dueCount > 0
       ? Math.round((renewedSet.length / dueCount) * 100) : 0;
-    const collected    = renewedSet.reduce((s, m) => s + (Number(m.paidLast) || 0), 0);
-    const outstanding  = activePending.length * config.renewal.fullAmount;
+    const collected    = paid(renewedSet);
+    // Price each pending member at what THEY will actually owe, the way `forecast` does:
+    // 2 refs renew free and 1 ref renews at the referral price. Charging everyone the full
+    // amount overstated the outstanding figure by exactly the discounts already earned.
+    const outstanding  = activePending.reduce((sum, m) => {
+      const refs = getReferralsInBillingPeriod(m.phone, m.billingDate, all).length;
+      if (refs >= 2) return sum;
+      return sum + (refs === 1 ? config.renewal.referralAmount : config.renewal.fullAmount);
+    }, 0);
 
     let msg = `📊 COLLECTION RATE — ${monthName} ${yyyy}\n\n`;
     msg += `Due this month:    ${dueCount}\n`;
@@ -857,11 +891,10 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
 
     const inLast7 = (dateStr) => last7Set.has(toDDMMYYYY(dateStr));
 
-    // Members renewed this week take priority over their join: a same-week add+renew counts as a
-    // renewal, not a new join (mirrors handleSummary). Without this they'd show as new members.
+    // Only a same-DAY add+renew collapses into one event (see renewedOnJoinDay). Joining on
+    // Monday and renewing on Friday is two payments and both are counted.
     const renewedThisWeek = all.filter(m => m.lastRenewed && last7Set.has(toDDMMYYYY(m.lastRenewed)) && Number(m.renewals) > 0);
-    const renewedPhones7  = new Set(renewedThisWeek.map(m => m.phone));
-    const newThisWeek     = all.filter(m => isPaidJoinRow(m) && last7Set.has(m.joinDate) && !renewedPhones7.has(m.phone) && hasForwardBilling(m));
+    const newThisWeek     = all.filter(m => isPaidJoinRow(m) && last7Set.has(m.joinDate) && !renewedOnJoinDay(m) && hasForwardBilling(m));
     const autoRenewed     = renewedThisWeek.filter(m => Number(m.paidLast) === 0);
     const paidRenewed     = renewedThisWeek.filter(m => Number(m.paidLast) > 0);
     const removedThisWeek = all.filter(m => m.status === 'REMOVED' && inLast7(m.lastUpdated));
@@ -920,11 +953,11 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
 
     const isIn = (dateStr) => inMonth(dateStr, mm, yyyy);
 
-    // Renewed-this-month takes priority over join (mirrors handleSummary): a same-month add+renew
-    // counts once, as a renewal — otherwise the member wrongly appears under New Members.
+    // Only a same-DAY add+renew counts once, as the renewal (see renewedOnJoinDay). A join
+    // early in the month and a renewal later in it are two payments, and the joining fee was
+    // really banked — dropping it is what made `monthly` total less than its own daily rows.
     const allRenewed     = all.filter(m => m.lastRenewed && isIn(m.lastRenewed) && Number(m.renewals) > 0);
-    const renewedPhonesM = new Set(allRenewed.map(m => m.phone));
-    const newMembers     = all.filter(m => isPaidJoinRow(m) && isIn(m.joinDate) && !renewedPhonesM.has(m.phone) && hasForwardBilling(m));
+    const newMembers     = all.filter(m => isPaidJoinRow(m) && isIn(m.joinDate) && !renewedOnJoinDay(m) && hasForwardBilling(m));
     const autoRenewed    = allRenewed.filter(m => Number(m.paidLast) === 0);
     const paidRenewed    = allRenewed.filter(m => Number(m.paidLast) > 0);
     const { full: fullRenewals, referral: halfRenewals, revenue: renewRevenue } = splitRenewals(paidRenewed, config);
@@ -942,8 +975,8 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
     msg += '\n\n';
 
     msg += `♻️ Renewals: ${allRenewed.length}\n`;
-    if (fullRenewals.length)  msg += `   • ${fullRenewals.length} full @ ₹${config.renewal.fullAmount} = ₹${fullRenewals.length * config.renewal.fullAmount}\n`;
-    if (halfRenewals.length)  msg += `   • ${halfRenewals.length} referral @ ₹${config.renewal.referralAmount} = ₹${halfRenewals.length * config.renewal.referralAmount}\n`;
+    if (fullRenewals.length)  msg += `   • ${fullRenewals.length} full @ ₹${config.renewal.fullAmount} = ₹${paid(fullRenewals)}\n`;
+    if (halfRenewals.length)  msg += `   • ${halfRenewals.length} referral @ ₹${config.renewal.referralAmount} = ₹${paid(halfRenewals)}\n`;
     if (autoRenewed.length)   msg += `   • ${autoRenewed.length} ref-free @ ₹0 (2 refs)\n`;
     msg += '\n';
 

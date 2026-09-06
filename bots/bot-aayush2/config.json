@@ -9,12 +9,16 @@
   "split": {
     "shares": [
       {
-        "label": "Nitin",
+        "label": "Sachin",
         "percent": 50
       },
       {
+        "label": "Nitin",
+        "percent": 25
+      },
+      {
         "label": "Tanishq",
-        "percent": 50
+        "percent": 25
       }
     ]
   },

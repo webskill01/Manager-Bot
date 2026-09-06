@@ -608,7 +608,13 @@ export function computeSplit(total, config) {
 // - Split block set → one line per share "Label: ₹X"               (e.g. bot-abhi, 50-25-25)
 export function formatSplit(total, config, indent = '   ') {
   if (!getSplitShares(config)) {
-    return `${indent}Per person: ₹${Math.round(total / 2)}`;
+    // An odd total does not halve evenly, and printing one rounded half twice hands out a
+    // rupee that was never taken (₹1035 → "Per person: ₹518" × 2 = ₹1036). bot-nitin's ₹45
+    // referral tier makes odd totals routine, so show both halves when they differ.
+    const [a, b] = computeSplit(total, config);
+    return a.amount === b.amount
+      ? `${indent}Per person: ₹${a.amount}`
+      : `${indent}Per person: ₹${a.amount} / ₹${b.amount}`;
   }
   return computeSplit(total, config)
     .map(p => `${indent}${p.label}: ₹${p.amount}`)

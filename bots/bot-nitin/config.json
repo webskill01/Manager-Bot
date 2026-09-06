@@ -11,8 +11,8 @@
   ],
   "drip": {
     "mode": "auto",
-    "startHour": 6,
-    "endHour": 18,
+    "startHour": 5,
+    "endHour": 19,
     "gapMinMs": 1080000,
     "gapMaxMs": 1500000,
     "gapCapMs": 7200000,
@@ -134,7 +134,7 @@
     "eveningSummary": "0 22 * * *",
     "timezone": "Asia/Kolkata",
     "jitterMaxMinutes": 20,
-    "dripArm": "0 6 * * *"
+    "dripArm": "0 5 * * *"
   },
   "messages": {
     "groupReminder": "Sat Sri Akal ji 🙏🏻 Aaj {date} nu ehna members da ik mahina pura ho gya — upar dite QR te 90 pay karke dss deyo ji 🙏🏻:",

@@ -6,6 +6,19 @@ import {
 // Re-exported for tests and for callers that already import them from here.
 export { chunkByChars, MAX_CHARS_PER_MSG };
 
+// What a member on a RENEWAL list actually owes. Was `config.joining.fee`, halved for a
+// referral — right only on bot-nitin, where the joining fee, the renewal price and half of it
+// happen to equal 90/90/45. On the flat-priced bots (99 or 100 with no referral tier) a 1-ref
+// member's row read ₹50 next to a message asking them for ₹99. The renewal price is the
+// renewal config, not the joining one.
+function renewalFee(config, referral) {
+  const r = config.renewal || {};
+  const full = Number(r.fullAmount) || config.joining?.fee || 90;
+  if (!referral) return full;
+  const ref = Number(r.referralAmount);
+  return Number.isFinite(ref) && ref > 0 ? ref : Math.round(full / 2);
+}
+
 // Which wording a member gets when the operator has not forced one. Mirrors the cron's
 // own escalation (day-5 nudge, day-6 final) so steady-state behaviour is unchanged.
 export function pickStage(overdueDays, config) {
@@ -38,7 +51,6 @@ function templateFor(stage, config, { referral, phone, seq }) {
 // Same templates, same {name}/{date} substitution and the same global replace as the list, so
 // a hand-sent reminder is word-for-word the one the drip would have sent.
 export function dmRowFor(member, config, { stage = null, referral = false } = {}) {
-  const fee = config.joining?.fee ?? 90;
   const d = daysFromToday(member.billingDate);
   const overdueDays = d === null ? 0 : Math.max(0, -d);
   const chosen = stage || pickStage(overdueDays, config);
@@ -51,7 +63,7 @@ export function dmRowFor(member, config, { stage = null, referral = false } = {}
     billingDate: member.billingDate,
     overdueDays,
     stage: chosen,
-    fee: referral ? Math.round(fee / 2) : fee,
+    fee: renewalFee(config, referral),
     text,
     link: `https://wa.me/91${member.phone}?text=${encodeURIComponent(text)}`,
   };
@@ -85,7 +97,6 @@ export function buildDmList({
   members, config, cohort = 'due', billingDay = null, force = null,
   contactLog = {}, now = todayStr(),
 }) {
-  const fee = config.joining?.fee ?? 90;
   const nudge = config.overdue?.autoReminderDays ?? 5;
   const final = config.overdue?.finalReminderDays ?? 6;
   // One past the last day anyone is messaged on. Defaults to final + 1 rather than a bare 7
@@ -152,7 +163,7 @@ export function buildDmList({
       billingDate: m.billingDate,
       overdueDays,
       stage,
-      fee: referral ? Math.round(fee / 2) : fee,
+      fee: renewalFee(config, referral),
       text,
       link: `https://wa.me/91${m.phone}?text=${encodeURIComponent(text)}`,
     });

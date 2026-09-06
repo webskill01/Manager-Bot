@@ -4,22 +4,32 @@ import { markPhoneReminded } from '../reminderSender.js';
 export function createRenewalHandlers(store, config, log) {
 
   async function handleRenewed(args) {
-    if (args.length < 1) return '❌ Format: renewed [phone]  or  renewed [phone] 45  or  renewed [phone] [date 1-31]  or  renewed [phone] [date] 45';
+    if (args.length < 1) return `❌ Format: renewed [phone]  or  renewed [phone] ${config.renewal.referralAmount}  or  renewed [phone] [date 1-31]  or  renewed [phone] [date] ${config.renewal.referralAmount}`;
     const phone = normalizePhone(args[0]);
     if (phone.length !== 10) return '❌ Invalid number. Use 10 digits: renewed 98551XXXXX';
 
     const member = store.findByPhone(phone);
     if (!member) return `❌ No member found for ${args[0]}. Try: find [name]`;
 
-    // Parse remaining args: '45' → referral, 1–31 → billing day, 'force' → override same-month block
+    // Parse remaining args: the referral price → referral tier, 1–31 → billing day,
+    // 'force' → override the same-month block.
+    //
+    // The referral token was hardcoded '45', which is bot-nitin's price and nobody else's. On
+    // a bot priced 100/50, `renewed X 50` matched neither branch — 50 is not '45' and is out
+    // of the 1–31 day range — so it silently recorded the FULL amount and the operator's
+    // sheet was ₹50 heavy with no error to notice. Read the price from config instead.
+    //
+    // Day wins over price when the two collide (a bot priced ₹25 with a member billed on the
+    // 25th): a day is what the two-arg form is for, and the price is already the default.
+    const referralToken = String(config.renewal.referralAmount);
     let amount = config.renewal.fullAmount;
     let billingDay = null;
     const isForce = args.slice(1).some(a => a.toLowerCase() === 'force');
     for (const arg of args.slice(1)) {
-      if (arg === '45') {
-        amount = config.renewal.referralAmount;
-      } else if (/^\d{1,2}$/.test(arg) && parseInt(arg) >= 1 && parseInt(arg) <= 31) {
+      if (/^\d{1,2}$/.test(arg) && parseInt(arg) >= 1 && parseInt(arg) <= 31) {
         billingDay = parseInt(arg);
+      } else if (arg === referralToken) {
+        amount = config.renewal.referralAmount;
       }
     }
 
