@@ -102,36 +102,36 @@
   },
   "messages": {
     "reminder": [
-      "Sat Sri Akal {name} veer 🙏\nTuhada Singh Travels paid groups da mahina {date} nu pura ho gya hai ji\n100rs repay krdo ji",
-      "Hlo {name} veer ssa 🙏\nAjj {date} nu tuhadi Singh Travels monthly paid groups di date hai ji\nIste 100rs repay krdo ji",
-      "{name} veer Sat Sri Akal 🙏\nTuhadi paid groups di repay date {date} di hai ji\n100rs repay krke dss deo ji",
-      "Sat Sri Akal {name} veer 🙏\nSingh Travels paid groups da ik mahina {date} nu pura ho gya ji\nAgle mahine lyi 100rs repay krdo",
-      "Hlo {name} veer 🙏\n{date} nu tuhada mahina pura ho gya hai ji\nIste 100rs repay kr deo, main note kr launga ji",
-      "{name} veer ssa 🙏\nTuhadi Singh Travels di monthly date {date} nu aa gyi hai ji\nQR te 100rs repay krke dss deo ji"
+      "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\nSingh Travels groups lyi iste 100 pay krdo ji 🙏🏻",
+      "{name} paaji Sat Sri Akal 🙏🏻\nTohada mahina {date} nu pura ho gya si ji\nIss mahine lyi 100 pay krdo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada Singh Travels da ik mahina pura ho gya hai\nKirpa krke iss mahine de 100 pay kr deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nTohade groups da mahina {date} nu pura ho gya si\nAgle mahine lyi 100 iste pay kr deyo ji 🙏🏻",
+      "{name} veerji Sat Sri Akal 🙏🏻\nTohadi repay di date aa gyi ji ({date})\nUpar dite QR te 100 pay krke dss deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nIk mahina pura ho gya ji ({date})\nIste 100 pay kr deyo, main note kr lawanga ji 🙏🏻"
     ],
     "referralReminder": [
-      "Sat Sri Akal {name} veer 🙏\nTuhadi Singh Travels paid groups di date {date} nu aa gyi hai ji\nIss mahine lyi 100rs repay krdo ji",
-      "Hlo {name} veer ssa 🙏\n{date} nu tuhada mahina pura ho gya si ji\n100rs repay krke dss deo ji",
-      "{name} veer 🙏\nSingh Travels monthly paid groups da repay {date} nu due hai ji\n100rs kr deo ji",
-      "Sat Sri Akal {name} veer 🙏\nTuhada ik mahina {date} nu pura ho gya hai ji\nKirpa krke 100rs repay krdo ji",
-      "Hlo {name} veer 🙏\nTuhadi paid groups di monthly date {date} di si ji\nIste 100rs repay kr deo ji",
-      "{name} veer ssa 🙏\n{date} nu mahina pura ho gya ji, 100rs repay krdo\nMain note kr launga ji"
+      "Sat Sri Akal {name} paaji 🙏🏻\nTohadi Singh Travels di date {date} nu aa gyi hai ji\nIss mahine lyi 100 pay krdo ji 🙏🏻",
+      "{name} paaji Sat Sri Akal 🙏🏻\n{date} nu tohada mahina pura ho gya si ji\n100 pay krke dss deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nSingh Travels groups da repay {date} nu due si ji\nKirpa krke 100 kr deyo ji 🙏🏻",
+      "{name} veerji Sat Sri Akal 🙏🏻\nTohada ik mahina {date} nu pura ho gya hai ji\nIste 100 pay kr deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nTohadi monthly date {date} di si ji\nUpar dite QR te 100 pay krdo ji 🙏🏻",
+      "{name} paaji 🙏🏻 Sat Sri Akal\n{date} nu mahina pura ho gya ji, 100 pay kr deyo\nMain note kr lawanga ji 🙏🏻"
     ],
     "overdue": [
-      "Sat Sri Akal {name} veer 🙏\n🚨 Ajj tuhadi repay di LAST date hai ji\n100rs repay krke dss deo ji",
-      "{name} veer 🙏\n🚨🚨 Tuhadi paid groups di date {date} nu lang gyi si\nAjj last din hai ji — 100rs repay krdo",
-      "Hlo {name} veer ssa 🙏\n🚨 Repay di last date ajj hai ji\nAjj hi 100rs kr deo, groups chalu rehnge ji",
-      "{name} veerji 🚨🚨\nTuhada repay hje pending hai ji te ajj last date hai\n100rs krke dss deo ji 🙏",
-      "Sat Sri Akal {name} veer 🙏\n🚨 Ajj akhri din hai repay da ji\n100rs repay krdo, ni ta groups cho naam kataona pauga ji",
-      "Hlo {name} veer 🙏\n🚨 Date {date} nu nikal chuki hai, ajj last chance hai ji\nAjj 100rs repay krke dss deo ji"
+      "Sat Sri Akal {name} paaji 🙏🏻\n🚨🚨 Aaj last date aaji, 100 pay krke dss deyo ji 🙏🏻",
+      "{name} paaji 🙏🏻\n🚨🚨 Aaj last date hai ji, repay krke dss deyo.",
+      "Sat Sri Akal {name} paaji\n🚨 Repay di last date aaj hai ji, kirpa krke kr deyo 🙏🏻",
+      "{name} veerji 🙏🏻\n🚨 Tohadi date {date} nu nikal gyi si ji, ajj kr deyo 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\n🚨 Repay pending aa ji, kirpa krke ajj kr deyo 🙏🏻",
+      "{name} paaji 🙏🏻 repay rehnda ji\n🚨 Ajj kr deyo ta groups chalu rehnge 🙏🏻"
     ],
     "finalReminder": [
-      "Hnji {name} veerji 🙏\nRepay krna hai ja nahi, dss deo ji ?",
-      "{name} veer ssa 🙏\nGroups ch rehna hai ji ? Hn ja na, ik vaari dss deo",
-      "Hnji veerji, tuhada repay hje ni hoya\nAge chalauna hai ji ? dss deo 🙏",
-      "{name} veerji 🙏\nAkhri vaar puch reha ha ji — repay krna hai ?",
-      "Hnji {name} veer, groups chalu rakhne ne ja nahi ji ? dss deo",
-      "{name} veer 🙏\nDss deo ji — repay kr rhe ho ja naam kat deiye groups cho ?"
+      "Hnji Veerji krna ji repay ?",
+      "Hnji {name} paaji, repay krna hai ji ?",
+      "{name} veerji, groups chalu rakhne ne ji ?",
+      "{name} paaji repay krna hai ji ? dss deyo 🙏🏻",
+      "Hnji {name} paaji 🙏🏻 repay da dss deyo ji, main note kr lawanga",
+      "{name} paaji, hje tak repay ni hoyi — krna hai ji ?"
     ],
     "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
   },
