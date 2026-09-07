@@ -202,14 +202,24 @@ export function createLedger(config, store, log) {
     if (rows.length === 0) return null;
 
     const out = {};
+    // Columns the config names that hold nothing at all. `Number(undefined) || 0` turns a
+    // letter pointing past the end of the sheet into a confident ₹0, which is exactly how a
+    // restructure that moved "Total per person" from L to K reported ₹0 for a day that had
+    // really earned ₹530 — sitting next to a neighbouring column that was still right, so
+    // nothing looked broken. An empty column is a broken mapping, not a zero. Name it.
+    const blankColumns = [];
     for (const [label, letter] of Object.entries(columns)) {
       const col = columnIndex(letter);
-      if (col < 0) continue;
+      if (col < 0) { blankColumns.push(`${label} → "${letter}" is not a column letter`); continue; }
+      if (!rows.some(r => r[col] !== undefined && r[col] !== '')) {
+        blankColumns.push(`${label} → column ${letter} is empty`);
+        continue;
+      }
       // Round to 2dp: a half-price renewal makes these fractional and floating-point addition
       // would otherwise report ₹1022.4999999999999.
       out[label] = Math.round(rows.reduce((sum, r) => sum + (Number(r[col]) || 0), 0) * 100) / 100;
     }
-    if (Object.keys(out).length === 0) return null;
+    if (Object.keys(out).length === 0 && blankColumns.length === 0) return null;
 
     // Which of the asked-for dates every bot has NOT reported yet. Without this a window
     // containing today is silently short a whole day: the LOG is written at 9 PM, so a
@@ -227,7 +237,7 @@ export function createLedger(config, store, log) {
       wrote.get(r.date).add(r.bot);
     }
     const missing = dates.filter(d => (wrote.get(d)?.size || 0) < roster.size);
-    return { sums: out, missing };
+    return { sums: out, missing, blankColumns };
   }
 
   async function status() {

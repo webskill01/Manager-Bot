@@ -151,8 +151,8 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
     try {
       const res = await ledger?.sumFor(dates);
       if (!res) return '';
-      const { sums, missing = [] } = res;
-      const width = Math.max(...Object.keys(sums).map(k => k.length)) + 1;
+      const { sums, missing = [], blankColumns = [] } = res;
+      const width = Math.max(0, ...Object.keys(sums).map(k => k.length)) + 1;
       const lines = Object.entries(sums)
         .map(([k, v]) => `   ${`${k}:`.padEnd(width)} ₹${v}`)
         .join('\n');
@@ -163,7 +163,12 @@ export function createReportHandlers(store, config, botStartTime, log, ledger = 
       const note = missing.length === 0 ? ''
         : `\n   ⏳ Not counted yet: ${missing.length > 3 ? `${missing.length} of ${dates.length} days` : missing.join(', ')}`
         + `\n      (the shared sheet fills at 9 PM and 5 AM)`;
-      return `\n\n🌐 ALL BOTS — ${label}\n${lines}${note}`;
+      // A column the config points at that holds nothing sums to ₹0 and reads as a real
+      // figure. Say what is actually wrong instead — the fix is one letter in config.json.
+      const badCols = blankColumns.length === 0 ? ''
+        : `\n   ⚠️ Not in the sheet: ${blankColumns.join('; ')}`
+        + `\n      (fix ledger.summaryColumns in this bot’s config.json)`;
+      return `\n\n🌐 ALL BOTS — ${label}\n${lines}${note}${badCols}`;
     } catch (err) {
       log?.warn?.(`⚠️  Cross-bot totals unavailable: ${err.message}`);
       return '';

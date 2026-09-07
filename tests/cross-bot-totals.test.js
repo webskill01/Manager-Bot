@@ -110,9 +110,12 @@ test('each report asks for exactly its own window', async () => {
 
 test('the labels and columns bot-nitin ships are the ones the sheet actually has', () => {
   const nitin = JSON.parse(fs.readFileSync('bots/bot-nitin/config.json', 'utf8'));
+  // SUMMARY runs A=DATE B=NEW JOINED C=RENEWED D=ABHINAV E=SACHIN F=AAYUSH G=BOT 2
+  // H=REVENUE BY US  I=PER PERSON BY US  J=REVENUE BY THEM  K=TOTAL PER PERSON, and ends at K.
+  // It used to run one column wider; the leftover 'L' read nothing and reported a flat ₹0.
   assert.deepEqual(nitin.ledger.summaryColumns, {
     "From friends' bots": 'J',   // REVENUE BY THEM
-    'Total per person': 'L',     // TOTAL PER PERSON
+    'Total per person': 'K',     // TOTAL PER PERSON
   });
   // Only the bot whose operator owns the revenue sheet reads it back.
   for (const bot of ['bot-abhi', 'bot-sachin2', 'bot-aayush2']) {
@@ -148,4 +151,33 @@ test('a genuinely zero day that IS written reads as zero, not as pending', async
   const out = await createReportHandlers(store(), cfg(), Date.now(), log, zero).handleSummary([]);
   assert.doesNotMatch(out, /Not counted yet/);
   assert.match(out, /From friends' bots: +₹0/);
+});
+
+test('a column that is not in the sheet is named, never reported as ₹0', async () => {
+  // What actually happened: the SUMMARY tab was restructured, "TOTAL PER PERSON" moved from
+  // L to K, and the block printed "Total per person: ₹0" beside a correct ₹125 — a real
+  // ₹530 day, and nothing on screen looked broken.
+  const ledger = {
+    enabled: true,
+    sumFor: async () => ({
+      sums: { "From friends' bots": 125 },
+      missing: [],
+      blankColumns: ['Total per person → column L is empty'],
+    }),
+  };
+  const out = await createReportHandlers(store(), cfg(), Date.now(), log, ledger).handleSummary([]);
+  assert.match(out, /From friends' bots: +₹125/, 'the column that IS there still reports');
+  assert.doesNotMatch(out, /Total per person: +₹0/, 'a missing column must never read as zero');
+  assert.match(out, /Not in the sheet: Total per person → column L is empty/);
+  assert.match(out, /fix ledger\.summaryColumns/);
+});
+
+test('every configured column missing still renders the warning, not an empty block', async () => {
+  const ledger = {
+    enabled: true,
+    sumFor: async () => ({ sums: {}, missing: [], blankColumns: ['A → column Y is empty', 'B → column Z is empty'] }),
+  };
+  const out = await createReportHandlers(store(), cfg(), Date.now(), log, ledger).handleSummary([]);
+  assert.match(out, /🌐 ALL BOTS/);
+  assert.match(out, /Not in the sheet: A → column Y is empty; B → column Z is empty/);
 });
