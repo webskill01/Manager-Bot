@@ -1,5 +1,6 @@
 {
   "botName": "bot-sachin2",
+  "transport": "dual",
   "paidGroups": [
     "120363406302662198@g.us",
     "120363408598698876@g.us"

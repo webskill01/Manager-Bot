@@ -75,18 +75,47 @@ const DEFAULT_BATCH_SIZE = 3;
 const DEFAULT_MSG_GAP_MIN_MS = 40 * 1000;
 const DEFAULT_MSG_GAP_MAX_MS = 3 * 60 * 1000;
 
+// ── The hourly ceiling, and finishing the day ────────────────────────────────
+//
+// "maxPerHour": 4 is the one number an operator actually thinks in, and when it is set it
+// takes over pacing entirely: the floor gap becomes an hour divided by it, and batchSize
+// drops to 1. Both halves are needed. A ceiling of 4 delivered as a batch of 3 is three
+// messages inside four minutes and then 45 minutes of silence — technically 4 an hour, and
+// exactly the continuous clump the ceiling exists to prevent. One message per tick at a
+// >=15 min floor puts at most four in any rolling hour, and adaptiveGapMs's +0..40% wobble
+// spreads them so no two days look alike. The wobble only ever ADDS, so the ceiling holds on
+// every roll.
+//
+// "lastHour" is the other half of the same request: finish the day's list rather than drop
+// its tail. endHour goes on pacing the day (msLeftInWindow divides by it, so the gap opens
+// up on a light day); lastHour is where the day actually stops. Past endHour the arithmetic
+// has gone negative and adaptiveGapMs pins to the floor on its own, so the overrun runs at
+// the ceiling and no faster. A queue that still does not fit by lastHour rolls over as it
+// always did — the ceiling is the ban control and never gives.
+//
+// Both default to the old behaviour (no ceiling, lastHour == endHour), so a bot that has not
+// asked for this is untouched.
+
 export function dripSettings(config) {
   const d = config.drip || {};
   const auto = d.mode === 'auto';
+  // Manual mode is the operator's thumb on a fixed range — there is no socket to pace and
+  // no ceiling to enforce, so the knob is ignored there rather than half-applied.
+  const maxPerHour = auto && d.maxPerHour > 0 ? Number(d.maxPerHour) : null;
+  const endHour = d.endHour ?? (auto ? DEFAULT_AUTO_END_HOUR : DEFAULT_END_HOUR);
   return {
     mode: auto ? 'auto' : 'manual',
     startHour: d.startHour ?? (auto ? DEFAULT_AUTO_START_HOUR : DEFAULT_START_HOUR),
-    endHour: d.endHour ?? (auto ? DEFAULT_AUTO_END_HOUR : DEFAULT_END_HOUR),
-    gapMinMs: d.gapMinMs ?? (auto ? DEFAULT_AUTO_GAP_MIN_MS : DEFAULT_GAP_MIN_MS),
+    endHour,
+    lastHour: d.lastHour ?? endHour,
+    maxPerHour,
+    gapMinMs: maxPerHour
+      ? Math.ceil(3600000 / maxPerHour)
+      : (d.gapMinMs ?? (auto ? DEFAULT_AUTO_GAP_MIN_MS : DEFAULT_GAP_MIN_MS)),
     gapMaxMs: d.gapMaxMs ?? DEFAULT_GAP_MAX_MS,
     gapCapMs: d.gapCapMs ?? DEFAULT_GAP_CAP_MS,
     firstDelayMaxMs: d.firstDelayMaxMs ?? DEFAULT_FIRST_DELAY_MAX_MS,
-    batchSize: Math.max(1, d.batchSize ?? DEFAULT_BATCH_SIZE),
+    batchSize: maxPerHour ? 1 : Math.max(1, d.batchSize ?? DEFAULT_BATCH_SIZE),
     msgGapMinMs: d.msgGapMinMs ?? DEFAULT_MSG_GAP_MIN_MS,
     msgGapMaxMs: d.msgGapMaxMs ?? DEFAULT_MSG_GAP_MAX_MS,
   };
@@ -229,7 +258,9 @@ export function buildDripQueue({ members, config, pushed = [], contactLog = {}, 
 // twelve hours came out as 14.4 hours of sends and reported as overflowing.
 export function planTimes(queue, settings, { from = new Date(), endHour } = {}) {
   const end = new Date(from);
-  end.setHours(endHour ?? settings.endHour, 0, 0, 0);
+  // lastHour is where the day stops, so it is what `late` has to be measured against —
+  // planning to endHour on a bot with an overrun flags two hours of ordinary sends as late.
+  end.setHours(endHour ?? settings.lastHour ?? settings.endHour, 0, 0, 0);
   const WOBBLE = 1.2;   // mean of the +0..40% adaptiveGapMs adds, so times land mid-spread
   // The queue moves in batches, so the clock does too: a full gap in front of each batch, and
   // the mean intra-batch spacing between its members. Planning one gap per MEMBER is what made
@@ -691,7 +722,10 @@ ${detail || ''}
       if (_timer.unref) _timer.unref();
       return;
     }
-    if (!withinWindow(now, settings)) return finish(state);
+    // lastHour, not endHour: the day keeps working the queue past its pacing window rather
+    // than dropping the tail into tomorrow. They are the same number unless the operator
+    // set lastHour, so this is a no-op for every bot that has not asked for the overrun.
+    if (now.getHours() >= settings.lastHour) return finish(state);
 
     // Auto mode transmits over WhatsApp, so unlike manual mode it is subject to warm-up: a
     // freshly linked number whose first act is a paced reminder run is exactly the profile
@@ -936,7 +970,7 @@ ${detail || ''}
         // Batches the window holds × members per batch. Counting batches alone under-reported
         // capacity threefold and cried overflow on ordinary days.
         const capacity = Math.floor(
-          ((settings.endHour - settings.startHour) * 3600000) / (settings.gapMinMs * 1.2),
+          ((settings.lastHour - settings.startHour) * 3600000) / (settings.gapMinMs * 1.2),
         ) * settings.batchSize;
         if (queued > capacity) {
           await notify(

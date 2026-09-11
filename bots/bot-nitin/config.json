@@ -11,10 +11,10 @@
   ],
   "drip": {
     "mode": "auto",
+    "maxPerHour": 4,
     "startHour": 5,
     "endHour": 19,
-    "gapMinMs": 1080000,
-    "gapMaxMs": 1500000,
+    "lastHour": 21,
     "gapCapMs": 7200000,
     "firstDelayMaxMs": 2400000
   },

@@ -1,11 +1,13 @@
 {
   "botName": "bot-abhi",
+  "transport": "dual",
+  "warmupHours": 0,
   "paidGroups": [
     "120363405984520359@g.us",
     "120363406438722163@g.us",
     "120363424287416053@g.us"
   ],
-  "upiQrPath": "./qr-payment.jpg",
+  "upiQrPath": ["./qr-1.jpg", "./qr-2.jpg", "./qr-3.jpg", "./qr-4.jpg", "./qr-5.jpg", "./qr-6.jpg", "./qr-7.jpg", "./qr-8.jpg"],
   "split": {
     "shares": [
       {
@@ -82,10 +84,13 @@
     "5932459548"
   ],
   "drip": {
-    "startHour": 9,
-    "endHour": 21,
-    "gapMinMs": 1080000,
-    "gapMaxMs": 1500000
+    "mode": "auto",
+    "maxPerHour": 4,
+    "startHour": 5,
+    "endHour": 19,
+    "lastHour": 21,
+    "gapCapMs": 7200000,
+    "firstDelayMaxMs": 2400000
   },
   "allowedTelegramIds": [
     "5332135237",

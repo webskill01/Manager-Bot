@@ -892,3 +892,65 @@ test('a tick after the window closes still ends the day', async () => {
   await engine.tick();
   assert.ok(engine.status().includes('finished'), `a closed window finishes: ${engine.status()}`);
 });
+
+// ── The hourly ceiling, and finishing the day ────────────────────────────────
+
+// "4 an hour" has to mean four messages spread across the hour, not one clump of four on the
+// hour with 45 minutes of silence after it. Both halves of that are asserted here because
+// either one alone gives the operator the shape they explicitly did not want.
+test('maxPerHour sets the floor AND drops the batch to one message', () => {
+  const s = autoSettings({ maxPerHour: 4 });
+  assert.equal(s.gapMinMs, 15 * 60 * 1000, 'an hour divided by four');
+  assert.equal(s.batchSize, 1, 'a batch of 3 at a 4/hr ceiling is a clump, not a drip');
+});
+
+// The wobble only ever adds, so no roll of the dice can fit a fifth message into an hour.
+test('the 4-an-hour ceiling holds at every roll of the dice, however long the queue', () => {
+  const s = autoSettings({ maxPerHour: 4 });
+  for (const n of [5, 53, 200, 900]) {
+    for (let r = 0; r <= 1; r += 0.05) {
+      assert.ok(adaptiveGapMs(n, 14 * HOUR, s, () => r) >= 15 * 60 * 1000,
+        n + ' queued sent faster than 4 an hour at rand=' + r.toFixed(2));
+    }
+  }
+});
+
+// ...and it is a spread, not a fixed 15 minutes, so the sends do not land on a clock pattern.
+test('gaps above the ceiling floor still wobble', () => {
+  const s = autoSettings({ maxPerHour: 4 });
+  const seen = new Set(Array.from({ length: 20 }, (_, i) => adaptiveGapMs(900, 14 * HOUR, s, () => i / 20)));
+  assert.ok(seen.size > 15, 'every gap is the same number — the ceiling ate the wobble');
+});
+
+test('maxPerHour is ignored in manual mode — there is no socket to pace', () => {
+  const s = dripSettings({ drip: { maxPerHour: 4 } });
+  assert.equal(s.maxPerHour, null);
+  assert.equal(s.batchSize, 3);
+});
+
+// The rollover fix. endHour paces the day; lastHour is where it stops. Past endHour the
+// queue keeps draining at the floor rather than being dropped into tomorrow, where it used
+// to land at the BACK of the next day's list and get pushed again.
+const nowHour = () => new Date().getHours();
+
+test('past endHour the day keeps working the queue until lastHour', async () => {
+  const calls = [];
+  const store = { refresh: async () => {}, getAll: () => [member('A', '9000000001', 0)] };
+  const engine = createDripEngine(
+    engineCfg({ drip: { startHour: 0, endHour: nowHour(), lastHour: nowHour() + 1 } }),
+    quietLog, store, { autoRenewDue: async () => [] }, async (t) => { calls.push(t); },
+  );
+  await engine.tick();
+  assert.ok(calls[0].includes('wa.me'), 'the tail was dropped instead of sent');
+});
+
+test('without lastHour the day still ends at endHour, exactly as before', async () => {
+  const calls = [];
+  const store = { refresh: async () => {}, getAll: () => [member('A', '9000000001', 0)] };
+  const engine = createDripEngine(
+    engineCfg({ drip: { startHour: 0, endHour: nowHour() } }),
+    quietLog, store, { autoRenewDue: async () => [] }, async (t) => { calls.push(t); },
+  );
+  await engine.tick();
+  assert.ok(calls[0].includes('Drip finished'));
+});
