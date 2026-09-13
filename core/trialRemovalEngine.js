@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { randomBetween, sleep, normalizePhone } from './globalConfig.js';
 
-export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids, adminLids = new Set()) {
+export function createTrialRemovalEngine(config, log, getSock, notify, adminLids = new Set()) {
   const stateFile = path.join(config.botDir, 'trial-state.json');
   const tc = config.trial;
 
@@ -207,14 +207,13 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids,
 
   // ── Admin notification ────────────────────────────────────────────────────
 
+  // Operator-facing only, so it goes wherever the bot talks to operators (Telegram).
+  // It used to land as a WhatsApp DM on the operator's own phone: bot-initiated socket
+  // traffic for a message nobody needed on WhatsApp.
   async function notifyCompletion(totalRemoved) {
-    const sock = getSock();
-    if (!sock?.user) return;
     const msg = `✅ Trial removal cycle complete.\nTotal removed this cycle: ${totalRemoved} members.\nGroup is clear — ready for next round of links.`;
-    for (const jid of getBroadcastJids()) {
-      try { await sock.sendMessage(jid, { text: msg }); }
-      catch (err) { log.warn(`⚠️  Completion notify failed ${jid}: ${err.message}`); }
-    }
+    try { await notify?.(msg); }
+    catch (err) { log.warn(`⚠️  Completion notify failed: ${err.message}`); }
   }
 
   // ── Auto-continuation ─────────────────────────────────────────────────────
@@ -241,14 +240,9 @@ export function createTrialRemovalEngine(config, log, getSock, getBroadcastJids,
       return `  ${i + 1}. ${t}`;
     }).join('\n');
 
-    const sock = getSock();
-    if (sock?.user) {
-      const msg = `🔄 Trial removal continuing — ${count} batches scheduled:\n${timeLabels}`;
-      for (const jid of getBroadcastJids()) {
-        try { await sock.sendMessage(jid, { text: msg }); }
-        catch (err) { log.warn(`⚠️  Next-day notify failed ${jid}: ${err.message}`); }
-      }
-    }
+    const msg = `🔄 Trial removal continuing — ${count} batches scheduled:\n${timeLabels}`;
+    try { await notify?.(msg); }
+    catch (err) { log.warn(`⚠️  Next-day notify failed: ${err.message}`); }
     log.info(`🔄 Trial removal auto-scheduled for next window — ${count} batches`);
   }
 

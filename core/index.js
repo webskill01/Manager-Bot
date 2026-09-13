@@ -123,7 +123,7 @@ export async function startBot(config, log, authDir) {
   const overdueEngine = createOverdueEngine(config, log, (t) => notifyTelegram(t, config.dripIds));
   const lidToPhoneJid = new Map();
   const adminLids = new Set();   // raw numeric LIDs of allowedNumbers, auto-resolved on connect
-  const trialEngine = createTrialRemovalEngine(config, log, getSock, getBroadcastJids, adminLids);
+  const trialEngine = createTrialRemovalEngine(config, log, getSock, broadcast, adminLids);
 
   log.info('📊 Connecting to Google Sheets...');
   const sheetClient = await createSheetClient(config.serviceAccountPath, config.sheetId, log);
@@ -163,7 +163,7 @@ export async function startBot(config, log, authDir) {
 
   const removalEngine = createRemovalEngine(config, log, getSock, store, getBroadcastJids,
     (t) => notifyTelegram(t, config.dripIds));
-  const ghostEngine = createGhostRemovalEngine(config, log, getSock, store, getBroadcastJids);
+  const ghostEngine = createGhostRemovalEngine(config, log, getSock, store, broadcast);
 
   function destroySocket(reason) {
     if (!sock) return;
@@ -197,12 +197,14 @@ export async function startBot(config, log, authDir) {
   }
 
   // Operator-facing broadcast: engine progress, watchdog alerts, reminder batch reports.
-  // Goes to Telegram FIRST when a listener is running, because that is the channel that
-  // still works when WhatsApp does not — a 403 alert delivered over the dead socket is an
-  // alert nobody ever sees. WhatsApp delivery is best-effort on top.
+  // Telegram ONLY when a listener is running, and it returns there — WhatsApp is no longer
+  // a channel this bot talks to operators on. Baileys is for group ops, member reminders
+  // and answering a command someone actually typed; anything the bot decides to say by
+  // itself goes to Telegram. The WhatsApp loop below survives only for a bot with no
+  // token, which would otherwise go silent.
   async function broadcast(text) {
     if (telegram) {
-      try { await telegram.broadcast(text); }
+      try { await telegram.broadcast(text); return; }
       catch (err) { log.warn(`⚠️  Telegram broadcast failed: ${err.message}`); }
     }
     const s = getSock();

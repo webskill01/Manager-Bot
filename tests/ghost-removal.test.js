@@ -37,7 +37,7 @@ test('a ghost interrupted by socket loss mid-removal is NOT marked done (stays r
     async groupMetadata() { return { participants: [{ id: '919000000001@s.whatsapp.net' }] }; },
     async groupParticipantsUpdate() { removedOne = true; },
   };
-  const engine = createGhostRemovalEngine(config, log, () => sock, makeStore(), () => []);
+  const engine = createGhostRemovalEngine(config, log, () => sock, makeStore(), async () => {});
 
   await engine.start();
   await new Promise(r => setTimeout(r, 200));
@@ -59,7 +59,7 @@ test('two quick "kickghosts confirm" calls only start one run', async () => {
     async groupMetadata() { return { participants: [{ id: '919000000001@s.whatsapp.net' }] }; },
     async groupParticipantsUpdate() {},
   };
-  const engine = createGhostRemovalEngine(config, log, () => sock, makeStore(), () => []);
+  const engine = createGhostRemovalEngine(config, log, () => sock, makeStore(), async () => {});
 
   const [a, b] = await Promise.all([engine.start(), engine.start()]);
   const started = [a, b].filter(m => /started/i.test(m));

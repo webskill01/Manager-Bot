@@ -11,12 +11,16 @@
   "split": {
     "shares": [
       {
-        "label": "Nitin",
+        "label": "Abhinav",
         "percent": 50
       },
       {
+        "label": "Nitin",
+        "percent": 25
+      },
+      {
         "label": "Tanishq",
-        "percent": 50
+        "percent": 25
       }
     ]
   },
@@ -73,10 +77,11 @@
   },
   "allowedNumbers": [
     "6283380110",
-    "9914623976"
+    "9914623976",
+    "8725871944"
   ],
   "dripIds": [
-    "7985971941"
+    "5290581049"
   ],
   "reportIds": [
     "5332135237",
@@ -94,6 +99,7 @@
   },
   "allowedTelegramIds": [
     "5332135237",
+    "5290581049",
     "7985971941"
   ],
   "schedule": {

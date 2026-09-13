@@ -55,7 +55,7 @@ test('removable participants are detected when Baileys exposes `id` (not `jid`)'
     async sendMessage() {},
     async groupParticipantsUpdate(_g, jids) { removed.push(jids[0]); },
   };
-  const engine = createTrialRemovalEngine(config, log, () => sock, () => []);
+  const engine = createTrialRemovalEngine(config, log, () => sock, async () => {});
 
   // Overdue batch → scheduleFromState runs it at delay 0.
   writeState(botDir, [{ scheduledAt: new Date(Date.now() - 1000).toISOString(), done: false }]);
@@ -80,7 +80,7 @@ test('resume() never reprocesses an already-done batch', async () => {
     async sendMessage() {},
     async groupParticipantsUpdate() { removeCalls++; },
   };
-  const engine = createTrialRemovalEngine(config, log, () => sock, () => []);
+  const engine = createTrialRemovalEngine(config, log, () => sock, async () => {});
 
   // Batch 0 already done + overdue; batch 1 still pending but an hour out (won't fire in-window).
   writeState(botDir, [
@@ -93,6 +93,37 @@ test('resume() never reprocesses an already-done batch', async () => {
   await new Promise(r => setTimeout(r, 400));
 
   assert.equal(removeCalls, 0, 'done batch must not re-fire on resume');
+
+  engine.stopCommand();
+  fs.rmSync(botDir, { recursive: true, force: true });
+});
+
+test('the completion notice goes to the operator channel, never out over WhatsApp', async () => {
+  // Regression guard for the 2:55 AM "Trial removal continuing" WhatsApp DMs: the socket is
+  // for group ops and member reminders only, so every jid the engine writes to must be the
+  // trial group. Anything the bot decides to say by itself belongs on Telegram.
+  const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trial-'));
+  const config = makeConfig(botDir);
+
+  const sentTo = [];
+  const notified = [];
+  const removed = [];
+  const sock = {
+    user: { id: 'me' },
+    async groupMetadata() {
+      return { participants: [{ id: '918000000001@s.whatsapp.net' }].filter(p => !removed.includes(p.id)) };
+    },
+    async sendMessage(jid) { sentTo.push(jid); },
+    async groupParticipantsUpdate(_g, jids) { removed.push(jids[0]); },
+  };
+  const engine = createTrialRemovalEngine(config, log, () => sock, async (t) => notified.push(t));
+
+  writeState(botDir, [{ scheduledAt: new Date(Date.now() - 1000).toISOString(), done: false }]);
+  engine.resume();
+
+  const ok = await waitFor(() => notified.some(t => t.includes('Trial removal cycle complete')));
+  assert.ok(ok, `completion notice never reached the operator channel: ${notified.join(' | ')}`);
+  assert.deepEqual([...new Set(sentTo)], ['trial@g.us'], `WhatsApp send outside the group: ${sentTo.join(', ')}`);
 
   engine.stopCommand();
   fs.rmSync(botDir, { recursive: true, force: true });

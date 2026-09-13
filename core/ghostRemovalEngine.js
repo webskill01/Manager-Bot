@@ -8,7 +8,7 @@ const MAX_GAP_MS = 30 * 60 * 1000;
 // Bulk-removes "ghosts" — numbers present in the WhatsApp groups but absent from
 // the sheet (and not admins / the bot). Modeled on removalEngine: one person at a
 // time, 15–30 min gaps, state persisted to disk, resumes across reconnects.
-export function createGhostRemovalEngine(config, log, getSock, store, getBroadcastJids) {
+export function createGhostRemovalEngine(config, log, getSock, store, notify) {
   const stateFile = path.join(config.botDir, 'ghost-removal-state.json');
 
   let _timeouts = [];
@@ -80,15 +80,6 @@ export function createGhostRemovalEngine(config, log, getSock, store, getBroadca
       if (i < config.paidGroups.length - 1) await sleep(1200);
     }
     return { phones: [...ghosts.keys()], errors };
-  }
-
-  async function notify(text) {
-    const sock = getSock();
-    if (!sock?.user) return;
-    for (const jid of getBroadcastJids()) {
-      try { await sock.sendMessage(jid, { text }); }
-      catch (err) { log.warn(`⚠️  Ghost notify failed ${jid}: ${err.message}`); }
-    }
   }
 
   async function removeFromAllGroups(phone) {
