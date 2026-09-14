@@ -89,13 +89,9 @@
     "5932459548"
   ],
   "drip": {
-    "mode": "auto",
-    "maxPerHour": 4,
-    "startHour": 5,
-    "endHour": 19,
-    "lastHour": 21,
-    "gapCapMs": 7200000,
-    "firstDelayMaxMs": 2400000
+    "mode": "manual",
+    "startHour": 9,
+    "endHour": 21
   },
   "allowedTelegramIds": [
     "5332135237",
