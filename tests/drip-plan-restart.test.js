@@ -515,3 +515,34 @@ test('a delivered send keeps its cycle record and says nothing', async () => {
   assert.equal(notices.filter(n => n.includes('Send it yourself')).length, 0);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+// ── one drip, not two ─────────────────────────────────────────────────────────
+//
+// bot-abhi ran two tick chains at once between 11-09 and 15-09-2026: its auto window opened
+// at 05:00, resume() late-armed a chain there ("missed the arm cron"), and the dripArm cron
+// — still on the 9 AM default, because only bot-nitin was given a matching "0 5 * * *" —
+// armed a second one on top. Both chains then worked the same queue off the same state file
+// and the same qr-sent.json, so a member caught between one chain's send and its write got
+// the whole reminder twice, QR included.
+test('a second tick armed on top of a running one does not send the same member twice', async () => {
+  const dir = tmp('reentry-');
+  let release;
+  const held = new Promise(r => { release = r; });
+  const sent = [];
+  const sock = {
+    user: { id: 'bot' },
+    async presenceSubscribe() {}, async sendPresenceUpdate() {},
+    async onWhatsApp(pn) { return [{ exists: true, jid: `${pn}@s.whatsapp.net` }]; },
+    async sendMessage(jid, msg) { sent.push({ jid, msg }); await held; },
+  };
+  const engine = autoEngine(dir, [member('A', '9000000001', 0)], sock);
+
+  const first = engine.tick();          // in flight, parked inside sendMessage
+  await new Promise(r => setImmediate(r));
+  const second = engine.tick();         // the second chain arriving mid-send
+  release();                            // before awaiting either, or an unguarded second
+  await Promise.all([first, second]);   // tick parks on a promise only it could release
+
+  assert.equal(sent.length, 1, 'the member was messaged twice by two overlapping ticks');
+  fs.rmSync(dir, { recursive: true, force: true });
+});

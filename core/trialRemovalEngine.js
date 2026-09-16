@@ -310,14 +310,28 @@ export function createTrialRemovalEngine(config, log, getSock, notify, adminLids
       earliest = windowStart;
     }
 
+    // One slot per batch, spread evenly across what is left of the window, with the time
+    // jittered inside its own slot.
+    //
+    // The old shape was a random walk from the window's open: batch 1 was drawn uniformly
+    // across everything up to windowEnd − (count−1) × 90min, so on most days the FIRST batch
+    // of the cycle landed in the afternoon and the morning went unused — then the min-gap
+    // walk crowded the rest into the evening. Slots pin batch 1 to the first ~2 hours and
+    // still leave every time random within its own slot.
+    //
+    // Jitter is the middle half of the slot, so two neighbours cannot meet at a slot boundary
+    // and lose the spacing the anti-ban pacing depends on. minGapMs stays as the hard floor.
+    const slot = Math.max(0, windowEnd - earliest) / count;
     const times = [];
+    let prev = -Infinity;
     for (let i = 0; i < count; i++) {
-      const remaining = count - i;
-      const latest = windowEnd - (remaining - 1) * minGapMs;
-      const range = Math.max(0, latest - earliest);
-      const t = earliest + Math.random() * range;
+      const t = Math.max(earliest + (i + 0.25 + Math.random() * 0.5) * slot, prev + minGapMs);
+      // The floor can push the tail past the window on a cycle started late in the day. Drop
+      // those rather than spill: a removal blast at 1 AM is the thing this window exists to
+      // prevent, and scheduleNextDay picks the remainder up tomorrow.
+      if (t >= windowEnd) break;
       times.push(t);
-      earliest = t + minGapMs;
+      prev = t;
     }
     return times;
   }

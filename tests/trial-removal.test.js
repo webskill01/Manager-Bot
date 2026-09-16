@@ -128,3 +128,41 @@ test('the completion notice goes to the operator channel, never out over WhatsAp
   engine.stopCommand();
   fs.rmSync(botDir, { recursive: true, force: true });
 });
+
+// ── batch times start in the daytime and stay spread ───────────────────────────
+//
+// The old walk drew batch 1 uniformly across everything up to windowEnd − (count−1) × 90min
+// — on a 5-batch cycle that is 10:00 to 16:00 — so most days opened in the afternoon with
+// the whole morning unused, and the rest crowded into the evening. One slot per batch pins
+// batch 1 to the first slot whatever the count.
+test('the first batch lands in the first slot of the window, not the middle of the day', () => {
+  const DAY = 24 * 60 * 60 * 1000, IST = 5.5 * 60 * 60 * 1000;
+  const count = 5;
+  for (let run = 0; run < 25; run++) {
+    const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trial-times-'));
+    const config = makeConfig(botDir);
+    config.trial.batchesPerDay = { min: count, max: count };
+    const now = Date.now();
+    const engine = createTrialRemovalEngine(config, log, () => ({ user: { id: 'me' } }), async () => {});
+    engine.start();
+    const state = JSON.parse(fs.readFileSync(path.join(botDir, 'trial-state.json'), 'utf8'));
+    engine.stopCommand();   // cancels the real 12-hour timers start() just armed
+    const times = state.batches.map(b => new Date(b.scheduledAt).getTime());
+
+    // The engine's own window, recomputed here: 10:00-22:00 IST, today or tomorrow.
+    const midnight = now - ((now + IST) % DAY);
+    let open = midnight + 10 * 3600e3, end = midnight + 22 * 3600e3;
+    if (now >= end) { open += DAY; end += DAY; }
+    const earliest = Math.max(open, now + 20 * 60e3);
+
+    for (let i = 1; i < times.length; i++) {
+      assert.ok(times[i] - times[i - 1] >= 90 * 60e3 - 1000, 'two batches landed inside 90 minutes');
+    }
+    assert.ok(times[times.length - 1] < end, 'a batch was scheduled past the window');
+    if (times.length === count) {
+      assert.ok(times[0] - earliest <= (end - earliest) / count,
+        'batch 1 fell outside the first slot — the day opens late again');
+    }
+    fs.rmSync(botDir, { recursive: true, force: true });
+  }
+});

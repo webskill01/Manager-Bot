@@ -334,6 +334,10 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   const qrFile = path.join(config.botDir, 'qr-sent.json');
   const settings = dripSettings(config);
   let _timer = null;
+  // Which chain of ticks is the live one, and whether a tick is running right now. See
+  // clearTimer / later: ONE chain, ONE tick at a time, or the same member gets two messages.
+  let _gen = 0;
+  let _running = false;
 
   // Config asked for auto but the caller handed no socket: stay manual and say so once. A
   // silent downgrade would leave the operator believing reminders were going out.
@@ -572,8 +576,29 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     saveQrLog(log_);
   }
 
+  // Ends the current chain of ticks. The generation bump is the half that matters:
+  // clearTimeout can only cancel the handle `_timer` happens to be holding, so a chain whose
+  // timer has ALREADY fired survives it — and the tick it is running will call scheduleNext()
+  // and re-arm itself for good. That is how bot-abhi ran two drips at once: its window opened
+  // at 05:00 and resume() late-armed a chain there, then the dripArm cron — left at the 9 AM
+  // default, because only bot-nitin was given a matching "0 5 * * *" — armed a second one on
+  // top. Each chain then overwrote the other's `_timer`, so neither could ever be cancelled
+  // again: double the hourly rate, and the same member messaged twice — QR and all, since
+  // both chains read qr-sent.json before either had written to it.
   function clearTimer() {
+    _gen++;
     if (_timer) { clearTimeout(_timer); _timer = null; }
+  }
+
+  // Schedule the next tick of the CURRENT chain. A tick that wakes up under a stale
+  // generation has been superseded by an arm/start/stop since, and dies quietly.
+  function later(ms) {
+    const gen = _gen;
+    _timer = setTimeout(() => {
+      if (gen !== _gen) return;
+      tick().catch(err => log.error(`❌ Drip tick: ${err.message}`));
+    }, ms);
+    if (_timer.unref) _timer.unref();
   }
 
   // Milliseconds from now until the window closes. Negative once it has.
@@ -603,8 +628,7 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
       : randomBetween(settings.gapMinMs, settings.gapMaxMs);
     log.info(`💧 Next ${auto ? 'auto send' : 'drip push'} in ${Math.round(gap / 60000)}m` +
              (auto ? ` (${describeQueue(split)} left)` : ''));
-    _timer = setTimeout(() => { tick().catch(err => log.error(`❌ Drip tick: ${err.message}`)); }, gap);
-    if (_timer.unref) _timer.unref();
+    later(gap);
   }
 
   // Socket down mid-window. Come back in a few minutes rather than waiting out a full
@@ -612,8 +636,7 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   // so nothing is out of order.
   function retrySoon() {
     clearTimer();
-    _timer = setTimeout(() => { tick().catch(err => log.error(`❌ Drip tick: ${err.message}`)); }, 5 * 60 * 1000);
-    if (_timer.unref) _timer.unref();
+    later(5 * 60 * 1000);
   }
 
   // Undo the cycle record for a member whose message was not proven to arrive.
@@ -696,7 +719,19 @@ ${detail || ''}
     }
   }
 
+  // One tick at a time. Two overlapping ticks both snapshot drip-state.json before either
+  // writes it back, so both pick the same member off the front of the queue and both send —
+  // the duplicate the generation counter cannot catch, because a chain armed while a tick is
+  // mid-send is not stale, only early. And both read qr-sent.json before either noteSent()
+  // lands, so both attach the QR. Every sibling engine has this guard; the drip had none.
   async function tick() {
+    if (_running) { log.warn('💧 Tick skipped — one is already in flight'); return; }
+    _running = true;
+    try { return await runTick(); }
+    finally { _running = false; }
+  }
+
+  async function runTick() {
     if (cloudApiActive()) return;
     const state = loadState();
     if (state.stopped || state.done) return;
@@ -718,8 +753,7 @@ ${detail || ''}
       log.info(`💧 Window opens at ${settings.startHour}:00 — holding for ` +
                `${Math.round((open - now) / 60000)}m`);
       clearTimer();
-      _timer = setTimeout(() => { tick().catch(err => log.error(`❌ Drip tick: ${err.message}`)); }, open - now);
-      if (_timer.unref) _timer.unref();
+      later(open - now);
       return;
     }
     // lastHour, not endHour: the day keeps working the queue past its pacing window rather
@@ -859,7 +893,7 @@ ${detail || ''}
       // Nothing transmitted and nothing handed over: every row was a member who had already
       // left or a number with no account. They cost no message and no operator attention, so
       // come straight back for the next batch rather than idling the gap they did not use.
-      if (!transmitted && skipped === batch.length) return tick();
+      if (!transmitted && skipped === batch.length) return runTick();
       return scheduleNext(countByCohort({ members, config, pushed: state.pushed, contactLog: loadQrLog() }));
     }
 
@@ -988,8 +1022,7 @@ ${detail || ''}
       const delay = randomBetween(0, settings.firstDelayMaxMs);
       log.info(`💧 Auto-send armed — first message in ${Math.round(delay / 60000)}m`);
       clearTimer();
-      _timer = setTimeout(() => { tick().catch(err => log.error(`❌ Drip tick: ${err.message}`)); }, delay);
-      if (_timer.unref) _timer.unref();
+      later(delay);
       return;
     }
     log.info('💧 Drip armed');

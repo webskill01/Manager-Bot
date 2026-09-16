@@ -1,5 +1,8 @@
 import cron from 'node-cron';
 import { randomBetween, sleep } from './globalConfig.js';
+// For the drip-arm default only — the window's opening hour, with the same mode-dependent
+// defaults the engine itself applies, so the two can never disagree.
+import { dripSettings } from './dripEngine.js';
 
 // Random 0..maxMinutes delay applied before every scheduled job runs, so nothing
 // fires at a predictable time. 0 disables jitter for a bot.
@@ -59,7 +62,13 @@ export function createScheduler(config, log) {
     register(schedule.overdueCheck,   'overdue-check',    tasks.overdueCheck);
     register(schedule.morningDigest,  'morning-digest',  tasks.morningDigest);
     register(schedule.eveningSummary, 'evening-summary', tasks.eveningSummary);
-    register(schedule.dripArm || '0 9 * * *', 'drip-arm', tasks.dripArm);
+    // Defaults to the hour the drip's own window opens, NOT a fixed 9 AM. A window that
+    // opens before the arm cron is armed twice a day: resume() late-arms it at the opening
+    // ("missed the arm cron"), and then the cron arms it again hours later on a drip that is
+    // already running. bot-abhi had exactly that pairing — window from 05:00, no dripArm key,
+    // so the 9 AM default — which is what left it running two tick chains at once. An
+    // explicit schedule.dripArm still wins, for a bot that wants them apart on purpose.
+    register(schedule.dripArm || `0 ${dripSettings(config).startHour} * * *`, 'drip-arm', tasks.dripArm);
     // The daily ledger, written twice on purpose. The evening pass captures the day while it
     // is still the day; the morning pass corrects it (anything logged after) and backfills any
     // date the bot was down for. Defaults inline so adding a ledger needs no schedule edit.
