@@ -182,15 +182,16 @@ test('the split sums back to the total at every shape', () => {
 });
 
 // ─── the shipped configs ────────────────────────────────────────────────────────
-test('bot-aayush2 splits 50-25-25 and bot-nitin drips 5:00-19:00', () => {
+test('bot-aayush2 splits 50-25-25 and bot-nitin drips flex 4:00-23:00', () => {
   const dir = path.join(import.meta.dirname, '..', 'bots');
   const aayush = JSON.parse(fs.readFileSync(path.join(dir, 'bot-aayush2', 'config.json'), 'utf8'));
   assert.deepEqual(aayush.split.shares.map(s => [s.label, s.percent]),
     [['Sachin', 50], ['Nitin', 25], ['Tanishq', 25]]);
 
   const nitin = JSON.parse(fs.readFileSync(path.join(dir, 'bot-nitin', 'config.json'), 'utf8'));
-  assert.equal(nitin.drip.startHour, 5);
-  assert.equal(nitin.drip.endHour, 19);
+  assert.equal(nitin.drip.flex, true);
+  assert.equal(nitin.drip.startHour, 4);
+  assert.equal(nitin.drip.endHour, 23);
   // Arming after the window opens throws that hour away; arming before it makes the engine hold.
   assert.equal(nitin.schedule.dripArm, `0 ${nitin.drip.startHour} * * *`);
 });

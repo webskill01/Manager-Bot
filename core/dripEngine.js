@@ -96,9 +96,40 @@ const DEFAULT_MSG_GAP_MAX_MS = 3 * 60 * 1000;
 // Both default to the old behaviour (no ceiling, lastHour == endHour), so a bot that has not
 // asked for this is untouched.
 
+// ── Flex pacing ("drip": { "mode": "auto", "flex": true }) ───────────────────
+//
+// The window stretches to fit the day instead of the day being cut to fit the window.
+//   light day: first send ~5:00 (softStartHour), 3 an hour (perHour), done as soon as the
+//              queue is empty — nothing is spread thin across the afternoon.
+//   busy day:  3 an hour would run past 23:00, so the day opens at 4:00 (startHour) and the
+//              gap tightens until the whole queue lands before 23:00 (endHour).
+// Nobody rolls over unless the queue needs a gap under gapFloorMs (default 5 min = 12 an
+// hour), the one ceiling that never gives. On a ~53/day sheet that is ~230 members away.
+const FLEX_END_MARGIN_MS = 10 * 60 * 1000;   // aim for 22:50, so wobble never crosses 23:00
+
 export function dripSettings(config) {
   const d = config.drip || {};
   const auto = d.mode === 'auto';
+  if (auto && d.flex) {
+    const endHour = d.endHour ?? 23;
+    return {
+      mode: 'auto',
+      flex: true,
+      startHour: d.startHour ?? 4,
+      softStartHour: d.softStartHour ?? 5,
+      endHour,
+      lastHour: endHour,
+      maxPerHour: null,
+      gapMinMs: Math.ceil(3600000 / (d.perHour ?? 3)),
+      gapFloorMs: d.gapFloorMs ?? 5 * 60 * 1000,
+      gapMaxMs: d.gapMaxMs ?? DEFAULT_GAP_MAX_MS,
+      gapCapMs: d.gapCapMs ?? DEFAULT_GAP_CAP_MS,
+      firstDelayMaxMs: d.firstDelayMaxMs ?? DEFAULT_FIRST_DELAY_MAX_MS,
+      batchSize: 1,
+      msgGapMinMs: d.msgGapMinMs ?? DEFAULT_MSG_GAP_MIN_MS,
+      msgGapMaxMs: d.msgGapMaxMs ?? DEFAULT_MSG_GAP_MAX_MS,
+    };
+  }
   // Manual mode is the operator's thumb on a fixed range — there is no socket to pace and
   // no ceiling to enforce, so the knob is ignored there rather than half-applied.
   const maxPerHour = auto && d.maxPerHour > 0 ? Number(d.maxPerHour) : null;
@@ -143,6 +174,37 @@ export function adaptiveGapMs(remaining, msLeftInWindow, settings, rand = Math.r
   const even = remaining > 0 ? msLeftInWindow / remaining : settings.gapCapMs;
   const gap = Math.min(Math.max(even, settings.gapMinMs), settings.gapCapMs);
   return Math.round(gap * (1 + rand() * 0.4));
+}
+
+function flexEnd(now, settings) {
+  const end = new Date(now);
+  end.setHours(settings.endHour, 0, 0, 0);
+  return end.getTime() - FLEX_END_MARGIN_MS;
+}
+
+// Gap before the next send in flex mode. `remaining` members, one per send, re-asked every
+// tick so a mid-day payment loosens the rest of the day on its own.
+export function flexGapMs(remaining, now, settings, rand = Math.random) {
+  const left = flexEnd(now, settings) - now.getTime();
+  // Fits at the normal rate: 3 an hour, +0..20% wobble that only ever slows it down.
+  if (remaining * settings.gapMinMs <= left) return Math.round(settings.gapMinMs * (1 + rand() * 0.2));
+  // Does not: split what is left evenly, ±15%, never past the end, never under the floor.
+  const even = left / Math.max(1, remaining);
+  return Math.round(Math.max(settings.gapFloorMs, Math.min(left, even * (0.85 + rand() * 0.3))));
+}
+
+// Delay from `now` to the day's first flex send. 5:00 plus up to firstDelayMaxMs of jitter
+// when the queue still fits from there at 3 an hour; otherwise open at 4:00 (or now, if
+// later) with up to 10 min of jitter, and let flexGapMs squeeze the rest.
+export function flexFirstDelayMs(remaining, now, settings, rand = Math.random) {
+  const hard = new Date(now); hard.setHours(settings.startHour, 0, 0, 0);
+  const soft = new Date(now); soft.setHours(settings.softStartHour, 0, 0, 0);
+  const at = Math.max(now.getTime(), hard.getTime());
+  const slack = flexEnd(now, settings) - soft.getTime() - remaining * settings.gapMinMs;
+  const start = at < soft.getTime() && slack >= 0
+    ? soft.getTime() + rand() * Math.min(settings.firstDelayMaxMs, slack)
+    : at + rand() * 10 * 60 * 1000;
+  return Math.round(start - now.getTime());
 }
 
 // One tick's worth of work: at most one member from each of the three cohorts, so the queues
@@ -261,6 +323,14 @@ export function planTimes(queue, settings, { from = new Date(), endHour } = {}) 
   // lastHour is where the day stops, so it is what `late` has to be measured against —
   // planning to endHour on a bot with an overrun flags two hours of ordinary sends as late.
   end.setHours(endHour ?? settings.lastHour ?? settings.endHour, 0, 0, 0);
+  if (settings.flex) {
+    // Walk the same function the ticks use, at mid-wobble. `from` is the first send itself.
+    let t = from.getTime();
+    return queue.map((row, i) => {
+      if (i > 0) t += flexGapMs(queue.length - i, new Date(t), settings, () => 0.5);
+      return { ...row, at: new Date(t), late: t > end.getTime() };
+    });
+  }
   const WOBBLE = 1.2;   // mean of the +0..40% adaptiveGapMs adds, so times land mid-spread
   // The queue moves in batches, so the clock does too: a full gap in front of each batch, and
   // the mean intra-batch spacing between its members. Planning one gap per MEMBER is what made
@@ -377,7 +447,12 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   if (settings.mode === 'auto' && !auto) {
     log.warn('💧 Drip mode "auto" ignored — this bot has no WhatsApp socket. Running manual.');
   }
-  if (auto) {
+  if (auto && settings.flex) {
+    log.info(`💧 Drip AUTO (flex) — from ${settings.softStartHour}:00 at ` +
+             `${Math.round(3600000 / settings.gapMinMs)}/h, stretches to ` +
+             `${settings.startHour}:00-${settings.endHour}:00 and down to ` +
+             `${Math.round(settings.gapFloorMs / 60000)}m gaps to clear the day`);
+  } else if (auto) {
     log.info(`💧 Drip AUTO — the bot sends, ${settings.startHour}:00-${settings.endHour}:00, ` +
              `${settings.batchSize} per batch ` +
              `${Math.round(settings.msgGapMinMs / 1000)}-${Math.round(settings.msgGapMaxMs / 1000)}s apart, ` +
@@ -623,7 +698,9 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     // day as 53 gaps, hit the floor, and then stop a third of the way through it at 6 PM
     // having sent everyone — the day would end hours early and the floor would look broken.
     const batchesLeft = Math.ceil(remaining / settings.batchSize);
-    const gap = auto
+    const gap = auto && settings.flex
+      ? flexGapMs(remaining, new Date(), settings)
+      : auto
       ? adaptiveGapMs(batchesLeft, msLeftInWindow(), settings)
       : randomBetween(settings.gapMinMs, settings.gapMaxMs);
     log.info(`💧 Next ${auto ? 'auto send' : 'drip push'} in ${Math.round(gap / 60000)}m` +
@@ -997,15 +1074,19 @@ ${detail || ''}
     // the operator needs to see the number on the morning it happens, not infer it from a
     // member complaining a week later. The levers are all theirs — widen the window, raise
     // the ceiling, or clear the excess by hand with dmlist.
+    let queued = 0;
     if (auto) {
       try {
         const split = countByCohort({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() });
-        const queued = Object.values(split).reduce((a, b) => a + b, 0);
+        queued = Object.values(split).reduce((a, b) => a + b, 0);
         // Batches the window holds × members per batch. Counting batches alone under-reported
-        // capacity threefold and cried overflow on ordinary days.
-        const capacity = Math.floor(
-          ((settings.lastHour - settings.startHour) * 3600000) / (settings.gapMinMs * 1.2),
-        ) * settings.batchSize;
+        // capacity threefold and cried overflow on ordinary days. Flex squeezes down to its
+        // floor before it lets anyone roll over, so the floor is its capacity.
+        const capacity = settings.flex
+          ? Math.floor(((settings.endHour - settings.startHour) * 3600000 - FLEX_END_MARGIN_MS) / settings.gapFloorMs)
+          : Math.floor(
+            ((settings.lastHour - settings.startHour) * 3600000) / (settings.gapMinMs * 1.2),
+          ) * settings.batchSize;
         if (queued > capacity) {
           await notify(
             `⚠️ *${describeQueue(split)} reminders queued, room for about ${capacity}* today.\n` +
@@ -1019,7 +1100,9 @@ ${detail || ''}
     // links only sit in Telegram until they tap. Auto mode transmits, so the first message of
     // the day must not land at a time anyone could set a watch by.
     if (auto) {
-      const delay = randomBetween(0, settings.firstDelayMaxMs);
+      const delay = settings.flex
+        ? flexFirstDelayMs(queued, new Date(), settings)
+        : randomBetween(0, settings.firstDelayMaxMs);
       log.info(`💧 Auto-send armed — first message in ${Math.round(delay / 60000)}m`);
       clearTimer();
       later(delay);
@@ -1195,7 +1278,9 @@ ${detail || ''}
     const now = new Date();
     const open = new Date(now);
     open.setHours(settings.startHour, 0, 0, 0);
-    const from = now < open ? open : now;
+    const from = settings.flex && !state.armedAt
+      ? new Date(now.getTime() + flexFirstDelayMs(queue.length, now, settings, () => 0.5))
+      : now < open ? open : now;
 
     const rows = planTimes(queue, settings, { from });
     const fits = rows.filter(r => !r.late);
@@ -1259,6 +1344,14 @@ ${detail || ''}
     if (_timer) return;
 
     log.info(`💧 Resuming ${auto ? 'auto-send' : 'drip'} after restart`);
+    // Nothing sent yet: re-draw the day's opening, so a light day restarted at 4:30 still
+    // waits for 5:00 rather than going out one gap after the restart.
+    if (auto && settings.flex && state.pushed.length === 0) {
+      const split = countByCohort({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() });
+      clearTimer();
+      later(flexFirstDelayMs(Object.values(split).reduce((a, b) => a + b, 0), new Date(), settings));
+      return;
+    }
     // The adaptive gap needs a queue length, and after a restart the only honest one comes
     // from the sheet as it stands. Passing 0 would hand back the 2h cap and idle away the
     // rest of the window. store.getAll() is the cache the last refresh filled — a tick will

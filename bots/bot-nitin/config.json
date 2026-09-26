@@ -11,12 +11,13 @@
   ],
   "drip": {
     "mode": "auto",
-    "maxPerHour": 4,
-    "startHour": 5,
-    "endHour": 19,
-    "lastHour": 21,
-    "gapCapMs": 7200000,
-    "firstDelayMaxMs": 2400000
+    "flex": true,
+    "startHour": 4,
+    "softStartHour": 5,
+    "endHour": 23,
+    "perHour": 3,
+    "gapFloorMs": 300000,
+    "firstDelayMaxMs": 900000
   },
   "allowedTelegramIds": [
     "5332135237",
@@ -134,7 +135,7 @@
     "eveningSummary": "0 22 * * *",
     "timezone": "Asia/Kolkata",
     "jitterMaxMinutes": 20,
-    "dripArm": "0 5 * * *"
+    "dripArm": "0 4 * * *"
   },
   "messages": {
     "groupReminder": "Sat Sri Akal ji 🙏🏻 Aaj {date} nu ehna members da ik mahina pura ho gya — upar dite QR te 90 pay karke dss deyo ji 🙏🏻:",
