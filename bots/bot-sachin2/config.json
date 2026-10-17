@@ -128,7 +128,39 @@
       "Hnji Veerji krna ji repay ?",
       "Hnji {name} veerji, renew krna hai ji ?"
     ],
-    "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
+    "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3",
+    "appPitch": [
+      "Iste pay krke screenshot share krdo ji 🙏🏻",
+      "Malwa Travels groups layi iste pay karke screenshot share kardo ji 🙏",
+      "Paaji app te pay karke screenshot bhej deo ji 🙏🏻",
+      "Is app ton payment karke screenshot das deo ji 🙏",
+      "App download karke pay kardo, fer screenshot share kardo ji 🙏🏻",
+      "Is link ton app lai ke pay kardo te screenshot bhejo ji 🙏",
+      "Hanji paaji iste pay karke screenshot share kar deo 🙏🏻",
+      "App install karke pay kardo ji, screenshot zaroor bhejna 🙏",
+      "Iste pay karke ik screenshot share kardo paaji 🙏🏻",
+      "App ton pay karke screenshot share kar deo ji 🙏"
+    ],
+    "appReminder": {
+      "pre5": [
+        "SSA {name} Paaji 🙏\n{date} nu tuhada Malwa Travels groups te app da mahina pura ho jana\nApp te hi renew karna ji 🙏🏻",
+        "SSA {name} paaji, 5 din baad ({date}) tuhada app plan te groups khatam ho rahe ne\nRenew sirf app te kar lena ji 🙏",
+        "Hanji {name} paaji 🙏🏻\nTuhada app wala plan {date} nu pura hona, groups vi naal\nPayment app te hi karni ji 🙏",
+        "SSA {name} Paaji, {date} nu app plan pura ho jana\nGroups chalde rakhne ne ta app te renew kardo ji 🙏🏻"
+      ],
+      "pre2": [
+        "SSA {name} Paaji 🙏\n2 din reh gaye, {date} nu app te groups da mahina pura\nApp te renew karke das deo ji 🙏🏻",
+        "Hanji {name} paaji, parson ({date}) tuhada app plan te groups khatam\nSirf app te pay karna ji 🙏",
+        "SSA {name} paaji 🙏🏻\nMalwa Travels groups te app da plan {date} tak aa\nApp te hi renew karna ji 🙏",
+        "SSA {name} Paaji, app plan {date} nu pura ho reha\nGroups band na hon, app te renew kar lo ji 🙏🏻"
+      ],
+      "due": [
+        "SSA {name} Paaji ajj tuhada ik mahina pura hogya hai, app te renew karke das deo ji\nGroups layi payment sirf app te 🙏",
+        "Hanji {name} paaji, ajj tuhada app te groups da mahina pura hogya\nApp te renew karke das deo ji 🙏🏻",
+        "SSA {name} paaji 🙏\nAjj ({date}) app plan pura hogya\nMalwa Travels groups chalde rehan layi app te hi renew karna ji 🙏🏻",
+        "SSA {name} Paaji, ajj last din aa app plan da\nApp te renew karke das deo ji, groups layi payment app te hi 🙏"
+      ]
+    }
   },
   "profile": "full",
   "tracker": {
@@ -142,5 +174,11 @@
   "ledger": {
     "tab": "LOG",
     "startDate": "17-08-2026"
+  },
+  "app": {
+    "pollSeconds": 60,
+    "playStoreUrl": "https://play.google.com/store/apps/details?id=com.easecab.app",
+    "cutover": null,
+    "price": 149
   }
 }

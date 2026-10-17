@@ -134,7 +134,39 @@
       "{name} bhai, group continue karna hai ji ?",
       "{name} bhai 🙏\nGroup continue rakhna hai ya nahi, bta dena ji ?"
     ],
-    "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
+    "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3",
+    "appPitch": [
+      "Iste pay krke screenshot share krdo ji 🙏🏻",
+      "Bhai is app par pay karke screenshot share kar dena 🙏",
+      "Is link se app download karke pay kar do, phir screenshot bhej dena 🙏🏻",
+      "Mahadev Travels groups ke liye app par pay karke screenshot share karo bhai 🙏",
+      "App par payment karke ek screenshot bhej dena bhai 🙏🏻",
+      "Bhai app install karke pay kar do, screenshot zaroor bhejna 🙏",
+      "Is app se pay karke screenshot share kar do ji 🙏🏻",
+      "App par pay karo aur screenshot bhej do bhai 🙏",
+      "Kindly app par pay karke screenshot share kar dena 🙏🏻",
+      "Bhai yahan se app lekar pay kar do, screenshot bhejna mat bhoolna 🙏"
+    ],
+    "appReminder": {
+      "pre5": [
+        "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai, {date} ko aapka app aur Mahadev Travels groups ka mahina pura ho jayega\n\nRenew sirf app par hi karna 🙏",
+        "🕉️*HAR HAR MAHADEV*🕉️\n\nNamaste {name} bhai 🙏\n5 din baad ({date}) aapka app plan khatam ho raha hai, groups bhi\n\nApp par hi renew kar dena",
+        "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai, aapka app wala plan {date} ko complete hoga\n\nGroups chalu rakhne ke liye app par renew karna, payment sirf app par 🙏",
+        "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai, {date} tak hai aapka app aur groups ka plan\n\nTime se app par renew kar lena 🙏"
+      ],
+      "pre2": [
+        "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai, 2 din bache hain — {date} ko app aur groups ka mahina pura\n\nApp par renew karke bata dena 🙏",
+        "🕉️*HAR HAR MAHADEV*🕉️\n\nNamaste {name} bhai 🙏\nParson ({date}) aapka app plan aur Mahadev Travels groups khatam ho rahe hain\n\nPayment sirf app par karna",
+        "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai, app plan {date} ko pura ho raha hai\n\nGroups mein duties bina break ke chahiye to app par hi renew karna 🙏",
+        "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai, {date} ko app aur groups ka plan complete\n\nApp par renew kar dena bhai 🙏"
+      ],
+      "due": [
+        "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai, aaj aapka ik mahina pura ho gaya hai, app par renew karke bata dena\n\nGroups ke liye payment sirf app par 🙏",
+        "🕉️*HAR HAR MAHADEV*🕉️\n\nNamaste {name} bhai 🙏\nAaj ({date}) aapka app aur Mahadev Travels groups ka plan pura ho gaya\n\nApp par hi renew karna",
+        "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai, aaj app plan ka last din hai\n\nApp par renew kar do taaki groups mein duties milti rahein 🙏",
+        "🕉️*HAR HAR MAHADEV*🕉️\n\n{name} bhai, aapka mahina aaj complete ho gaya\n\nRenew sirf app par karna, groups usi se chalte hain 🙏"
+      ]
+    }
   },
   "profile": "full",
   "tracker": {
@@ -148,5 +180,11 @@
   "ledger": {
     "tab": "LOG",
     "startDate": "17-08-2026"
+  },
+  "app": {
+    "pollSeconds": 60,
+    "playStoreUrl": "https://play.google.com/store/apps/details?id=com.easecab.app",
+    "cutover": null,
+    "price": 149
   }
 }

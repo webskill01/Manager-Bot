@@ -185,7 +185,39 @@
       "Hnji {name} paaji 🙏🏻 renew da dss deyo ji, main note kr lawanga",
       "{name} paaji, hje tak renew ni hoyi — krna hai ji ?"
     ],
-    "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3"
+    "overdueConsolidated": "📋 OVERDUE MEMBERS ({count}):\n\n{list}\n\nReply: R[n]=Remove, S[n]=Skip, W[n]=Warn\nExample: R1 R2 S3",
+    "appPitch": [
+      "Iste pay krke screenshot share krdo ji 🙏🏻",
+      "Paaji iste pay krke screenshot bhej deyo ji 🙏🏻",
+      "Ess app te pay krke screenshot share kr deyo ji 🙏🏻",
+      "App download krke pay krdo, fer screenshot share krdo ji 🙏🏻",
+      "Iss link to app la ke pay krdo te screenshot bhejdo ji 🙏🏻",
+      "Paaji app te pay krke ik screenshot share krdo ji 🙏🏻",
+      "Iste payment krke screenshot dss deyo ji 🙏🏻",
+      "App install krke pay krdo ji, screenshot share krna na bhulna 🙏🏻",
+      "Ji iste pay krke screenshot share kr dena 🙏🏻",
+      "App ton pay krke screenshot bhej deyo paaji 🙏🏻"
+    ],
+    "appReminder": {
+      "pre5": [
+        "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada app te groups da ik mahina pura ho jana\nApp te renew krke dss deyo ji, payment sirf app te hi krni 🙏🏻",
+        "{name} paaji Sat Sri Akal 🙏🏻\nTohada app wala plan {date} nu khatam hona, groups vi ohde naal\nTime naal app te hi renew kr lena ji 🙏🏻",
+        "Sat Sri Akal {name} ji 🙏🏻\n5 din baad ({date}) app te groups da mahina pura ho reha\nRenew sirf app te krna ji 🙏🏻",
+        "{name} paaji 🙏🏻\n{date} nu app plan pura ho jana, groups chalde rehan lyi app te renew krdo ji\nPayment app te hi krni 🙏🏻"
+      ],
+      "pre2": [
+        "Sat Sri Akal {name} paaji 🙏🏻\n2 din reh gaye, {date} nu app te groups da mahina pura ho jana\nApp te renew krke dss deyo ji 🙏🏻",
+        "{name} paaji 🙏🏻\nParson {date} nu tohada app plan khatam ho reha, groups vi\nSirf app te renew krna ji 🙏🏻",
+        "Sat Sri Akal {name} ji 🙏🏻\nApp te groups da plan {date} nu pura hona\nKirpa krke app te hi pay krna ji 🙏🏻",
+        "{name} paaji Sat Sri Akal 🙏🏻\n{date} nu app plan pura, groups band na hon es lyi app te renew kr lena ji 🙏🏻"
+      ],
+      "due": [
+        "Sat Sri Akal {name} paaji 🙏🏻\nAaj tohada ik mahina pura hogya hai, app te renew krke dss deyo ji\nGroups lyi payment sirf app te 🙏🏻",
+        "{name} paaji Sat Sri Akal 🙏🏻\nAaj app te groups da plan pura hogya\nApp te renew krke dss deyo ji 🙏🏻",
+        "Sat Sri Akal {name} ji 🙏🏻\nTohada mahina aaj ({date}) pura hogya hai\nApp te hi renew krna ji, tan groups chalde rehnge 🙏🏻",
+        "{name} paaji 🙏🏻\nAaj last din aa app plan da, app te renew krke dss deyo ji\nPayment app te hi krni, groups ohde naal hi chalde ne 🙏🏻"
+      ]
+    }
   },
   "groupNames": [
     "DELHI ONLY (Punjab Taxi Group)",
@@ -209,5 +241,11 @@
       "From friends' bots": "J",
       "Total per person": "K"
     }
+  },
+  "app": {
+    "pollSeconds": 60,
+    "playStoreUrl": "https://play.google.com/store/apps/details?id=com.easecab.app",
+    "cutover": null,
+    "price": 149
   }
 }

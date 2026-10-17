@@ -61,3 +61,27 @@ test('the drip never attaches the UPI QR to an app-flow reminder', () => {
   const src = fs.readFileSync(new URL('../core/dripEngine.js', import.meta.url), 'utf8');
   assert.match(src, /function needsQr[^{]*\{[\s\S]{0,300}startsWith\('app_'\)\) return false;/);
 });
+
+test('every shipped bot: app block, varied pitch, app reminders that name the app AND the groups', () => {
+  const BOTS = ['bot-nitin', 'bot-abhi', 'bot-sachin2', 'bot-aayush2'];
+  const seen = new Map();
+  for (const bot of BOTS) {
+    const cfg = JSON.parse(fs.readFileSync(new URL(`../bots/${bot}/config.json`, import.meta.url), 'utf8'));
+    assert.match(cfg.app.playStoreUrl, /^https:\/\/play\.google\.com\/store\/apps\/details\?id=com\.easecab\.app$/);
+    assert.ok(new Set(cfg.messages.appPitch).size >= 8, `${bot}: needs varied appPitch`);
+    for (const [stage, d] of [['pre5', 5], ['pre2', 2], ['due', 0]]) {
+      const list = cfg.messages.appReminder[stage];
+      assert.ok(list.length >= 3, `${bot}/${stage}: too few variants`);
+      for (const t of list) {
+        assert.match(t, /\bapp\b/i, `${bot}/${stage}: no "app" in ${t}`);
+        assert.match(t, /group/i, `${bot}/${stage}: no "groups" in ${t}`);
+        assert.ok(!seen.has(t), `${bot}/${stage} repeats ${seen.get(t)}'s wording`);
+        seen.set(t, bot);
+      }
+      const members = Array.from({ length: 12 }, (_, i) => app(`90000000${String(i).padStart(2, '0')}`, d));
+      for (const r of buildDmList({ members, config: cfg, cohort: stage }).rows) {
+        assert.ok(!/\{name\}|\{date\}/.test(r.text), `${bot}/${stage}: unsubstituted ${r.text}`);
+      }
+    }
+  }
+});
