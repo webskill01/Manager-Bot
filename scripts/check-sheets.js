@@ -69,7 +69,7 @@ try {
   const sheets = google.sheets({ version: 'v4', auth: authClient });
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: sheetId,
-    range: 'MEMBERS!A1:Q',
+    range: 'MEMBERS!A1:S',
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
   const [header = [], ...rows] = res.data.values || [];
@@ -126,11 +126,11 @@ try {
   }
 
   if (header.length > COLUMNS.length) {
-    console.log(`   ℹ️  ${header.length - COLUMNS.length} extra column(s) past Q — the bot never touches those, they are safe.`);
+    console.log(`   ℹ️  ${header.length - COLUMNS.length} extra column(s) past S — the bot never touches those, they are safe.`);
   }
 
   if (critical.length === 0 && cosmetic.length === 0) {
-    console.log(`   ✅ Columns OK — all ${COLUMNS.length} headers A→Q match\n`);
+    console.log(`   ✅ Columns OK — all ${COLUMNS.length} headers A→S match\n`);
     process.exit(0);
   }
 
@@ -147,13 +147,13 @@ try {
   console.error(`\n❌ ${critical.length} STRUCTURAL problem(s) — data is at risk:\n`);
   console.error(critical.join('\n'));
   console.error(`\n   Header has ${header.length} column(s), expected ${COLUMNS.length}.`);
-  console.error('\n   → Rows are read AND WRITTEN positionally across A:Q. A missing column');
+  console.error('\n   → Rows are read AND WRITTEN positionally across A:S. A missing column');
   console.error('     shifts every field after it with no error, and any foreign column in');
   console.error('     that range is overwritten the next time the bot updates that row.');
-  console.error('\n   Expected order A→Q:');
+  console.error('\n   Expected order A→S:');
   console.error('     ' + COLUMNS.map((c, i) => `${letter(i)}=${c}`).join('  '));
   console.error('\n   Fix by INSERTING the missing column in place. Keep your own extra');
-  console.error('   columns at R or beyond — the bot never reads or writes past Q.\n');
+  console.error('   columns at T or beyond — the bot never reads or writes past S.\n');
   process.exit(1);
 } catch (err) {
   const status = err?.status ?? err?.code ?? err?.response?.status;

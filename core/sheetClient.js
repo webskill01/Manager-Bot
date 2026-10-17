@@ -2,12 +2,12 @@ import { google } from 'googleapis';
 import { formatDateTime, normalizePhone, normalizeDateCell } from './globalConfig.js';
 
 const SHEET_NAME = 'MEMBERS';
-// A..Q. Columns P (callDate) and Q (callResult) belong to the tracker profile; both read
+// A..S. Columns P (callDate) and Q (callResult) belong to the tracker profile; both read
 // as '' on every existing sheet, so full-profile bots are unaffected and need no migration.
-const DATA_RANGE = `${SHEET_NAME}!A2:Q`;
-const COL_RANGE = 'A:Q';
+const DATA_RANGE = `${SHEET_NAME}!A2:S`;
+const COL_RANGE = 'A:S';
 
-// The canonical column order, A→Q. Rows are read and written POSITIONALLY — the header
+// The canonical column order, A→S. Rows are read and written POSITIONALLY — the header
 // text in the sheet is cosmetic, only the position matters. Inserting or omitting a column
 // mid-sheet silently shifts every field after it (a date landing in DELAY_UNTIL hides that
 // member from reminders; "interested" landing in CALL_DATE parses to garbage), and nothing
@@ -16,6 +16,7 @@ export const COLUMNS = [
   'NAME', 'PHONE', 'JOIN_DATE', 'BILLING_DATE', 'STATUS', 'RENEWALS', 'PAID_LAST',
   'REFERENCE', 'SKIP_REASON', 'ADDED_BY', 'LAST_UPDATED', 'LAST_RENEWED',
   'REF_CREDIT_DATE', 'REF_LOG', 'DELAY_UNTIL', 'CALL_DATE', 'CALL_RESULT',
+  'CAR_NO', 'APP_PAID_UNTIL',
 ];
 
 function rowToMember(row, rowIndex) {
@@ -46,6 +47,11 @@ function rowToMember(row, rowIndex) {
     callDate: normalizeDateCell(row[15]),
     // Tracker profile only: 'interested' | 'not-interested' | '' (never asked).
     callResult: String(row[16] || '').trim().toLowerCase(),
+    // R: operator-owned on some sheets (bot-aayush2 keeps car numbers here). Read only so
+    // the positional write carries it back unchanged.
+    carNo: row[17] || '',
+    // S: the latest EaseCab app expiry seen for this phone ('' = never paid on the app).
+    appPaidUntil: normalizeDateCell(row[18]),
   };
 }
 
@@ -68,6 +74,8 @@ function memberToRow(member) {
     member.delayUntil || '',
     member.callDate || '',
     member.callResult || '',
+    member.carNo || '',
+    member.appPaidUntil || '',
   ];
 }
 
@@ -144,7 +152,7 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId, log =
   }
 
   async function updateRow(rowIndex, member) {
-    const range = `${SHEET_NAME}!A${rowIndex}:Q${rowIndex}`;
+    const range = `${SHEET_NAME}!A${rowIndex}:S${rowIndex}`;
     await withRetry('update', () => sheets.spreadsheets.values.update({
       spreadsheetId,
       range,
@@ -186,7 +194,7 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId, log =
         requestBody: {
           valueInputOption: 'RAW',
           data: slice.map(m => ({
-            range: `${SHEET_NAME}!A${m.rowIndex}:Q${m.rowIndex}`,
+            range: `${SHEET_NAME}!A${m.rowIndex}:S${m.rowIndex}`,
             values: [memberToRow(m)],
           })),
         },
