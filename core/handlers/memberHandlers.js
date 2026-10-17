@@ -130,17 +130,27 @@ export function createMemberHandlers(store, groupManager, config, log, appSync =
         }
       }
 
+      // Paid first, added after (the payment ping told you): straight to ACTIVE, billing = the
+      // app plan's end, links in the reply. App unreachable → falls back to PENDING_APP, and
+      // the next poll activates them anyway.
+      let paid = null;
+      if (appMode) {
+        try { const row = await appSync.lookup(phone); if (liveOnApp(row)) paid = row; }
+        catch (err) { log.warn(`⚠️  add: app check failed for ${phone} — ${err.message}; adding as pending`); }
+      }
+      const until = paid ? appDate(paid.expiresAt) : '';
+
       await store.add({
         name,
         phone,
         joinDate: todayStr(),
-        billingDate,
+        billingDate: until || billingDate,
         // App era: no money changes hands at the bot; the app sync fills paidLast on payment.
-        paidLast: appMode ? 0 : config.joining.fee,
+        paidLast: paid ? (paid.lastAmount ?? 0) : appMode ? 0 : config.joining.fee,
         reference: referrerPhone || '',
         refCreditDate,
         // Tracker bots start everyone at NEW — the head of the call funnel.
-        ...(isTracker(config) ? { status: 'NEW' } : appMode ? { status: APP_STATUS_PENDING } : {}),
+        ...(isTracker(config) ? { status: 'NEW' } : paid ? { appPaidUntil: until } : appMode ? { status: APP_STATUS_PENDING } : {}),
       });
 
       // Build referrer note (computed after add so store cache includes new member)
@@ -171,6 +181,9 @@ export function createMemberHandlers(store, groupManager, config, log, appSync =
         }
       }
 
+      if (paid) {
+        return `✅ ${name} added — already paid on the app, active till ${friendlyDate(until)}.${refNote}\n\n${await linksReply(phone)}`;
+      }
       // No links until they pay: the app sync pings with the links the moment it sees it.
       if (appMode) {
         return `🕐 ${name} added — waiting for their app payment. Links go out once they pay.${refNote}\n\n` +

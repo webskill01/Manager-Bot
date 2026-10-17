@@ -14,14 +14,21 @@ const CACHE_MS = 10 * 60 * 1000;   // ponytail: 10 min staleness for other sheet
 export const shortName = (bot) => String(bot).replace(/^bot-/, '');
 
 // The combined bot-nitin ping for one app payment: who, how much, till when, and which
-// sheets (if any) they sit on. `where` is whereIs(phone).
-export function paidPing(row, where) {
+// sheets (if any) they sit on, and what to do. `where` is whereIs(phone), `own` this bot.
+//   on no sheet      → maybe the person you just told to pay: add them, links come back
+//   only other bots' → their member, their bot handles it: info only
+export function paidPing(row, where, own = '') {
   const name = where.find(w => w.member.name)?.member.name || '(app user)';
   const till = row.expiresAt ? ` till ${friendlyDate(formatDate(new Date(row.expiresAt)))}` : '';
   const sheets = where.length
     ? where.map(({ bot, member }) => `${shortName(bot)} (${member.status})`).join(', ')
     : 'none — app only, not in any group sheet';
-  return `💳 App payment — ${name} (${row.phone})${row.lastAmount ? ` · ₹${row.lastAmount}` : ''}${till}\n   Sheets: ${sheets}`;
+  const next = !where.length
+    ? `\n   ➕ Yours? add [Name] ${row.phone}  → added as paid, links in the reply. Another bot's? Nothing to do.`
+    : own && !where.some(w => w.bot === own)
+      ? `\n   ℹ️ ${where.map(w => shortName(w.bot)).join('+')}'s member — their bot handles it, nothing to do.`
+      : '';
+  return `💳 App payment — ${name} (${row.phone})${row.lastAmount ? ` · ₹${row.lastAmount}` : ''}${till}\n   Sheets: ${sheets}${next}`;
 }
 
 // Each sheet also carries `inGroups` (Set of phones its bot last saw inside its WhatsApp

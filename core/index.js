@@ -181,7 +181,7 @@ export async function startBot(config, log, authDir) {
     notify: (t) => notifyTelegram(t, config.dripIds),
     // bot-nitin: one ping per app payment naming every sheet the phone is on (or none).
     onAppPaid: fleet?.isFleet ? async (rows) => {
-      for (const r of rows) await notifyTelegram(paidPing(r, await fleet.whereIs(r.phone)), config.dripIds);
+      for (const r of rows) await notifyTelegram(paidPing(r, await fleet.whereIs(r.phone), config.botName), config.dripIds);
     } : null,
     linksFor: (phone) => commandParser?.linksReply(phone) ?? `Send the group links: sendlinks ${phone}`,
   });

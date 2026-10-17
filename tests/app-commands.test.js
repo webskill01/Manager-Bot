@@ -173,3 +173,25 @@ test('fleet view reads the other bots\' GROUPS tab', async () => {
   const [, abhi] = await fleet.sheets();
   assert.deepStrictEqual([...abhi.inGroups], ['9000000005']);
 });
+
+test('add after they already paid on the app: ACTIVE, billing = app end date, links in the reply', async () => {
+  const store = memStore();
+  const h = createMemberHandlers(store, groupManager, config(), log,
+    fakeSync({ phone: '9000000001', status: 'active', expiresAt: iso(30), lastAmount: 149 }));
+  const reply = await h.handleAdd(['Ravi', '9000000001']);
+  assert.strictEqual(store.rows[0].status, 'ACTIVE');
+  assert.strictEqual(store.rows[0].billingDate, ddmm(30));
+  assert.strictEqual(store.rows[0].appPaidUntil, ddmm(30));
+  assert.strictEqual(store.rows[0].paidLast, 149);
+  assert.match(reply, /already paid on the app/);
+  assert.match(reply, /chat\.whatsapp\.com/);
+  assert.doesNotMatch(reply, /waiting for their app payment/);
+});
+
+test('payment ping says what to do: add if on no sheet, nothing if another bot\'s member', () => {
+  assert.match(paidPing({ phone: '9000000009' }, [], 'bot-nitin'), /➕ Yours\? add \[Name\] 9000000009/);
+  const abhi = [{ bot: 'bot-abhi', member: { name: 'A', status: 'ACTIVE' } }];
+  assert.match(paidPing({ phone: '9000000001' }, abhi, 'bot-nitin'), /ℹ️ abhi's member — their bot handles it/);
+  const own = [{ bot: 'bot-nitin', member: { name: 'A', status: 'ACTIVE' } }];
+  assert.doesNotMatch(paidPing({ phone: '9000000001' }, own, 'bot-nitin'), /➕|ℹ️/);
+});
