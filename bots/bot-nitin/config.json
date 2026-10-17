@@ -49,12 +49,12 @@
     "./qr-8.jpg"
   ],
   "renewal": {
-    "fullAmount": 90,
-    "referralAmount": 45,
+    "fullAmount": 149,
+    "referralAmount": 149,
     "billingCycleDays": 30
   },
   "joining": {
-    "fee": 90
+    "fee": 149
   },
   "overdue": {
     "autoReminderDays": 5,
@@ -107,14 +107,14 @@
       "max": 5
     },
     "messages": {
-      "warningText": "🚨🚨⚠️ Important Notice Sare Members Layi ⚠️🚨🚨\n\nAjj ton sare free members group ton remove kite ja rahe ne.\n\nJede veer group ch continue rehna chaunde ne, oh apna \nName \nAddress\nId Proof share kar do\n\nMonthly charge ₹90 hovega te group 24/7 duty basis te chalega.\n\nApni details is no te share kro\n+91 94641 80617",
+      "warningText": "🚨🚨⚠️ Important Notice Sare Members Layi ⚠️🚨🚨\n\nAjj ton sare free members group ton remove kite ja rahe ne.\n\nJede veer group ch continue rehna chaunde ne, oh apna \nName \nAddress\nId Proof share kar do\n\nMonthly charge ₹149 hovega te group 24/7 duty basis te chalega.\n\nApni details is no te share kro\n+91 94641 80617",
       "image": {
         "path": "./trial-image.jpeg",
-        "caption": "ਕੇਵਲ *90*/- ਮਹੀਨੇ ਵਿਚ 12 ਅਲੱਗ ਅਲੱਗ ਸ਼ਹਿਰਾਂ ਦੇ ਗਰੁੱਪ ਜਿਸ ਵਿਚ ਕੇਵਲ ਉਸ ਹੀ ਸ਼ਹਿਰ ਦੀ ਡਿਊਟੀ *FORWARD* ਕਰਾਂਗੇ\n\nMessage me to get added in these groups 👇🏻👇🏻\n94641-80617"
+        "caption": "ਕੇਵਲ *149*/- ਮਹੀਨੇ ਵਿਚ 12 ਅਲੱਗ ਅਲੱਗ ਸ਼ਹਿਰਾਂ ਦੇ ਗਰੁੱਪ ਜਿਸ ਵਿਚ ਕੇਵਲ ਉਸ ਹੀ ਸ਼ਹਿਰ ਦੀ ਡਿਊਟੀ *FORWARD* ਕਰਾਂਗੇ\n\nMessage me to get added in these groups 👇🏻👇🏻\n94641-80617"
       },
       "video": {
         "path": "./trial-video.mp4",
-        "caption": "*800+ daily duty | No exchange No Free | 12 city wise group only 90/- per month* \n\nMessage Hi, to join\n94641-80617"
+        "caption": "*800+ daily duty | No exchange No Free | 12 city wise group only 149/- per month* \n\nMessage Hi, to join\n94641-80617"
       }
     },
     "completionMessage": "✅ Trial removal cycle complete."
@@ -138,32 +138,32 @@
     "dripArm": "0 4 * * *"
   },
   "messages": {
-    "groupReminder": "Sat Sri Akal ji 🙏🏻 Aaj {date} nu ehna members da ik mahina pura ho gya — upar dite QR te 90 pay karke dss deyo ji 🙏🏻:",
+    "groupReminder": "Sat Sri Akal ji 🙏🏻 Aaj {date} nu ehna members da ik mahina pura ho gya — upar dite QR te 149 pay karke dss deyo ji 🙏🏻:",
     "groupOverdue": "🚨 Inna veera di renew di aaj last date aaji — jaldi to jaldi renew karke dss deyo ji 🙏🏻:",
     "groupAutoRenewed": "Inna members ne 2 bande add karaye ne — ehna da is mahine da renewal FREE aaji",
     "reminder": [
-      "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\niss mahine lyi iste 90 pay krdo ji 🙏🏻",
-      "{name} paaji Sat Sri Akal 🙏🏻\nTohada mahina {date} nu pura ho gya si ji\nIss mahine lyi 90 pay krdo ji 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya hai\nKirpa krke iss mahine de 90 pay kr deyo ji 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\nTohada group da mahina {date} nu pura ho gya si\nAgle mahine lyi 90 iste pay kr deyo ji 🙏🏻",
-      "{name} veerji Sat Sri Akal 🙏🏻\nTohadi renew di date aa gyi ji ({date})\nUpar dite QR te 90 pay krke dss deyo ji 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya\nIss mahine da 90 pay kr deyo 🙏🏻",
-      "{name} paaji 🙏🏻 Sat Sri Akal\nTohadi date {date} di si ji, mahina pura ho gya\niste 90 pay krke dss deyo ji 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\nIk mahina pura ho gya ji ({date})\nIste 90 pay kr deyo, main note kr lawanga ji 🙏🏻",
-      "{name} veerji Sat Sri Akal 🙏🏻\n{date} nu tohada mahina pura ho gya si ji\nRenew lyi 90 iste pay kr deyo 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\nRenew da time aa gya ji ({date})\nQR te 90 pay krke dss deyo ji 🙏🏻"
+      "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\niss mahine lyi iste 149 pay krdo ji 🙏🏻",
+      "{name} paaji Sat Sri Akal 🙏🏻\nTohada mahina {date} nu pura ho gya si ji\nIss mahine lyi 149 pay krdo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya hai\nKirpa krke iss mahine de 149 pay kr deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nTohada group da mahina {date} nu pura ho gya si\nAgle mahine lyi 149 iste pay kr deyo ji 🙏🏻",
+      "{name} veerji Sat Sri Akal 🙏🏻\nTohadi renew di date aa gyi ji ({date})\nUpar dite QR te 149 pay krke dss deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya\nIss mahine da 149 pay kr deyo 🙏🏻",
+      "{name} paaji 🙏🏻 Sat Sri Akal\nTohadi date {date} di si ji, mahina pura ho gya\niste 149 pay krke dss deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nIk mahina pura ho gya ji ({date})\nIste 149 pay kr deyo, main note kr lawanga ji 🙏🏻",
+      "{name} veerji Sat Sri Akal 🙏🏻\n{date} nu tohada mahina pura ho gya si ji\nRenew lyi 149 iste pay kr deyo 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nRenew da time aa gya ji ({date})\nQR te 149 pay krke dss deyo ji 🙏🏻"
     ],
     "referralReminder": [
-      "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\nTusi ik banda add kraya si, iss lyi iste sirf ₹45/- pay krdo ji 🙏🏻",
-      "{name} paaji Sat Sri Akal 🙏🏻\nTohada mahina {date} nu pura ho gya si ji\nTusi ik banda add kraya si, iss lyi sirf ₹45/- pay krdo ji 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya hai\nIk banda add karan karke tohada sirf ₹45/- hunda hai ji 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\nTohada mahina {date} nu pura ho gya si\nIk banda add kraya si, iss lyi 45 hi pay krdo ji 🙏🏻",
-      "{name} veerji Sat Sri Akal 🙏🏻\nRenew di date aa gyi ji ({date})\nTusi ik member add kraya si, iss lyi sirf 45 pay krdo ji 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu ik mahina pura ho gya ji\nIk referral karke tohada ₹45 ghat gya — 45 pay kr deyo ji 🙏🏻",
-      "{name} paaji 🙏🏻 Sat Sri Akal\nTohadi date {date} di si ji\nIk banda add karan karke iss mahine sirf 45 ne ji 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\nIk mahina pura ho gya ({date})\nTusi ik veer add kraya si — 45 iste pay kr deyo ji 🙏🏻",
-      "{name} veerji Sat Sri Akal 🙏🏻\n{date} nu mahina pura ho gya si ji\n1 bnda add krn krke — iss vaari sirf 45 pay krne ne ji 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\nRenew da din aa gya ji ({date})\nIk banda add kraya si, iss lyi 45 QR te pay kr deyo 🙏🏻"
+      "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\niss mahine lyi iste 149 pay krdo ji 🙏🏻",
+      "{name} paaji Sat Sri Akal 🙏🏻\nTohada mahina {date} nu pura ho gya si ji\nIss mahine lyi 149 pay krdo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya hai\nKirpa krke iss mahine de 149 pay kr deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nTohada group da mahina {date} nu pura ho gya si\nAgle mahine lyi 149 iste pay kr deyo ji 🙏🏻",
+      "{name} veerji Sat Sri Akal 🙏🏻\nTohadi renew di date aa gyi ji ({date})\nUpar dite QR te 149 pay krke dss deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya\nIss mahine da 149 pay kr deyo 🙏🏻",
+      "{name} paaji 🙏🏻 Sat Sri Akal\nTohadi date {date} di si ji, mahina pura ho gya\niste 149 pay krke dss deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nIk mahina pura ho gya ji ({date})\nIste 149 pay kr deyo, main note kr lawanga ji 🙏🏻",
+      "{name} veerji Sat Sri Akal 🙏🏻\n{date} nu tohada mahina pura ho gya si ji\nRenew lyi 149 iste pay kr deyo 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nRenew da time aa gya ji ({date})\nQR te 149 pay krke dss deyo ji 🙏🏻"
     ],
     "overdue": [
       "Sat Sri Akal {name} paaji 🙏🏻\n🚨🚨 Aaj last date aaji renew krke dss deyo. 🙏🏻",
