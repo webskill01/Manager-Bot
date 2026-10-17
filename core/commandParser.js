@@ -26,7 +26,7 @@ const SLOW_COMMANDS = new Set([
   'kick', 'remove', 'rejoin', 'sendlinks', 'links', 'refreshlinks', 'groupcheck', 'remind', 'renewed', 'advance',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
   'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip', 'ledger', 'checknum', 'checksend',
-  'platform', 'today', 'applist', 'appstats',
+  'platform', 'today', 'applist', 'appstats', 'groupscan',
 ]);
 
 // A Sheets 403 is a Google-side problem, not a bot problem, but its raw message ("The
@@ -74,10 +74,10 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null, deliveryTracker = null, appSync = null, appClient = null, fleet = null) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null, deliveryTracker = null, appSync = null, appClient = null, fleet = null, groupScan = null) {
   const memberH = createMemberHandlers(store, groupManager, config, log, appSync);
   // EaseCab app era. Absent (no APP_SYNC_URL) → every command below behaves as before.
-  const appH = appSync ? createAppHandlers({ config, appSync, client: appClient, fleet, log }) : null;
+  const appH = appSync ? createAppHandlers({ config, appSync, client: appClient, fleet, log, groupScan }) : null;
   const renewalH = createRenewalHandlers(store, config, log);
   const lookupH = createLookupHandlers(store, config, log);
   const reportH = createReportHandlers(store, config, botStartTime, log, ledger);
@@ -695,6 +695,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'today':      return appH ? appH.handleToday() : noApp();
         case 'appstats':   return appH ? appH.handleAppStats() : noApp();
         case 'applist':    return appH ? appH.handleAppList(args) : noApp();
+        case 'groupscan':  return appH ? appH.handleGroupScan() : noApp();
         case 'groups':     return reportH.handleGroups();
         case 'removed':    return reportH.handleRemovedList();
         case 'skipped':    return reportH.handleSkippedList();

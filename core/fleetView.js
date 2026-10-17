@@ -1,5 +1,6 @@
 import { createSheetClient } from './sheetClient.js';
 import { normalizePhone, formatDate, friendlyDate } from './globalConfig.js';
+import { TAB as GROUPS_TAB, fromTab } from './groupScan.js';
 
 // Every bot's sheet, read-only, for the views that span the fleet (platform, today, applist,
 // appstats and the combined payment ping on bot-nitin).
@@ -23,29 +24,37 @@ export function paidPing(row, where) {
   return `💳 App payment — ${name} (${row.phone})${row.lastAmount ? ` · ₹${row.lastAmount}` : ''}${till}\n   Sheets: ${sheets}`;
 }
 
-export function createFleetView({ config, store, log, makeClient = createSheetClient }) {
+// Each sheet also carries `inGroups` (Set of phones its bot last saw inside its WhatsApp
+// groups): own from the live group scan, others from their GROUPS tab. Empty = not scanned.
+export function createFleetView({ config, store, log, groupScan = null, makeClient = createSheetClient }) {
   const others = Object.entries(config.fleetSheets || {}).filter(([bot]) => bot !== config.botName);
   const clients = new Map();
-  const cache = new Map();   // bot → { at, members }
+  const cache = new Map();   // bot → { at, members, inGroups }
 
   async function readOther(bot, sheetId) {
     const hit = cache.get(bot);
-    if (hit && Date.now() - hit.at < CACHE_MS) return hit.members;
+    if (hit && Date.now() - hit.at < CACHE_MS) return hit;
     try {
       if (!clients.has(bot)) clients.set(bot, await makeClient(config.serviceAccountPath, sheetId, log));
-      const members = await clients.get(bot).getAll();
-      cache.set(bot, { at: Date.now(), members });
-      return members;
+      const c = clients.get(bot);
+      const members = await c.getAll();
+      const inGroups = new Set(c.readTab ? fromTab(await c.readTab(GROUPS_TAB).catch(() => [])).phones.keys() : []);
+      const entry = { at: Date.now(), members, inGroups };
+      cache.set(bot, entry);
+      return entry;
     } catch (err) {
       log?.warn?.(`⚠️  Fleet: ${bot} sheet unreadable — ${err.message}`);
-      return hit?.members || [];
+      return hit || { members: [], inGroups: new Set() };
     }
   }
 
-  // → [{ bot, members }], own sheet first.
+  // → [{ bot, members, inGroups }], own sheet first.
   async function sheets() {
-    const rest = await Promise.all(others.map(async ([bot, id]) => ({ bot, members: await readOther(bot, id) })));
-    return [{ bot: config.botName, members: store.getAll() }, ...rest];
+    const rest = await Promise.all(others.map(async ([bot, id]) => {
+      const { members, inGroups } = await readOther(bot, id);
+      return { bot, members, inGroups };
+    }));
+    return [{ bot: config.botName, members: store.getAll(), inGroups: new Set(groupScan?.phones().keys() || []) }, ...rest];
   }
 
   // → [{ bot, member }] for every sheet this phone is on.

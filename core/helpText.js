@@ -12,7 +12,7 @@ import { isTracker } from './globalConfig.js';
 // [key, label, hint] — the hint is the one-line "what is in here" the index shows.
 export const HELP_CATEGORIES = {
   full: [
-    ['app',       '📱 App',       'platform, today, summary, applist, revenue'],
+    ['app',       '📱 App',       'add, sendlinks, platform, today, summary, applist, appstats, groupscan, revenue'],
     ['members',   '👤 Members',   'add, kick, rejoin, skip, links'],
     ['renewals',  '💰 Renewals',  'renewed, advance, remind, due, overdue'],
     ['referrals', '👥 Referrals', 'ref, refs'],
@@ -55,10 +55,15 @@ function fullBodies(config) {
 • add [Name] [phone]  →  sheet row as PENDING_APP + the app link to send them
   (links come to you automatically once they pay; 7 days unpaid → one note, then quiet)
 • sendlinks [phone]  →  links, only if paid on the app  ·  sendlinks [phone] force
-• platform [phone]  →  app only / groups only / both, with every sheet they are on
+• platform [phone]  →  app status, every sheet they are on, which WhatsApp groups they are in
 • today  →  ends today / in 2 / in 5 days, paid today, removed today
-• summary / summary 1  →  who paid (today / yesterday), app vs groups
-• applist only | groups | both  ·  appstats
+• summary / summary 1  →  who paid (today / yesterday), app vs groups — this bot's sheet only
+• applist only  →  paid on the app, in no sheet
+• applist groups  →  in the groups, not paying on the app yet
+• applist both  →  app + groups (already switched)
+• applist nosheet  →  in the WhatsApp groups but NOT active on the sheet
+• appstats  →  counts: app / groups / both / in groups not in sheet, last 7 days
+• groupscan  →  re-read who is in the groups now (auto every 6 h; at most every 30 min)
 • revenue / revenue today / revenue week  →  pooled app total (bot-nitin)
 • renewed  →  off: renewals come from the app
 Reminders go 5 days before, 2 days before and on the day. Unpaid → removed at 9 AM next morning.`,

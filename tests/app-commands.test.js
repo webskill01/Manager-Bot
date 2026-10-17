@@ -7,6 +7,7 @@ import { createMemberHandlers, appPitch } from '../core/handlers/memberHandlers.
 import { buildPeople, splitBlock, createAppHandlers } from '../core/handlers/appHandlers.js';
 import { createFleetView, paidPing } from '../core/fleetView.js';
 import { formatDate } from '../core/globalConfig.js';
+import { createGroupScan, fromTab, toTab } from '../core/groupScan.js';
 
 const log = { info() {}, warn() {}, error() {} };
 const iso = (n) => { const d = new Date(); d.setDate(d.getDate() + n); d.setHours(12, 0, 0, 0); return d.toISOString(); };
@@ -125,4 +126,50 @@ test('fleet view reads other sheets read-only and names them in the payment ping
   assert.match(ping, /App payment — A \(9000000001\) · ₹149 till/);
   assert.match(ping, /Sheets: nitin \(ACTIVE\), abhi \(PENDING_APP\)/);
   assert.match(paidPing({ phone: '9000000009' }, []), /app only, not in any group sheet/);
+});
+
+test('group scan: reads each group once, skips hidden LIDs, writes cache + GROUPS tab; a failed group keeps the old scan', async () => {
+  const cfg = { ...config(), paidGroups: ['g1@g.us'] };
+  let tab = null;
+  const sheet = { async writeTab(name, rows) { tab = { name, rows }; } };
+  let fail = false;
+  const sock = { user: { id: '1' }, async groupMetadata() {
+    if (fail) throw new Error('rate-overlimit');
+    return { participants: [{ id: '919000000001@s.whatsapp.net' }, { id: '12345@lid', phoneNumber: '919000000002@s.whatsapp.net' }, { id: '999@lid' }] };
+  } };
+  const gs = createGroupScan({ config: cfg, log, getSock: () => sock, sheet });
+  const r = await gs.scan();
+  assert.deepStrictEqual([...r.phones.keys()], ['9000000001', '9000000002']);
+  assert.strictEqual(r.hidden, 1);
+  assert.strictEqual(tab.name, 'GROUPS');
+  assert.deepStrictEqual([...fromTab(tab.rows).phones.keys()], ['9000000001', '9000000002']);
+  fail = true;
+  assert.strictEqual(await gs.scan(), null);
+  assert.strictEqual(gs.phones().size, 2, 'previous scan kept');
+  assert.strictEqual(createGroupScan({ config: cfg, log, getSock: () => sock, sheet }).phones().size, 2, 'cache survives a restart');
+  assert.strictEqual(await createGroupScan({ config: cfg, log, getSock: () => null, sheet }).scan(), null, 'no socket → no scan');
+});
+
+test('in groups but not on the sheet shows in platform, applist nosheet and appstats', async () => {
+  const store = memStore([{ phone: '9000000001', name: 'A', status: 'REMOVED' }]);
+  const groupScan = { phones: () => new Map([['9000000001', 1], ['9000000003', 2]]), at: () => '17-10-2026 22:00', atMs: () => Date.now() };
+  const fleet = createFleetView({ config: { botName: 'bot-sachin2' }, store, log, groupScan });
+  const h = createAppHandlers({ config: config(), appSync: fakeSync(null), client: { async payments() { return { payments: [] }; } }, fleet, log, groupScan });
+  const plat = await h.handlePlatform(['9000000001']);
+  assert.match(plat, /In WhatsApp groups: sachin2 \(scan 17-10-2026 22:00\)/);
+  assert.match(plat, /In sachin2 groups but not ACTIVE on that sheet/);
+  const list = (await h.handleAppList(['nosheet'])).join('\n');
+  assert.match(list, /In groups, not in sheet — 2/);
+  assert.match(list, /\(unknown\) · 9000000003 · in sachin2 groups · not on app/);
+  assert.match(await h.handleAppStats(), /In groups, not in sheet: 2/);
+  assert.match(await h.handleGroupScan(), /next one allowed in/, '30-min floor');
+});
+
+test('fleet view reads the other bots\' GROUPS tab', async () => {
+  const fleet = createFleetView({
+    config: { botName: 'bot-nitin', fleetSheets: { 'bot-abhi': 'y' } }, store: memStore(), log,
+    makeClient: async () => ({ getAll: async () => [], readTab: async () => toTab(new Map([['9000000005', 1]]), 'x') }),
+  });
+  const [, abhi] = await fleet.sheets();
+  assert.deepStrictEqual([...abhi.inGroups], ['9000000005']);
 });

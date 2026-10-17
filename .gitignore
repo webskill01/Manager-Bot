@@ -82,3 +82,6 @@ Thumbs.db
 # Temp
 *.tmp
 *.bak
+# App-era runtime state (app sync cursor, WhatsApp group scan)
+bots/*/app-sync-state.json
+bots/*/group-scan.json

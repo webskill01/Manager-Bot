@@ -31,6 +31,7 @@ import QRCode from 'qrcode';
 import pino from 'pino';
 
 import { createSheetClient } from './sheetClient.js';
+import { createGroupScan } from './groupScan.js';
 import { createMemberStore } from './memberStore.js';
 import { createGroupManager } from './groupManager.js';
 import { createCommandParser, isSlowCommand } from './commandParser.js';
@@ -173,7 +174,8 @@ export async function startBot(config, log, authDir) {
   // APP_SYNC_URL / APP_SYNC_TOKEN are not in the .env.
   const appClient = createAppClient(config);
   // Read-only view of every bot's sheet. Spans the fleet only where FLEET_SHEETS is set (bot-nitin).
-  const fleet = appClient && createFleetView({ config, store, log });
+  const groupScan = appClient && !isTracker(config) ? createGroupScan({ config, log, getSock, sheet: sheetClient, warmingUp }) : null;
+  const fleet = appClient && createFleetView({ config, store, log, groupScan });
   const appSync = appClient && createAppSync({
     config, log, store, client: appClient,
     notify: (t) => notifyTelegram(t, config.dripIds),
@@ -184,6 +186,7 @@ export async function startBot(config, log, authDir) {
     linksFor: (phone) => commandParser?.linksReply(phone) ?? `Send the group links: sendlinks ${phone}`,
   });
   appSync?.start();
+  groupScan?.start();
 
   function destroySocket(reason) {
     if (!sock) return;
@@ -442,7 +445,7 @@ export async function startBot(config, log, authDir) {
       sock.ev.on('groups.update', (updates) => { for (const u of updates || []) groupMetaCache.delete(u?.id); });
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine, ledger, deliveryTracker, appSync, appClient, fleet);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine, ledger, deliveryTracker, appSync, appClient, fleet, groupScan);
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {
@@ -642,6 +645,7 @@ export async function startBot(config, log, authDir) {
                   if (!reply.startsWith('✅')) await notifyTelegram(reply, config.dripIds);
                 },
               } : {}),
+              ...(groupScan ? { groupScan: () => groupScan.scan() } : {}),
               ledgerWrite: () => ledger.writeToday(),
               ledgerReconcile: () => ledger.reconcile(),
             });

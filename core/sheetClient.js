@@ -202,5 +202,32 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId, log =
     }
   }
 
-  return { getAll, appendRow, updateRow, clearData, batchAppend, batchUpdateRows };
+  // A side tab (e.g. GROUPS, the WhatsApp group scan): whole-tab read, and a whole-tab
+  // replace in two calls — created on first write. Never touches MEMBERS.
+  async function readTab(tab) {
+    try {
+      const res = await withRetry('readTab', () => sheets.spreadsheets.values.get({
+        spreadsheetId, range: `${tab}!A:C`, valueRenderOption: 'UNFORMATTED_VALUE',
+      }));
+      return res.data.values || [];
+    } catch (err) {
+      if (/Unable to parse range/i.test(err.message)) return [];   // tab not made yet
+      throw err;
+    }
+  }
+
+  async function writeTab(tab, rows) {
+    const meta = await withRetry('meta', () => sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties.title' }));
+    if (!meta.data.sheets?.some(sh => sh.properties?.title === tab)) {
+      await withRetry('addTab', () => sheets.spreadsheets.batchUpdate({
+        spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: tab } } }] },
+      }));
+    }
+    await withRetry('clearTab', () => sheets.spreadsheets.values.clear({ spreadsheetId, range: `${tab}!A:C` }));
+    await withRetry('writeTab', () => sheets.spreadsheets.values.update({
+      spreadsheetId, range: `${tab}!A1`, valueInputOption: 'RAW', requestBody: { values: rows },
+    }));
+  }
+
+  return { getAll, appendRow, updateRow, clearData, batchAppend, batchUpdateRows, readTab, writeTab };
 }

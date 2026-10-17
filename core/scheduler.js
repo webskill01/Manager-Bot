@@ -94,6 +94,8 @@ export function createScheduler(config, log) {
     // Morning after an app plan ends: remove the expired, one at a time, 15–30 min apart (the
     // kickall chain). Registered only where app sync is on — no task, no job.
     register(schedule.appKick || '0 9 * * *', 'app-kick', tasks.appKick);
+    // Who is in this bot's WhatsApp groups (read-only, see groupScan.js). App bots only.
+    register(schedule.groupScan || '0 */6 * * *', 'group-scan', tasks.groupScan);
     register(schedule.ledgerWrite || '0 21 * * *', 'ledger-write', tasks.ledgerWrite);
     register(schedule.ledgerReconcile || '0 5 * * *', 'ledger-reconcile', tasks.ledgerReconcile);
     log.info(`⏰ Scheduler started — ${jobs.length} jobs active`);

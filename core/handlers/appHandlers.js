@@ -20,14 +20,16 @@ export function liveOnApp(row, nowIso = new Date().toISOString()) {
 }
 
 // Pure: one record per phone across every sheet plus the app snapshot.
-//   → Map phone → { phone, name, bots: [short names, ACTIVE rows only], rows: [{bot, member}], app, kind }
+//   → Map phone → { phone, name, bots: [short names, ACTIVE rows only], rows: [{bot, member}], app, kind,
+//                   groups: [short names of bots whose WhatsApp groups they are in, from the scan] }
 export function buildPeople(sheets, appRows) {
   const people = new Map();
   const get = (phone) => {
-    if (!people.has(phone)) people.set(phone, { phone, name: '', bots: [], rows: [], app: null });
+    if (!people.has(phone)) people.set(phone, { phone, name: '', bots: [], rows: [], app: null, groups: [] });
     return people.get(phone);
   };
-  for (const { bot, members } of sheets) {
+  for (const { bot, members, inGroups } of sheets) {
+    for (const phone of inGroups || []) get(phone).groups.push(shortName(bot));
     for (const m of members) {
       if (!m.phone) continue;
       const p = get(m.phone);
@@ -50,6 +52,9 @@ export function endsOn(p) {
   return p.rows.find(r => r.member.status === 'ACTIVE')?.member.billingDate || '';
 }
 
+// In a bot's WhatsApp groups with no ACTIVE row on that bot's sheet → those bots.
+export const unlisted = (p) => p.groups.filter(b => !p.bots.includes(b));
+
 const label = (p) => `${p.name || '(app user)'} · ${p.phone}${p.bots.length ? ` · ${p.bots.join('+')}` : ''}`;
 
 // "📱👥 App + groups (2)\n  • …" blocks for each non-empty kind.
@@ -65,7 +70,7 @@ export function splitBlock(list, line = label) {
 // ponytail: ISO stamps (lastUpdated) compare by UTC date; one stamped between midnight and 5:30 AM IST counts on the previous day.
 const isOn = (stamp, day) => dateMatches(String(stamp || ''), day);
 
-export function createAppHandlers({ config, appSync, client, fleet, log }) {
+export function createAppHandlers({ config, appSync, client, fleet, log, groupScan = null }) {
   const pooled = !!fleet?.isFleet;   // bot-nitin: the one place money is shown
 
   // Off bot-nitin a bot only counts its own sheet: app users on no row here are another
@@ -73,7 +78,7 @@ export function createAppHandlers({ config, appSync, client, fleet, log }) {
   async function people() {
     const sheets = fleet ? await fleet.sheets() : [];
     const all = buildPeople(sheets, [...appSync.snapshot().values()]);
-    if (!pooled) for (const [phone, p] of all) if (!p.rows.length) all.delete(phone);
+    if (!pooled) for (const [phone, p] of all) if (!p.rows.length && !p.groups.length) all.delete(phone);
     return all;
   }
 
@@ -92,7 +97,7 @@ export function createAppHandlers({ config, appSync, client, fleet, log }) {
     try { row = await appSync.lookup(phone); }
     catch (err) { return `❌ Could not reach the app: ${err.message}`; }
     const p = buildPeople(fleet ? await fleet.sheets() : [], row ? [row] : []).get(phone)
-      || { phone, rows: [], bots: [], app: null, kind: null };
+      || { phone, rows: [], bots: [], app: null, kind: null, groups: [] };
     const app = !row ? '📱 App: never signed up'
       : liveOnApp(row) ? `📱 App: ACTIVE till ${friendlyDate(appDate(row.expiresAt))} · paid ${row.paidCount}×`
       : `📱 App: ${row.status}${row.expiresAt ? ` (ended ${friendlyDate(appDate(row.expiresAt))})` : ''}${row.paidCount ? ` · paid ${row.paidCount}×` : ''}`;
@@ -101,7 +106,10 @@ export function createAppHandlers({ config, appSync, client, fleet, log }) {
       : '   not in any bot sheet';
     const verdict = { both: '✅ App + groups', groups: '👥 Groups only — not paying on the app', app: '📱 App only — not in the groups' }[p.kind]
       || '❌ Neither — no live app plan, not active in any group';
-    return `🔎 ${phone}\n${app}\n👥 Sheets:\n${sheets}\n\n${verdict}`;
+    const scanned = groupScan?.at() ? ` (scan ${groupScan.at()})` : ' (not scanned yet)';
+    const inGroups = `💬 In WhatsApp groups: ${p.groups.length ? p.groups.join('+') : 'none seen'}${scanned}`;
+    const warn = unlisted(p).length ? `\n⚠️ In ${unlisted(p).join('+')} groups but not ACTIVE on that sheet` : '';
+    return `🔎 ${phone}\n${app}\n👥 Sheets:\n${sheets}\n${inGroups}\n\n${verdict}${warn}`;
   }
 
   // Everything about the day, split three ways.
@@ -181,14 +189,21 @@ export function createAppHandlers({ config, appSync, client, fleet, log }) {
     }).join('\n') : '';
     return `📱 APP STATS — ${friendlyDate()}\n` +
       `   App + groups: ${count('both')}\n   Groups only: ${count('groups')}\n   App only: ${count('app')}\n` +
+      `   In groups, not in sheet: ${all.filter(p => unlisted(p).length).length}${groupScan?.at() ? ` (scan ${groupScan.at()})` : ' (no scan yet)'}\n` +
       `${sheetLines ? `\nBy sheet:\n${sheetLines}\n` : ''}` +
       `\nLast 7 days: ${week.length} app payments (🆕 ${week.filter(x => x.first).length} first-time)` +
       (pooled ? ` · ₹${week.reduce((s, x) => s + x.amount, 0)}` : '');
   }
 
   async function handleAppList(args = []) {
-    const want = { only: 'app', app: 'app', groups: 'groups', both: 'both' }[String(args[0] || '').toLowerCase()];
-    if (!want) return '❌ Format: applist only | groups | both';
+    const want = { only: 'app', app: 'app', groups: 'groups', both: 'both', nosheet: 'nosheet' }[String(args[0] || '').toLowerCase()];
+    if (!want) return '❌ Format: applist only | groups | both | nosheet';
+    if (want === 'nosheet') {
+      const odd = [...(await people()).values()].filter(p => unlisted(p).length);
+      if (!odd.length) return `💬 In groups, not in sheet: nobody${groupScan?.at() ? '' : ' (no group scan yet — try groupscan)'}.`;
+      const lines = odd.map((p, i) => `${String(i + 1).padStart(3)}. ${p.name || '(unknown)'} · ${p.phone} · in ${unlisted(p).join('+')} groups · ${liveOnApp(p.app) ? '📱 paid on app' : 'not on app'}`);
+      return chunkByChars(lines).map((c, i) => `${i === 0 ? `💬 In groups, not in sheet — ${odd.length}\n\n` : ''}${c.join('\n')}`);
+    }
     const list = [...(await people()).values()].filter(p => p.kind === want)
       .sort((a, b) => (endsOn(a) && endsOn(b) ? dateKey(endsOn(a)) - dateKey(endsOn(b)) : 0));
     const title = KINDS.find(([k]) => k === want)[1];
@@ -197,7 +212,17 @@ export function createAppHandlers({ config, appSync, client, fleet, log }) {
     return chunkByChars(lines).map((c, i) => `${i === 0 ? `${title} — ${list.length}\n\n` : ''}${c.join('\n')}`);
   }
 
-  return { handlePlatform, handleToday, handleSummary, handleRevenue, handleAppStats, handleAppList };
+  // Manual scan. ponytail: 30-min floor so a tapped button cannot hammer groupMetadata.
+  async function handleGroupScan() {
+    if (!groupScan) return '💬 Group scan is off on this bot.';
+    const ago = Date.now() - groupScan.atMs();
+    if (ago < 30 * 60 * 1000) return `💬 Last scan ${groupScan.at()} — next one allowed in ${Math.ceil((30 * 60 * 1000 - ago) / 60000)} min (ban safety). Results: applist nosheet`;
+    const r = await groupScan.scan();
+    if (!r) return '❌ Group scan did not finish (socket down, warm-up, or a group failed) — the previous scan is kept.';
+    return `💬 Group scan done — ${r.phones.size} phones${r.hidden ? `, ${r.hidden} hidden by WhatsApp` : ''}.\nSee: applist nosheet · appstats`;
+  }
+
+  return { handlePlatform, handleToday, handleSummary, handleRevenue, handleAppStats, handleAppList, handleGroupScan };
 }
 
 function uniq(list) {
