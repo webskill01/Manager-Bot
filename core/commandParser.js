@@ -26,7 +26,7 @@ const SLOW_COMMANDS = new Set([
   'kick', 'remove', 'rejoin', 'sendlinks', 'links', 'refreshlinks', 'groupcheck', 'remind', 'renewed', 'advance',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
   'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip', 'ledger', 'checknum', 'checksend',
-  'platform', 'today', 'applist', 'appstats', 'groupscan',
+  'platform', 'today', 'applist', 'appstats', 'groupscan', 'allnumbers',
 ]);
 
 // A Sheets 403 is a Google-side problem, not a bot problem, but its raw message ("The
@@ -693,7 +693,8 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'revenue':    return appH ? appH.handleRevenue(args) : reportH.handleRevenue();
         case 'platform':   return appH ? appH.handlePlatform(mergePhoneFromStart(args)) : noApp();
         case 'today':      return appH ? appH.handleToday() : noApp();
-        case 'appstats':   return appH ? appH.handleAppStats() : noApp();
+        case 'appstats':   return appH ? appH.handleAppStats(args) : noApp();
+        case 'allnumbers': return appH ? appH.handleAllNumbers() : noApp();
         case 'applist':    return appH ? appH.handleAppList(args) : noApp();
         case 'groupscan':  return appH ? appH.handleGroupScan() : noApp();
         case 'groups':     return reportH.handleGroups();

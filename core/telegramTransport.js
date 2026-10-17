@@ -88,7 +88,7 @@ const MENUS = {
     ['links', 'the cached group invite links'],
     ['revenue', 'pooled app revenue (bot-nitin)'],
     ['applist', 'only | groups | both | nosheet'],
-    ['appstats', 'app / groups / both / in groups not in sheet'],
+    ['appstats', '[bot] → who is on the app, by name'],
     ['stats', 'the numbers'],
     ['ledger', 'the shared revenue sheet — it fills itself'],
     ['ping', 'is the bot alive'],

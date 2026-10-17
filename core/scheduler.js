@@ -96,6 +96,8 @@ export function createScheduler(config, log) {
     register(schedule.appKick || '0 9 * * *', 'app-kick', tasks.appKick);
     // Who is in this bot's WhatsApp groups (read-only, see groupScan.js). App bots only.
     register(schedule.groupScan || '0 */6 * * *', 'group-scan', tasks.groupScan);
+    // bot-nitin: ALL_NUMBERS app columns, 40 min after the scans so all four GROUPS tabs are fresh.
+    register(schedule.allNumbers || '40 */6 * * *', 'all-numbers', tasks.allNumbers);
     register(schedule.ledgerWrite || '0 21 * * *', 'ledger-write', tasks.ledgerWrite);
     register(schedule.ledgerReconcile || '0 5 * * *', 'ledger-reconcile', tasks.ledgerReconcile);
     log.info(`⏰ Scheduler started — ${jobs.length} jobs active`);

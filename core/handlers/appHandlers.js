@@ -1,6 +1,8 @@
 import { normalizePhone, todayStr, formatDate, friendlyDate, chunkByChars, dateMatches } from '../globalConfig.js';
 import { appDate } from '../appSync.js';
 import { shortName } from '../fleetView.js';
+import { APP_STATUS_PENDING } from '../appFlow.js';
+import { buildAllNumbers, TAB as ALL_NUMBERS_TAB } from '../allNumbers.js';
 
 // Commands for the EaseCab app era: platform, today, summary, revenue, appstats, applist.
 //
@@ -175,7 +177,39 @@ export function createAppHandlers({ config, appSync, client, fleet, log, groupSc
       `   QR payments are refunded and not counted.`;
   }
 
-  async function handleAppStats() {
+  // `appstats abhi`: one sheet in full — counts, then who is on the app, who is not yet,
+  // and who sits in its groups without a row. Names, not just numbers.
+  async function botStats(name) {
+    const sheet = (fleet ? await fleet.sheets() : []).find(s => shortName(s.bot) === name.toLowerCase());
+    if (!sheet) return `❌ No sheet "${name}" here.${pooled ? '' : ' Other bots\' sheets show on bot-nitin only.'}`;
+    const snap = appSync.snapshot();
+    const active = sheet.members.filter(m => m.status === 'ACTIVE');
+    const on = active.filter(m => liveOnApp(snap.get(m.phone)));
+    const off = active.filter(m => !liveOnApp(snap.get(m.phone)));
+    const pending = sheet.members.filter(m => m.status === APP_STATUS_PENDING);
+    const rowPhones = new Set(sheet.members.filter(m => m.status === 'ACTIVE').map(m => m.phone));
+    const stray = [...(sheet.inGroups || [])].filter(p => !rowPhones.has(p));
+    const n = (i) => String(i + 1).padStart(3);
+    const lines = [
+      `📱 APP STATS — ${shortName(sheet.bot)} · ${friendlyDate()}`,
+      `   ACTIVE members: ${active.length}`,
+      `   📱 On the app: ${on.length}`,
+      `   👥 Not on the app yet: ${off.length}`,
+      `   🕐 Added, waiting to pay: ${pending.length}`,
+      `   💬 In the groups, not ACTIVE on the sheet: ${stray.length}${sheet.inGroups?.size ? '' : ' (no group scan yet)'}`,
+      '', `📱 On the app (${on.length})`,
+      ...on.map((m, i) => `${n(i)}. ${m.name} · ${m.phone} · till ${friendlyDate(appDate(snap.get(m.phone).expiresAt))}`),
+      '', `👥 Not on the app yet (${off.length})`,
+      ...off.map((m, i) => `${n(i)}. ${m.name} · ${m.phone} · billing ${m.billingDate || '—'}`),
+      ...(pending.length ? ['', `🕐 Waiting to pay (${pending.length})`, ...pending.map((m, i) => `${n(i)}. ${m.name} · ${m.phone} · added ${m.joinDate}`)] : []),
+      ...(stray.length ? ['', `💬 In the groups, not ACTIVE on the sheet (${stray.length})`,
+        ...stray.map((p, i) => { const m = sheet.members.find(x => x.phone === p); return `${n(i)}. ${m ? `${m.name} · ${p} · ${m.status}` : `${p} · no row`}${liveOnApp(snap.get(p)) ? ' · 📱 paid on app' : ''}`; })] : []),
+    ];
+    return chunkByChars(lines).map(c => c.join('\n'));
+  }
+
+  async function handleAppStats(args = []) {
+    if (args[0]) return botStats(args[0]);
     const byPhone = await people();
     const all = [...byPhone.values()];
     const count = (k) => all.filter(p => p.kind === k).length;
@@ -222,7 +256,16 @@ export function createAppHandlers({ config, appSync, client, fleet, log, groupSc
     return `💬 Group scan done — ${r.phones.size} phones${r.hidden ? `, ${r.hidden} hidden by WhatsApp` : ''}.\nSee: applist nosheet · appstats`;
   }
 
-  return { handlePlatform, handleToday, handleSummary, handleRevenue, handleAppStats, handleAppList, handleGroupScan };
+  // bot-nitin: refresh ALL_NUMBERS (app columns + any phone it lacks). Also the 6-hourly cron.
+  async function handleAllNumbers() {
+    if (!pooled || !fleet.ownSheet) return 'ℹ️ ALL_NUMBERS lives on bot-nitin only.';
+    const { rows, added } = buildAllNumbers(await fleet.ownSheet.readTab(ALL_NUMBERS_TAB, 'A:F'), await people());
+    await fleet.ownSheet.writeRange(ALL_NUMBERS_TAB, 'A', rows);
+    const yes = rows.slice(1).filter(r => r[6] === 'YES').length;
+    return `📋 ALL_NUMBERS updated — ${rows.length - 1} numbers (${added} new) · 📱 ${yes} on the app.\nFilter column G (ON APP) = YES / NO.`;
+  }
+
+  return { handlePlatform, handleToday, handleSummary, handleRevenue, handleAppStats, handleAppList, handleGroupScan, handleAllNumbers };
 }
 
 function uniq(list) {

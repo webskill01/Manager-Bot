@@ -8,6 +8,7 @@ import { buildPeople, splitBlock, createAppHandlers } from '../core/handlers/app
 import { createFleetView, paidPing } from '../core/fleetView.js';
 import { formatDate } from '../core/globalConfig.js';
 import { createGroupScan, fromTab, toTab } from '../core/groupScan.js';
+import { buildAllNumbers } from '../core/allNumbers.js';
 
 const log = { info() {}, warn() {}, error() {} };
 const iso = (n) => { const d = new Date(); d.setDate(d.getDate() + n); d.setHours(12, 0, 0, 0); return d.toISOString(); };
@@ -194,4 +195,36 @@ test('payment ping says what to do: add if on no sheet, nothing if another bot\'
   assert.match(paidPing({ phone: '9000000001' }, abhi, 'bot-nitin'), /ℹ️ abhi's member — their bot handles it/);
   const own = [{ bot: 'bot-nitin', member: { name: 'A', status: 'ACTIVE' } }];
   assert.doesNotMatch(paidPing({ phone: '9000000001' }, own, 'bot-nitin'), /➕|ℹ️/);
+});
+
+test('appstats <bot> lists one sheet by name: on the app, not yet, waiting, in groups without a row', async () => {
+  const store = memStore([
+    { phone: '9000000001', name: 'OnApp', status: 'ACTIVE' },
+    { phone: '9000000002', name: 'NotYet', status: 'ACTIVE', billingDate: '11-10-2026' },
+    { phone: '9000000003', name: 'Waiting', status: 'PENDING_APP', joinDate: '17-10-2026' },
+  ]);
+  const groupScan = { phones: () => new Map([['9000000001', 1], ['9000000004', 1]]), at: () => 'x', atMs: () => 0 };
+  const fleet = createFleetView({ config: { botName: 'bot-abhi' }, store, log, groupScan });
+  const sync = { snapshot: () => new Map([['9000000001', { phone: '9000000001', status: 'active', expiresAt: iso(30) }]]) };
+  const out = (await createAppHandlers({ config: config(), appSync: sync, client: null, fleet, log, groupScan }).handleAppStats(['abhi'])).join('\n');
+  assert.match(out, /ACTIVE members: 2/);
+  assert.match(out, /On the app \(1\)\n {2}1\. OnApp · 9000000001 · till/);
+  assert.match(out, /Not on the app yet \(1\)\n {2}1\. NotYet · 9000000002 · billing 11-10-2026/);
+  assert.match(out, /Waiting to pay \(1\)/);
+  assert.match(out, /not ACTIVE on the sheet \(1\)\n {2}1\. 9000000004 · no row/);
+  assert.match(await createAppHandlers({ config: config(), appSync: sync, client: null, fleet, log }).handleAppStats(['sachin2']), /No sheet "sachin2"/);
+});
+
+test('ALL_NUMBERS: keeps A-F, adds the app columns, appends phones it lacks', () => {
+  const tab = [['PHONE', 'NAME', 'SRC', 'N', 'INT', 'STATUS'], [919000000001, 'A', 'bot-nitin (ACTIVE)', 1, 'yes', 'ACTIVE'], ['9000000009', 'Old', 'x', 1, '', 'REMOVED']];
+  const people = buildPeople(
+    [{ bot: 'bot-abhi', members: [{ phone: '9000000002', name: 'B', status: 'ACTIVE' }], inGroups: new Set(['9000000001', '9000000003']) }],
+    [{ phone: '9000000001', status: 'active', expiresAt: iso(30) }]);
+  const { rows, added } = buildAllNumbers(tab, people);
+  assert.deepStrictEqual(rows[0].slice(6), ['ON APP', 'APP TILL', 'IN GROUPS']);
+  assert.deepStrictEqual(rows[1], [919000000001, 'A', 'bot-nitin (ACTIVE)', 1, 'yes', 'ACTIVE', 'YES', ddmm(30), 'abhi']);
+  assert.deepStrictEqual(rows[2].slice(6), ['NO', '', '']);
+  assert.strictEqual(added, 2);
+  assert.deepStrictEqual(rows.slice(3).map(r => [r[0], r[2], r[5], r[6]]).sort(),
+    [['9000000002', 'bot-abhi (ACTIVE)', 'ACTIVE', 'NO'], ['9000000003', 'not in any sheet', 'IN GROUPS', 'NO']]);
 });

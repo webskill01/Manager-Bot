@@ -175,7 +175,7 @@ export async function startBot(config, log, authDir) {
   const appClient = createAppClient(config);
   // Read-only view of every bot's sheet. Spans the fleet only where FLEET_SHEETS is set (bot-nitin).
   const groupScan = appClient && !isTracker(config) ? createGroupScan({ config, log, getSock, sheet: sheetClient, warmingUp }) : null;
-  const fleet = appClient && createFleetView({ config, store, log, groupScan });
+  const fleet = appClient && createFleetView({ config, store, log, groupScan, sheet: sheetClient });
   const appSync = appClient && createAppSync({
     config, log, store, client: appClient,
     notify: (t) => notifyTelegram(t, config.dripIds),
@@ -646,6 +646,7 @@ export async function startBot(config, log, authDir) {
                 },
               } : {}),
               ...(groupScan ? { groupScan: () => groupScan.scan() } : {}),
+              ...(fleet?.isFleet ? { allNumbers: async () => log.info(await commandParser.runReport('allnumbers')) } : {}),
               ledgerWrite: () => ledger.writeToday(),
               ledgerReconcile: () => ledger.reconcile(),
             });

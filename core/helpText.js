@@ -12,7 +12,7 @@ import { isTracker } from './globalConfig.js';
 // [key, label, hint] — the hint is the one-line "what is in here" the index shows.
 export const HELP_CATEGORIES = {
   full: [
-    ['app',       '📱 App',       'add, sendlinks, platform, today, summary, applist, appstats, groupscan, revenue'],
+    ['app',       '📱 App',       'add, sendlinks, platform, today, summary, applist, appstats, groupscan, allnumbers, revenue'],
     ['members',   '👤 Members',   'add, kick, rejoin, skip, links'],
     ['renewals',  '💰 Renewals',  'renewed, advance, remind, due, overdue'],
     ['referrals', '👥 Referrals', 'ref, refs'],
@@ -63,6 +63,8 @@ function fullBodies(config) {
 • applist both  →  app + groups (already switched)
 • applist nosheet  →  in the WhatsApp groups but NOT active on the sheet
 • appstats  →  counts: app / groups / both / in groups not in sheet, last 7 days
+• appstats [bot]  →  one sheet in full (e.g. appstats abhi): who is on the app, who is not, by name
+• allnumbers  →  refresh ALL_NUMBERS: ON APP / APP TILL / IN GROUPS columns (bot-nitin; auto every 6 h)
 • groupscan  →  re-read who is in the groups now (auto every 6 h; at most every 30 min)
 • revenue / revenue today / revenue week  →  pooled app total (bot-nitin)
 • renewed  →  off: renewals come from the app

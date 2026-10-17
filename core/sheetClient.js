@@ -204,10 +204,10 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId, log =
 
   // A side tab (e.g. GROUPS, the WhatsApp group scan): whole-tab read, and a whole-tab
   // replace in two calls — created on first write. Never touches MEMBERS.
-  async function readTab(tab) {
+  async function readTab(tab, cols = 'A:C') {
     try {
       const res = await withRetry('readTab', () => sheets.spreadsheets.values.get({
-        spreadsheetId, range: `${tab}!A:C`, valueRenderOption: 'UNFORMATTED_VALUE',
+        spreadsheetId, range: `${tab}!${cols}`, valueRenderOption: 'UNFORMATTED_VALUE',
       }));
       return res.data.values || [];
     } catch (err) {
@@ -229,5 +229,23 @@ export async function createSheetClient(serviceAccountPath, spreadsheetId, log =
     }));
   }
 
-  return { getAll, appendRow, updateRow, clearData, batchAppend, batchUpdateRows, readTab, writeTab };
+  // Write a block into an existing side tab (e.g. ALL_NUMBERS's app columns), widening the
+  // grid first when the block reaches past its last column — values.update will not.
+  async function writeRange(tab, startCol, rows) {
+    const meta = await withRetry('meta', () => sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' }));
+    const p = meta.data.sheets?.find(sh => sh.properties?.title === tab)?.properties;
+    if (!p) throw new Error(`no ${tab} tab`);
+    const need = startCol.charCodeAt(0) - 64 + Math.max(...rows.map(r => r.length)) - p.gridProperties.columnCount;
+    const moreRows = rows.length - p.gridProperties.rowCount;
+    const grow = [
+      ...(need > 0 ? [{ appendDimension: { sheetId: p.sheetId, dimension: 'COLUMNS', length: need } }] : []),
+      ...(moreRows > 0 ? [{ appendDimension: { sheetId: p.sheetId, dimension: 'ROWS', length: moreRows } }] : []),
+    ];
+    if (grow.length) await withRetry('grow', () => sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: grow } }));
+    await withRetry('writeRange', () => sheets.spreadsheets.values.update({
+      spreadsheetId, range: `${tab}!${startCol}1`, valueInputOption: 'RAW', requestBody: { values: rows },
+    }));
+  }
+
+  return { getAll, appendRow, updateRow, clearData, batchAppend, batchUpdateRows, readTab, writeTab, writeRange };
 }

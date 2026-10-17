@@ -33,7 +33,7 @@ export function paidPing(row, where, own = '') {
 
 // Each sheet also carries `inGroups` (Set of phones its bot last saw inside its WhatsApp
 // groups): own from the live group scan, others from their GROUPS tab. Empty = not scanned.
-export function createFleetView({ config, store, log, groupScan = null, makeClient = createSheetClient }) {
+export function createFleetView({ config, store, log, groupScan = null, sheet = null, makeClient = createSheetClient }) {
   const others = Object.entries(config.fleetSheets || {}).filter(([bot]) => bot !== config.botName);
   const clients = new Map();
   const cache = new Map();   // bot → { at, members, inGroups }
@@ -75,5 +75,5 @@ export function createFleetView({ config, store, log, groupScan = null, makeClie
     return out;
   }
 
-  return { sheets, whereIs, isFleet: others.length > 0 };
+  return { sheets, whereIs, isFleet: others.length > 0, ownSheet: sheet };
 }
