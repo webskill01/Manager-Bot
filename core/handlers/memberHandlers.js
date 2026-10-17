@@ -1,9 +1,25 @@
-import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod, clampedBillingDate, daysFromToday, overdueCohort, isTracker } from '../globalConfig.js';
+import { normalizePhone, formatDate, todayStr, parseDate, getReferralsInBillingPeriod, clampedBillingDate, daysFromToday, overdueCohort, isTracker, pickVariant, friendlyDate } from '../globalConfig.js';
 import { buildLinkBatches, renderTapLinks } from '../linkShare.js';
 import { waMeLink } from '../manualGroupManager.js';
 import { createLinkStore } from '../linkStore.js';
+import { APP_STATUS_PENDING } from '../appFlow.js';
+import { appDate, updatesFor } from '../appSync.js';
+import { liveOnApp } from './appHandlers.js';
 
-export function createMemberHandlers(store, groupManager, config, log) {
+// The "pay on the app" message for a new add: one of messages.appPitch (varied per phone, so
+// the operator never pastes the same sentence twice in a row) plus the Play Store link.
+export function appPitch(config, phone) {
+  const line = pickVariant(config.messages?.appPitch, phone) || 'Iste pay krke screenshot share krdo ji 🙏🏻';
+  return `${line}\n${config.app?.playStoreUrl || ''}`.trim();
+}
+
+export function createMemberHandlers(store, groupManager, config, log, appSync = null) {
+  // App era: new adds wait as PENDING_APP until the app says they paid. Trackers keep their funnel.
+  const appMode = !!appSync && !isTracker(config);
+  const pitchReply = (phone) => {
+    const text = appPitch(config, phone);
+    return `📲 Tap to send:\n${waMeLink(phone, text)}\n\nOr copy:\n${text}`;
+  };
   const inFlightAdds = new Set();
   const linkStore = createLinkStore(config, log);
 
@@ -75,7 +91,12 @@ export function createMemberHandlers(store, groupManager, config, log) {
 
     const existing = store.findByPhone(phone);
     if (existing && existing.status === 'ACTIVE') {
-      return `⚠️ ${existing.name} (${phone}) already ACTIVE. Use 'renewed' to update billing.`;
+      return appMode
+        ? `⚠️ ${existing.name} (${phone}) already ACTIVE. Renewals come from the app — check: platform ${phone}`
+        : `⚠️ ${existing.name} (${phone}) already ACTIVE. Use 'renewed' to update billing.`;
+    }
+    if (existing && existing.status === APP_STATUS_PENDING) {
+      return `🕐 ${existing.name} (${phone}) is already waiting for their app payment.\n\n${pitchReply(phone)}\n\nAlready paid? sendlinks ${phone}`;
     }
     // Tracker duplicates: someone mid-funnel must not be re-added as a fresh NEW join,
     // which would reset their join date and hide them from the call list for a month.
@@ -114,11 +135,12 @@ export function createMemberHandlers(store, groupManager, config, log) {
         phone,
         joinDate: todayStr(),
         billingDate,
-        paidLast: config.joining.fee,
+        // App era: no money changes hands at the bot; the app sync fills paidLast on payment.
+        paidLast: appMode ? 0 : config.joining.fee,
         reference: referrerPhone || '',
         refCreditDate,
         // Tracker bots start everyone at NEW — the head of the call funnel.
-        ...(isTracker(config) ? { status: 'NEW' } : {}),
+        ...(isTracker(config) ? { status: 'NEW' } : appMode ? { status: APP_STATUS_PENDING } : {}),
       });
 
       // Build referrer note (computed after add so store cache includes new member)
@@ -147,6 +169,12 @@ export function createMemberHandlers(store, groupManager, config, log) {
         } else {
           refNote = `\n⚠️ Referrer ${referrerPhone} not found in sheet.`;
         }
+      }
+
+      // No links until they pay: the app sync pings with the links the moment it sees it.
+      if (appMode) {
+        return `🕐 ${name} added — waiting for their app payment. Links go out once they pay.${refNote}\n\n` +
+          `${pitchReply(phone)}\n\nAlready paid? sendlinks ${phone}`;
       }
 
       const links = await linksFor(phone);
@@ -624,11 +652,31 @@ export function createMemberHandlers(store, groupManager, config, log) {
     }
   }
 
+  // App era: links only for someone the app says is paid, unless the operator says `force`.
+  // Paying turns a PENDING_APP (or REMOVED) row ACTIVE right here, without waiting for the poll.
   async function handleSendLinks(args) {
-    if (args.length < 1) return '❌ Format: sendlinks [phone]';
-    const phone = normalizePhone(args[0]);
+    const force = args.some(a => a.toLowerCase() === 'force');
+    const rest = args.filter(a => a.toLowerCase() !== 'force');
+    if (rest.length < 1) return '❌ Format: sendlinks [phone]  (add "force" to skip the app check)';
+    const phone = normalizePhone(rest.join(''));
     if (phone.length !== 10) return '❌ Invalid number.';
+    if (!appSync || force) return linksReply(phone);
 
+    let row;
+    try { row = await appSync.lookup(phone); }
+    catch (err) { return `❌ Could not reach the app: ${err.message}\nSend anyway: sendlinks ${phone} force`; }
+    if (!liveOnApp(row)) {
+      return `🚫 ${phone} has not paid on the app${row?.expiresAt ? ` (plan ended ${friendlyDate(appDate(row.expiresAt))})` : ''}.\n\n` +
+        `${pitchReply(phone)}\n\nSend anyway: sendlinks ${phone} force`;
+    }
+    const member = store.findByPhone(phone);
+    if (member && [APP_STATUS_PENDING, 'REMOVED'].includes(member.status)) {
+      await store.update(phone, updatesFor({ member, until: appDate(row.expiresAt), amount: row.lastAmount ?? 0 }, 'activate'));
+    }
+    return linksReply(phone);
+  }
+
+  async function linksReply(phone) {
     // Works for ANY number — sheet membership is not required (e.g. fresh prospects).
     const member = store.findByPhone(phone);
 
@@ -782,5 +830,5 @@ export function createMemberHandlers(store, groupManager, config, log) {
     return `✅ Rejected ${phone} in ${rejected}/${found} group(s)${failed > 0 ? ` (${failed} failed)` : ''}`;
   }
 
-  return { handleAdd, handleSilentAdd, handleKick, handleRemove, handleSkip, handleUnskip, handleDelay, handleDelayAll, handleLinks, handleRefreshLinks, handleSetLink, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, handleRejoin, handleRef, handleRefs };
+  return { handleAdd, handleSilentAdd, handleKick, handleRemove, handleSkip, handleUnskip, handleDelay, handleDelayAll, handleLinks, handleRefreshLinks, handleSetLink, handleGroupCheck, handleApproveAll, handleRejectAll, handleApprovePhone, handleRejectPhone, handleSendLinks, linksReply, handleRejoin, handleRef, handleRefs };
 }

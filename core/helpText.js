@@ -12,6 +12,7 @@ import { isTracker } from './globalConfig.js';
 // [key, label, hint] — the hint is the one-line "what is in here" the index shows.
 export const HELP_CATEGORIES = {
   full: [
+    ['app',       '📱 App',       'platform, today, summary, applist, revenue'],
     ['members',   '👤 Members',   'add, kick, rejoin, skip, links'],
     ['renewals',  '💰 Renewals',  'renewed, advance, remind, due, overdue'],
     ['referrals', '👥 Referrals', 'ref, refs'],
@@ -50,6 +51,18 @@ function fullBodies(config) {
   const fee = config.renewal.fullAmount;
 
   return {
+    app: `📱 APP (EaseCab) — the app is where people pay now
+• add [Name] [phone]  →  sheet row as PENDING_APP + the app link to send them
+  (links come to you automatically once they pay; 7 days unpaid → one note, then quiet)
+• sendlinks [phone]  →  links, only if paid on the app  ·  sendlinks [phone] force
+• platform [phone]  →  app only / groups only / both, with every sheet they are on
+• today  →  ends today / in 2 / in 5 days, paid today, removed today
+• summary / summary 1  →  who paid (today / yesterday), app vs groups
+• applist only | groups | both  ·  appstats
+• revenue / revenue today / revenue week  →  pooled app total (bot-nitin)
+• renewed  →  off: renewals come from the app
+Reminders go 5 days before, 2 days before and on the day. Unpaid → removed at 9 AM next morning.`,
+
     members: `👤 MEMBERS
 • add [Name] [phone] / [day] / ref [refPhone]
 • add [Name] [phone] ref [refPhone] prev  →  credit ref to referrer's PREVIOUS billing period

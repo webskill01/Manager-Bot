@@ -66,7 +66,10 @@ export function stalePending(members, notified) {
     && (daysFromToday(m.joinDate) ?? 0) <= -PENDING_GIVE_UP_DAYS);
 }
 
-export function createAppSync({ config, log, store, client, notify, linksFor, onPayments = null }) {
+// onAppPaid(rows): app rows whose lastPaidAt moved since the previous poll — every app
+// payment, whichever sheet (if any) the phone is on. bot-nitin uses it for the combined
+// fleet ping; with it set, this bot's own per-renewal ping is left to that handler.
+export function createAppSync({ config, log, store, client, notify, linksFor, onAppPaid = null }) {
   const stateFile = path.join(config.botDir || '.', 'app-sync-state.json');
   const snapshot = new Map();   // phone → latest app membership row, for `platform` & co.
   let lastPollAt = null;
@@ -88,10 +91,17 @@ export function createAppSync({ config, log, store, client, notify, linksFor, on
     const started = new Date();
     const res = await client.memberships({ since });
     if (res.truncated) log.warn('⚠️  App sync: API page was truncated — some members not seen this poll');
-    for (const r of res.members) snapshot.set(r.phone, r);
+    // ponytail: the first pull after boot only seeds, so a payment landing during a restart
+    // gets its sheet update but no fleet ping. Persist the snapshot if that ever matters.
+    const seeded = snapshot.size > 0;
+    const paid = [];
+    for (const r of res.members) {
+      if (seeded && r.lastPaidAt && r.lastPaidAt !== snapshot.get(r.phone)?.lastPaidAt) paid.push(r);
+      snapshot.set(r.phone, r);
+    }
     lastPollAt = started;
     if (full) lastFullAt = Date.now();
-    return res.members;
+    return { rows: res.members, paid };
   }
 
   async function apply(plan) {
@@ -112,7 +122,7 @@ export function createAppSync({ config, log, store, client, notify, linksFor, on
       for (const e of plan.activate) await notify(await activationText(e));
       return;
     }
-    for (const e of plan.renew) {
+    for (const e of onAppPaid ? [] : plan.renew) {
       await notify(`✅ App payment — ${e.member.name} (${e.member.phone}) renewed till ${friendlyDate(e.until)}${e.amount ? ` · ₹${e.amount}` : ''}`);
     }
     for (const e of plan.activate) await notify(await activationText(e));
@@ -138,16 +148,16 @@ export function createAppSync({ config, log, store, client, notify, linksFor, on
     try {
       const state = loadState();
       const firstRun = !state.started;
-      const rows = await pull();
+      const { rows, paid } = await pull();
       if (rows.length) {
         await store.refresh();
         const plan = planSync(store.getAll(), rows);
         if (plan.renew.length + plan.activate.length + plan.quiet.length) {
           await apply(plan);
           await ping(plan, firstRun);
-          if (!firstRun && onPayments) await onPayments([...plan.renew, ...plan.activate]);
         }
       }
+      if (paid.length && onAppPaid) await onAppPaid(paid);
       await checkPending(state);
       state.started = state.started || new Date().toISOString();
       saveState(state);

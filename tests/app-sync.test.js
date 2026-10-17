@@ -91,25 +91,22 @@ test('engine: first run marks silently with one summary; later payments ping per
   let answer = [row('9000000001', 30)];
   const client = { async memberships() { return { members: answer, truncated: false }; } };
   const pings = [];
-  const paid = [];
   const sync = createAppSync({
     config: { botDir, app: {} }, log: { warn() {}, info() {} }, store, client,
-    notify: async (t) => { pings.push(t); }, linksFor: async () => 'LINKS', onPayments: async (l) => { paid.push(...l); },
+    notify: async (t) => { pings.push(t); }, linksFor: async () => 'LINKS',
   });
   await sync.tick();
   assert.strictEqual(pings.length, 1);
   assert.match(pings[0], /App sync started — 1 member/);
-  assert.strictEqual(paid.length, 0, 'no fleet ping for the backfill');
 
   await sync.tick();
   assert.strictEqual(store.writes.length, 1, 'same expiry again writes nothing');
 
-  answer = [row('9000000001', 60), row('9000000002', 30)];
+  answer = [row('9000000001', 60, { lastPaidAt: iso(0) }), row('9000000002', 30)];
   await sync.tick();
   assert.strictEqual(pings.length, 3);
   assert.match(pings[1], /App payment — A \(9000000001\) renewed/);
   assert.match(pings[2], /Paid on the app — B \(9000000002\), new member[\s\S]*LINKS/);
-  assert.strictEqual(paid.length, 2);
   assert.strictEqual(sync.snapshot().get('9000000002').status, 'active');
 });
 
@@ -128,4 +125,23 @@ test('appClient: null without .env access; sends the token and unwraps the envel
   const bad = createAppClient({ appSyncUrl: 'https://x.test', appSyncToken: 't' },
     async () => ({ ok: false, status: 401, json: async () => ({ success: false, error: { code: 'AUTH_REQUIRED' } }) }));
   await assert.rejects(bad.memberships(), /HTTP 401 AUTH_REQUIRED/);
+});
+
+test('engine: onAppPaid gets every new app payment after the seed poll and takes over renewal pings', async () => {
+  const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'appsync-'));
+  const store = fakeStore([{ phone: '9000000001', name: 'A', status: 'ACTIVE', appPaidUntil: ddmm(30), renewals: 1 }]);
+  let answer = [row('9000000001', 30, { lastPaidAt: iso(-30) }), row('9000000009', 30, { lastPaidAt: iso(-30) })];
+  const client = { async memberships() { return { members: answer, truncated: false }; } };
+  const pings = [], paid = [];
+  const sync = createAppSync({
+    config: { botDir, app: {} }, log: { warn() {}, info() {} }, store, client,
+    notify: async (t) => { pings.push(t); }, linksFor: async () => 'L', onAppPaid: async (rows) => { paid.push(...rows.map(r => r.phone)); },
+  });
+  await sync.tick();
+  assert.deepStrictEqual(paid, [], 'the seed poll reports nothing');
+  answer = [row('9000000001', 60, { lastPaidAt: iso(0) }), row('9000000009', 60, { lastPaidAt: iso(0) })];
+  await sync.tick();
+  assert.deepStrictEqual(paid, ['9000000001', '9000000009'], 'app-only payers included');
+  assert.ok(!pings.some(p => /App payment/.test(p)), 'no duplicate own-sheet ping');
+  assert.strictEqual(store.getAll()[0].billingDate, ddmm(60), 'the sheet is still renewed');
 });

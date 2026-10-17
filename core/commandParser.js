@@ -5,6 +5,7 @@ import { createMemberHandlers } from './handlers/memberHandlers.js';
 import { createRenewalHandlers } from './handlers/renewalHandlers.js';
 import { createLookupHandlers } from './handlers/lookupHandlers.js';
 import { createReportHandlers } from './handlers/reportHandlers.js';
+import { createAppHandlers } from './handlers/appHandlers.js';
 import { createTrackerHandlers } from './handlers/trackerHandlers.js';
 import { isConfigured, usesCloudApi, createCloudApiSender } from './cloudApiSender.js';
 import { buildDmList, renderDmList, dmRowFor, chunkByChars } from './dmList.js';
@@ -25,6 +26,7 @@ const SLOW_COMMANDS = new Set([
   'kick', 'remove', 'rejoin', 'sendlinks', 'links', 'refreshlinks', 'groupcheck', 'remind', 'renewed', 'advance',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
   'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip', 'ledger', 'checknum', 'checksend',
+  'platform', 'today', 'applist', 'appstats',
 ]);
 
 // A Sheets 403 is a Google-side problem, not a bot problem, but its raw message ("The
@@ -72,8 +74,10 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null, deliveryTracker = null) {
-  const memberH = createMemberHandlers(store, groupManager, config, log);
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null, deliveryTracker = null, appSync = null, appClient = null, fleet = null) {
+  const memberH = createMemberHandlers(store, groupManager, config, log, appSync);
+  // EaseCab app era. Absent (no APP_SYNC_URL) → every command below behaves as before.
+  const appH = appSync ? createAppHandlers({ config, appSync, client: appClient, fleet, log }) : null;
   const renewalH = createRenewalHandlers(store, config, log);
   const lookupH = createLookupHandlers(store, config, log);
   const reportH = createReportHandlers(store, config, botStartTime, log, ledger);
@@ -665,7 +669,9 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
             `Want the seat back:  kick ${normPhone(mergePhoneFromStart(args)[0] || '') || '[phone]'}\n` +
             `See everything:      log`;
 
-        case 'renewed':    return renewalH.handleRenewed(mergePhoneFromStart(args));
+        case 'renewed':
+          if (appH) return `❌ Renewals come from the app now — nothing to mark by hand.\nCheck someone: platform ${normPhone(mergePhoneFromStart(args)[0] || '') || '[phone]'}`;
+          return renewalH.handleRenewed(mergePhoneFromStart(args));
         case 'advance':    return renewalH.handleAdvance(mergePhoneFromStart(args));
         case 'due':        return renewalH.handleDue(args);
         case 'overdue': {
@@ -682,9 +688,13 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'status':     return lookupH.handleStatus(mergePhoneFromStart(args));
 
         case 'digest':     return reportH.handleMorningDigest();
-        case 'summary':    return reportH.handleSummary(args);
+        case 'summary':    return appH ? appH.handleSummary(args) : reportH.handleSummary(args);
         case 'stats':      return reportH.handleStats();
-        case 'revenue':    return reportH.handleRevenue();
+        case 'revenue':    return appH ? appH.handleRevenue(args) : reportH.handleRevenue();
+        case 'platform':   return appH ? appH.handlePlatform(mergePhoneFromStart(args)) : noApp();
+        case 'today':      return appH ? appH.handleToday() : noApp();
+        case 'appstats':   return appH ? appH.handleAppStats() : noApp();
+        case 'applist':    return appH ? appH.handleAppList(args) : noApp();
         case 'groups':     return reportH.handleGroups();
         case 'removed':    return reportH.handleRemovedList();
         case 'skipped':    return reportH.handleSkippedList();
@@ -1030,5 +1040,7 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
     return Array.isArray(out) ? out.join('\n\n') : out;
   }
 
-  return { parse, setOverdueList, runReport };
+  function noApp() { return '📱 App sync is off — set APP_SYNC_URL and APP_SYNC_TOKEN in this bot\'s .env and restart.'; }
+
+  return { parse, setOverdueList, runReport, linksReply: (phone) => memberH.linksReply(phone) };
 }

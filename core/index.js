@@ -45,6 +45,7 @@ import { createTrialRemovalEngine } from './trialRemovalEngine.js';
 import { createRemovalEngine } from './removalEngine.js';
 import { createAppClient } from './appClient.js';
 import { createAppSync } from './appSync.js';
+import { createFleetView, paidPing } from './fleetView.js';
 import { createGhostRemovalEngine } from './ghostRemovalEngine.js';
 // catchupEngine.js stays on disk but is deliberately NOT wired: every one of its stages
 // posts a group @mention message, which is the path being retired. Reminders are manual
@@ -171,9 +172,15 @@ export async function startBot(config, log, authDir) {
   // WhatsApp, so it runs from boot whether or not a socket ever comes up. Off (null) when
   // APP_SYNC_URL / APP_SYNC_TOKEN are not in the .env.
   const appClient = createAppClient(config);
+  // Read-only view of every bot's sheet. Spans the fleet only where FLEET_SHEETS is set (bot-nitin).
+  const fleet = appClient && createFleetView({ config, store, log });
   const appSync = appClient && createAppSync({
     config, log, store, client: appClient,
     notify: (t) => notifyTelegram(t, config.dripIds),
+    // bot-nitin: one ping per app payment naming every sheet the phone is on (or none).
+    onAppPaid: fleet?.isFleet ? async (rows) => {
+      for (const r of rows) await notifyTelegram(paidPing(r, await fleet.whereIs(r.phone)), config.dripIds);
+    } : null,
     linksFor: (phone) => commandParser?.linksReply(phone) ?? `Send the group links: sendlinks ${phone}`,
   });
   appSync?.start();
@@ -435,7 +442,7 @@ export async function startBot(config, log, authDir) {
       sock.ev.on('groups.update', (updates) => { for (const u of updates || []) groupMetaCache.delete(u?.id); });
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine, ledger, deliveryTracker);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine, ledger, deliveryTracker, appSync, appClient, fleet);
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {
