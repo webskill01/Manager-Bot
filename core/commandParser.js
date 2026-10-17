@@ -705,14 +705,16 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'toprefs':    return reportH.handleTopRefs();
         case 'loyal':      return reportH.handleLoyal(args);
         case 'growth':     return reportH.handleGrowth();
-        case 'forecast':   return reportH.handleForecast();
-        case 'trend':      return reportH.handleTrend();
+        // App era: sheet money is QR money (refunded) and the partner split is gone — every money
+        // report becomes the pooled app revenue, which only bot-nitin shows.
+        case 'forecast':   return appH ? appH.handleRevenue(['month']) : reportH.handleForecast();
+        case 'trend':      return appH ? appH.handleRevenue(['month']) : reportH.handleTrend();
         case 'churn':      return reportH.handleChurn();
         case 'norenew':    return reportH.handleNoRenew();
-        case 'collection': return reportH.handleCollection();
+        case 'collection': return appH ? appH.handleRevenue(['month']) : reportH.handleCollection();
         case 'tenure':     return reportH.handleTenure();
-        case 'weekly':     return reportH.handleWeekly();
-        case 'monthly':    return reportH.handleMonthly(args);
+        case 'weekly':     return appH ? appH.handleRevenue(['week']) : reportH.handleWeekly();
+        case 'monthly':    return appH ? appH.handleRevenue(['month']) : reportH.handleMonthly(args);
         case 'audit':      return reportH.handleAudit();
         case 'diag':       return handleDiag();
         case 'notinsheet': return handleNotInSheet(args);
