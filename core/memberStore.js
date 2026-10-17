@@ -80,9 +80,24 @@ export function createMemberStore(sheetClient, botName) {
     return { updated: rows.length, missing };
   }
 
+  // Like updateMany, but each row gets its OWN updates: [{ phone, updates }]. Still one
+  // Sheets write for the lot (app sync renews a whole poll's payers at once).
+  async function updateEach(list) {
+    const rows = [];
+    const missing = [];
+    for (const { phone, updates } of list) {
+      const member = findByPhone(phone);
+      if (!member) { missing.push(phone); continue; }
+      rows.push({ ...member, ...updates, lastUpdated: new Date().toISOString() });
+    }
+    if (rows.length > 0) await sheetClient.batchUpdateRows(rows);
+    await refresh();
+    return { updated: rows.length, missing };
+  }
+
   async function initialize() {
     await refresh();
   }
 
-  return { initialize, refresh, findByPhone, findByName, getAll, getActive, add, update, updateMany };
+  return { initialize, refresh, findByPhone, findByName, getAll, getActive, add, update, updateMany, updateEach };
 }

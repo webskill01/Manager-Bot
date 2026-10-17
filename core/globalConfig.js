@@ -34,6 +34,12 @@ export function loadConfig(botDir) {
   if (config.ledger && process.env.LEDGER_SHEET_ID) {
     config.ledger.spreadsheetId = process.env.LEDGER_SHEET_ID;
   }
+  // EaseCab member-sync access, .env only for the same reason. No URL → no app sync.
+  config.appSyncUrl = process.env.APP_SYNC_URL || '';
+  config.appSyncToken = process.env.APP_SYNC_TOKEN || '';
+  // bot-nitin only: "bot-abhi=<sheetId>,bot-sachin2=<sheetId>" for the fleet-wide views.
+  config.fleetSheets = Object.fromEntries((process.env.FLEET_SHEETS || '').split(',')
+    .map(p => p.split('=').map(s => s.trim())).filter(([k, v]) => k && v));
   config.serviceAccountPath = path.join(botDir, 'service-account.json');
   config.botDir = botDir;
 
