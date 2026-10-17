@@ -23,9 +23,15 @@ const HEADER = ['DATE', 'BOT', 'NEW', 'RENEWED'];
 
 // What the ledger should say for each date, given the member sheet as it stands right now.
 // Pure — no I/O — so the diffing below is testable without touching Google.
+//
+// App era: a row with APP_PAID_UNTIL got its last join/renewal stamp from an EaseCab payment,
+// not a QR one. That money is the app's, so the ledger keeps counting QR money only — without
+// this every app payment read as ~1.6 QR renewals (₹149 / ₹90) and the first sync's backfill
+// as a wave of renewals on one day.
 export function ledgerRowsFor(members, config, dates) {
+  const qr = members.filter(m => !m.appPaidUntil);
   return dates.map(date => {
-    const { newToday, weightedRenewals } = dailyBreakdown(members, config, date);
+    const { newToday, weightedRenewals } = dailyBreakdown(qr, config, date);
     return { date, bot: config.botName, newJoined: newToday.length, renewed: weightedRenewals };
   });
 }

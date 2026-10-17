@@ -173,3 +173,15 @@ test('a summary column letter maps to the right index, and nonsense reads nothin
     assert.equal(columnIndex(bad), -1, `"${bad}" must not resolve to a real column`);
   }
 });
+
+test('app payments stay out of the ledger: it keeps counting QR money only', () => {
+  const members = [
+    renewal('1', '18-08-2026 10:00', 90),
+    { ...renewal('2', '18-08-2026 11:00', 149), appPaidUntil: '18-09-2026' },
+    join('3', '18-08-2026'),
+    { ...join('4', '18-08-2026'), paidLast: 149, appPaidUntil: '18-09-2026' },
+  ];
+  const [row] = ledgerRowsFor(members, CFG, ['18-08-2026']);
+  assert.equal(row.renewed, 1);
+  assert.equal(row.newJoined, 1);
+});
