@@ -91,6 +91,9 @@ export function createScheduler(config, log) {
     // their own VPS, so bot-nitin's "ALL BOTS" line needs THEIR rows written too — a gate no
     // amount of ordering inside one process can give. An hour of clearance covers all four.
     // Keep any digest at least jitter+jitter after this one.
+    // Morning after an app plan ends: remove the expired, one at a time, 15–30 min apart (the
+    // kickall chain). Registered only where app sync is on — no task, no job.
+    register(schedule.appKick || '0 9 * * *', 'app-kick', tasks.appKick);
     register(schedule.ledgerWrite || '0 21 * * *', 'ledger-write', tasks.ledgerWrite);
     register(schedule.ledgerReconcile || '0 5 * * *', 'ledger-reconcile', tasks.ledgerReconcile);
     log.info(`⏰ Scheduler started — ${jobs.length} jobs active`);

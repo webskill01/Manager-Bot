@@ -108,3 +108,32 @@ test('resume() is safe to call repeatedly and processes at most one member per g
   engine.stopKickall();
   fs.rmSync(botDir, { recursive: true, force: true });
 });
+
+// App flow: removed the morning after the app plan ends; the 9 AM run touches nobody else.
+test('kickall({ appOnly }) removes expired app plans only, and skips anyone who paid since', async () => {
+  const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rem-'));
+  const config = makeConfig(botDir);
+  const ago = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`; };
+  const members = [
+    { name: 'App1', phone: '9000000001', status: 'ACTIVE', billingDate: ago(1), appPaidUntil: ago(1), delayUntil: '' },
+    { name: 'Old8', phone: '9000000002', status: 'ACTIVE', billingDate: ago(8), appPaidUntil: '', delayUntil: '' },
+    { name: 'AppToday', phone: '9000000003', status: 'ACTIVE', billingDate: ago(0), appPaidUntil: ago(0), delayUntil: '' },
+  ];
+  const store = makeStore(members);
+  const removed = [];
+  const sock = { user: { id: 'me' }, async groupParticipantsUpdate(_g, [jid]) { removed.push(jid); } };
+  const engine = createRemovalEngine(config, log, () => sock, store, () => []);
+
+  const reply = engine.kickall({ appOnly: true });
+  assert.match(reply, /Kickall started — 1 members/);
+  assert.match(reply, /App1/);
+  await new Promise(r => setTimeout(r, 100));
+  assert.equal(store.findByPhone('9000000001').status, 'REMOVED');
+  assert.equal(store.findByPhone('9000000002').status, 'ACTIVE', 'old flow is not auto-removed');
+  assert.equal(store.findByPhone('9000000003').status, 'ACTIVE', 'not on the expiry day itself');
+  assert.ok(removed.every(j => j.startsWith('919000000001')));
+
+  assert.match(engine.kickall({ appOnly: true }), /No expired app plans/);
+  engine.stopKickall();
+  fs.rmSync(botDir, { recursive: true, force: true });
+});

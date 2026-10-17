@@ -43,6 +43,8 @@ import { createDripEngine } from './dripEngine.js';
 import { createLedger } from './ledger.js';
 import { createTrialRemovalEngine } from './trialRemovalEngine.js';
 import { createRemovalEngine } from './removalEngine.js';
+import { createAppClient } from './appClient.js';
+import { createAppSync } from './appSync.js';
 import { createGhostRemovalEngine } from './ghostRemovalEngine.js';
 // catchupEngine.js stays on disk but is deliberately NOT wired: every one of its stages
 // posts a group @mention message, which is the path being retired. Reminders are manual
@@ -164,6 +166,17 @@ export async function startBot(config, log, authDir) {
   const removalEngine = createRemovalEngine(config, log, getSock, store, getBroadcastJids,
     (t) => notifyTelegram(t, config.dripIds));
   const ghostEngine = createGhostRemovalEngine(config, log, getSock, store, broadcast);
+
+  // EaseCab app → sheet, every app.pollSeconds. Sheet + Telegram only: it never touches
+  // WhatsApp, so it runs from boot whether or not a socket ever comes up. Off (null) when
+  // APP_SYNC_URL / APP_SYNC_TOKEN are not in the .env.
+  const appClient = createAppClient(config);
+  const appSync = appClient && createAppSync({
+    config, log, store, client: appClient,
+    notify: (t) => notifyTelegram(t, config.dripIds),
+    linksFor: (phone) => commandParser?.linksReply(phone) ?? `Send the group links: sendlinks ${phone}`,
+  });
+  appSync?.start();
 
   function destroySocket(reason) {
     if (!sock) return;
@@ -610,6 +623,18 @@ export async function startBot(config, log, authDir) {
               // Outside the usesTelegram gate on purpose: the ledger only writes to a Google
               // Sheet. It transmits nothing to any member, so the ban-risk reasoning that
               // gates the reports above simply does not apply to it.
+              // Group removal, not a DM — but it is still a WhatsApp op, so it waits out the
+              // warm-up and needs a live socket. kickall re-checks each member against the live
+              // sheet before removing them, so anyone who paid since 9 AM is skipped.
+              ...(appSync ? {
+                appKick: async () => {
+                  if (skipWarmup('app-expiry removal')) return;
+                  if (!getSock()?.user) return log.warn('⏰ App-expiry removal skipped — socket down');
+                  await appSync.tick();
+                  const reply = removalEngine.kickall({ appOnly: true });
+                  if (!reply.startsWith('✅')) await notifyTelegram(reply, config.dripIds);
+                },
+              } : {}),
               ledgerWrite: () => ledger.writeToday(),
               ledgerReconcile: () => ledger.reconcile(),
             });

@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { daysFromToday, sleep, randomBetween, normalizePhone, resolveWhatsAppJid, isDelayActive } from './globalConfig.js';
+import { removalDue, isAppFlow } from './appFlow.js';
 
 const MIN_GAP_MS = 15 * 60 * 1000;
 const MAX_GAP_MS = 30 * 60 * 1000;
@@ -33,13 +34,17 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
     _timeouts = [];
   }
 
-  function getRemovalList() {
+  // Who is due for removal: app-flow members the day after their app plan ended, old-flow
+  // members at consolidatedListDays overdue (see appFlow.removalDue). `appOnly` is the 9 AM
+  // automatic run — it removes app-flow members only, because the app already cut them off;
+  // the old flow stays the operator's call through `overdue` / `kickall`.
+  function getRemovalList({ appOnly = false } = {}) {
     const all = store.getAll();
     return all
       .filter(m => {
-        const days = daysFromToday(m.billingDate);
         // Delayed members (paid-promise snooze) stay overdue but are hidden from the removal list.
-        return m.status === 'ACTIVE' && days !== null && days <= -config.overdue.consolidatedListDays && !isDelayActive(m);
+        if (!removalDue(m, config) || isDelayActive(m)) return false;
+        return !appOnly || isAppFlow(m, config);
       })
       .map(m => ({ ...m, daysOverdue: Math.abs(daysFromToday(m.billingDate)) }))
       .sort((a, b) => b.daysOverdue - a.daysOverdue);
@@ -124,8 +129,9 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
       const isStillOverdue = (() => {
         if (!fresh || fresh.status !== 'ACTIVE') return false;
         if (isDelayActive(fresh)) return false; // delayed mid-run — skip until the delay expires
-        const d = daysFromToday(fresh.billingDate);
-        return d !== null && d <= -config.overdue.consolidatedListDays;
+        // Same rule that put them on the list: an app payment since then moved their billing
+        // date forward, so they drop out here without anything else to check.
+        return removalDue(fresh, config);
       })();
 
       if (!isStillOverdue) {
@@ -309,12 +315,15 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
     return `📨 Sending final warnings to ${list.length} members with spaced gaps — done within ~${Math.max(etaMin, 1)} min. Summary will follow.`;
   }
 
-  function kickall() {
+  function kickall({ appOnly = false } = {}) {
     const existing = loadState();
     if (existing?.active) return '⚠️ Kickall already running. Send "stop kickall" to cancel.';
 
-    const list = getRemovalList();
-    if (list.length === 0) return `✅ No members overdue by ${config.overdue.consolidatedListDays}+ days — nothing to kick.`;
+    const list = getRemovalList({ appOnly });
+    if (list.length === 0) {
+      return appOnly ? '✅ No expired app plans — nothing to remove.'
+        : `✅ No members overdue by ${config.overdue.consolidatedListDays}+ days — nothing to kick.`;
+    }
 
     const state = {
       active: true,
