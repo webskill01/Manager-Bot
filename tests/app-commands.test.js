@@ -105,6 +105,10 @@ test('summary: paid only, split; money only on the pooled (fleet) bot', async ()
   assert.match(out, /A · 9000000001 · nitin · 🆕 first/);
   const plain = await createAppHandlers({ config: config(), appSync: fakeSync(row), client, fleet: fleet(false), log }).handleSummary();
   assert.doesNotMatch(plain, /₹/);
+  assert.match(plain, /1 person\(s\)/, 'other bots count only phones on their own sheet');
+  assert.doesNotMatch(plain, /9000000009|App only/);
+  const none = await createAppHandlers({ config: config(), appSync: fakeSync(row), client, fleet: { isFleet: false, sheets: async () => [{ bot: 'bot-abhi', members: [] }] }, log }).handleSummary();
+  assert.match(none, /0 person\(s\)/);
   assert.match(await createAppHandlers({ config: config(), appSync: fakeSync(row), client, fleet: fleet(false), log }).handleRevenue(), /bot-nitin only/);
 });
 

@@ -68,10 +68,17 @@ const isOn = (stamp, day) => dateMatches(String(stamp || ''), day);
 export function createAppHandlers({ config, appSync, client, fleet, log }) {
   const pooled = !!fleet?.isFleet;   // bot-nitin: the one place money is shown
 
+  // Off bot-nitin a bot only counts its own sheet: app users on no row here are another
+  // bot's (or nobody's), so they are left out of every view and count.
   async function people() {
     const sheets = fleet ? await fleet.sheets() : [];
-    return buildPeople(sheets, [...appSync.snapshot().values()]);
+    const all = buildPeople(sheets, [...appSync.snapshot().values()]);
+    if (!pooled) for (const [phone, p] of all) if (!p.rows.length) all.delete(phone);
+    return all;
   }
+
+  // App payments this bot owns: all of them on bot-nitin, else only phones on this sheet.
+  const own = (pays, byPhone) => pooled ? pays : pays.filter(x => byPhone.has(x.phone));
 
   async function paymentsSince(from, to = new Date()) {
     const res = await client.payments({ from, to });
@@ -104,7 +111,7 @@ export function createAppHandlers({ config, appSync, client, fleet, log }) {
     const today = todayStr();
     const ending = (n) => all.filter(p => endsOn(p) === inDays(n));
     let pays = [];
-    try { pays = await paymentsSince(dayStart()); }
+    try { pays = own(await paymentsSince(dayStart()), byPhone); }
     catch (err) { log?.warn?.(`⚠️  today: app payments unavailable — ${err.message}`); }
     const paidToday = uniq(pays.map(x => byPhone.get(x.phone) || { phone: x.phone, name: '', bots: [], kind: 'app' }));
     const groupsPaid = all.filter(p => p.kind === 'groups' && p.rows.some(r => isOn(r.member.lastRenewed, today)));
@@ -131,6 +138,7 @@ export function createAppHandlers({ config, appSync, client, fleet, log }) {
     try { pays = await paymentsSince(dayStart(-back), back ? dayStart(1 - back) : new Date()); }
     catch (err) { return `❌ Could not reach the app: ${err.message}`; }
     const byPhone = await people();
+    pays = own(pays, byPhone);
     const appPaid = uniq(pays.map(x => byPhone.get(x.phone) || { phone: x.phone, name: '', bots: [], kind: 'app' }));
     const groupsPaid = [...byPhone.values()].filter(p => p.kind === 'groups' && p.rows.some(r => isOn(r.member.lastRenewed, today)));
     const firsts = new Set(pays.filter(x => x.first).map(x => x.phone));
@@ -160,10 +168,11 @@ export function createAppHandlers({ config, appSync, client, fleet, log }) {
   }
 
   async function handleAppStats() {
-    const all = [...(await people()).values()];
+    const byPhone = await people();
+    const all = [...byPhone.values()];
     const count = (k) => all.filter(p => p.kind === k).length;
     let week = [];
-    try { week = await paymentsSince(dayStart(-6)); } catch { /* counts still useful */ }
+    try { week = own(await paymentsSince(dayStart(-6)), byPhone); } catch { /* counts still useful */ }
     const sheetLines = fleet ? (await fleet.sheets()).map(({ bot, members }) => {
       const active = members.filter(m => m.status === 'ACTIVE');
       const onApp = active.filter(m => liveOnApp(appSync.snapshot().get(m.phone))).length;
