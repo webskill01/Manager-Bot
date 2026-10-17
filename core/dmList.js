@@ -2,6 +2,7 @@ import {
   daysFromToday, todayStr, friendlyDate, isDelayActive, renewedOn, parseDate,
   getReferralsInBillingPeriod, chunkByChars, MAX_CHARS_PER_MSG, pickVariant,
 } from './globalConfig.js';
+import { isAppFlow, appCohort } from './appFlow.js';
 
 // Re-exported for tests and for callers that already import them from here.
 export { chunkByChars, MAX_CHARS_PER_MSG };
@@ -36,6 +37,9 @@ export function pickStage(overdueDays, config) {
 function templateFor(stage, config, { referral, phone, seq }) {
   const m = config.messages || {};
   const pick = (v) => pickVariant(v, phone, undefined, seq);
+  if (stage.startsWith('app_')) {
+    return pick(m.appReminder?.[stage.slice(4)]) || 'Your app plan ends {date} — renew on the app to stay in the groups.';
+  }
   if (stage === 'msg3') return pick(m.finalReminder) || pick(m.overdue) || 'Renewal pending — please repay.';
   if (stage === 'msg2') return pick(m.overdue) || 'Your renewal date has passed — please repay.';
   return (referral && m.referralReminder) ? pick(m.referralReminder) : (pick(m.reminder) || 'Your renewal is due today.');
@@ -53,7 +57,8 @@ function templateFor(stage, config, { referral, phone, seq }) {
 export function dmRowFor(member, config, { stage = null, referral = false } = {}) {
   const d = daysFromToday(member.billingDate);
   const overdueDays = d === null ? 0 : Math.max(0, -d);
-  const chosen = stage || pickStage(overdueDays, config);
+  const app = isAppFlow(member, config);
+  const chosen = stage || (app ? `app_${appCohort(member) || 'due'}` : pickStage(overdueDays, config));
   const text = templateFor(chosen, config, { referral, phone: member.phone })
     .replace(/\{name\}/g, member.name)
     .replace(/\{date\}/g, friendlyDate(member.billingDate));
@@ -63,7 +68,7 @@ export function dmRowFor(member, config, { stage = null, referral = false } = {}
     billingDate: member.billingDate,
     overdueDays,
     stage: chosen,
-    fee: renewalFee(config, referral),
+    fee: app ? (config.app?.price ?? renewalFee(config, false)) : renewalFee(config, referral),
     text,
     link: `https://wa.me/91${member.phone}?text=${encodeURIComponent(text)}`,
   };
@@ -107,10 +112,35 @@ export function buildDmList({
   const rows = [];
   let seq = 0;   // rotation counter, advanced only for members who actually make the list
 
+  // App-flow cohorts. The app cuts access ON the expiry date, so these members are reminded
+  // before it (5 days, 2 days, the day) and never chased after — the morning after, they
+  // are removed. 'due' carries both flows: old-flow day-0 members and app-flow expiry-day
+  // members are the same "today is the day" list for the operator.
+  const appStages = { pre5: 'app_pre5', pre2: 'app_pre2', due: 'app_due' };
+
   for (const m of all) {
     if (m.status !== 'ACTIVE') continue;
     const d = daysFromToday(m.billingDate);
-    if (d === null || d > 0) continue;              // future billing — never chase early
+    if (d === null) continue;
+
+    if (isAppFlow(m, config, now)) {
+      if (billingDay !== null || appCohort(m) !== cohort) continue;
+      if (isDelayActive(m) || renewedOn(m, now)) continue;
+      const stage = appStages[cohort];
+      const text = templateFor(stage, config, { phone: m.phone, seq: seq++ })
+        .replace(/\{name\}/g, m.name)
+        .replace(/\{date\}/g, friendlyDate(m.billingDate));
+      rows.push({
+        name: m.name, phone: m.phone, billingDate: m.billingDate,
+        overdueDays: 0, daysLeft: d, stage,
+        fee: config.app?.price ?? renewalFee(config, false),
+        text,
+        link: `https://wa.me/91${m.phone}?text=${encodeURIComponent(text)}`,
+      });
+      continue;
+    }
+    if (cohort === 'pre5' || cohort === 'pre2') continue;   // old flow: never chase early
+    if (d > 0) continue;                            // future billing — never chase early
     const overdueDays = -d;
 
     if (billingDay !== null) {
@@ -202,6 +232,8 @@ function describe({ cohort, billingDay, config }) {
     const label = stop - n <= 1 ? `${n} days overdue` : `${n}-${stop - 1} days overdue`;
     return { label, empty: `✅ Nobody is ${label} — final notice.` };
   }
+  if (cohort === 'pre5') return { label: 'app plan ends in 5 days', empty: '✅ No app plan ends in 5 days.' };
+  if (cohort === 'pre2') return { label: 'app plan ends in 2 days', empty: '✅ No app plan ends in 2 days.' };
   return { label: 'due today', empty: '✅ Nobody is due today.' };
 }
 
@@ -215,7 +247,7 @@ export function renderDmList({ rows, stageForced, cohort = 'due', billingDay = n
     `\nTap a link → message is pre-typed → hit send.\n━━━━━━━━━━━━━━━━━━━`;
 
   const lines = rows.map((r, i) => {
-    const age = r.overdueDays === 0 ? 'due today' : `${r.overdueDays}d overdue`;
+    const age = r.daysLeft > 0 ? `${r.daysLeft}d left` : r.overdueDays === 0 ? 'due today' : `${r.overdueDays}d overdue`;
     return `${String(i + 1).padStart(3)}. ${r.name} · ₹${r.fee} · ${age}\n${r.link}`;
   });
 

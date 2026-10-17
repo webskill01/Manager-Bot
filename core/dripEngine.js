@@ -216,6 +216,11 @@ export function flexFirstDelayMs(remaining, now, settings, rand = Math.random) {
 // mid-day payment drop someone automatically, with no reconciliation step and no stale queue
 // to corrupt across a restart. `seen` also spans cohorts, so a member who straddles two
 // windows on a tight ladder still gets exactly one link.
+// Queue order. App-flow 'pre2' sits right behind 'due' — two days out is the last reminder
+// before expiry-day, so it is pinned like the ladder. 'pre5' is early and can slip a day
+// without harm (pre2 still follows), so it goes with 'missed' at the back.
+export const COHORTS = ['due', 'pre2', 'nudge', 'final', 'pre5', 'missed'];
+
 export function buildDripBatch({
   members, config, pushed = [], contactLog = {}, now = todayStr(), max = 3,
 }) {
@@ -242,7 +247,7 @@ export function buildDripBatch({
   // a nudge tomorrow; a missed day-6 member is already a decision (the removal list), which
   // `overdue`/`kickall` handle. Follow-ups are the lower-value half of the queue, so they
   // are the half that gets squeezed.
-  for (const cohort of ['due', 'nudge', 'final', 'missed']) {
+  for (const cohort of COHORTS) {
     if (batch.length >= max) break;
     const { rows } = buildDmList({ members, config, cohort, contactLog, now });
     const row = rows.find(r => !seen.has(String(r.phone)));
@@ -258,8 +263,8 @@ export function buildDripBatch({
 // log said the other 49 were a backlog rather than a runaway.
 export function countByCohort({ members, config, pushed = [], contactLog = {} }) {
   const seen = new Set(pushed.map(String));
-  const out = { due: 0, nudge: 0, final: 0, missed: 0 };
-  for (const cohort of ['due', 'nudge', 'final', 'missed']) {
+  const out = Object.fromEntries(COHORTS.map(c => [c, 0]));
+  for (const cohort of COHORTS) {
     for (const r of buildDmList({ members, config, cohort, contactLog }).rows) {
       if (seen.has(String(r.phone))) continue;
       seen.add(String(r.phone));
@@ -280,8 +285,10 @@ export function describeQueue(split) {
   const total = Object.values(split).reduce((a, b) => a + b, 0);
   const parts = [
     split.due && `${split.due} due`,
+    split.pre2 && `${split.pre2} app 2d`,
     split.nudge && `${split.nudge} nudge`,
     split.final && `${split.final} final`,
+    split.pre5 && `${split.pre5} app 5d`,
     split.missed && `${split.missed} missed`,
   ].filter(Boolean);
   return parts.length > 1 ? `${total} (${parts.join(', ')})` : String(total);
@@ -293,7 +300,7 @@ export function describeQueue(split) {
 export function buildDripQueue({ members, config, pushed = [], contactLog = {}, now = todayStr() }) {
   const seen = new Set(pushed.map(String));
   const queue = [];
-  for (const cohort of ['due', 'nudge', 'final', 'missed']) {
+  for (const cohort of COHORTS) {
     for (const r of buildDmList({ members, config, cohort, contactLog, now }).rows) {
       if (seen.has(String(r.phone))) continue;
       seen.add(String(r.phone));
@@ -359,7 +366,14 @@ export function planTimes(queue, settings, { from = new Date(), endHour } = {}) 
   });
 }
 
-const STAGE_LABEL = { msg1: 'due today', msg2: 'overdue', msg3: 'FINAL notice' };
+const STAGE_LABEL = {
+  msg1: 'due today', msg2: 'overdue', msg3: 'FINAL notice',
+  app_pre5: 'app · 5d left', app_pre2: 'app · 2d left', app_due: 'app · ends today',
+};
+
+// "3d left" for an app-flow reminder, "due today" / "4d overdue" for the old ladder.
+const ageOf = (r, over = 'overdue') =>
+  (r.daysLeft > 0 ? `${r.daysLeft}d left` : r.overdueDays === 0 ? 'due today' : `${r.overdueDays}d ${over}`);
 
 // A missed member carries msg1 — it IS their first message — but they are not due today, and
 // `due today · Vikram · 3d overdue` on one line is how the queue stopped making sense from the
@@ -369,7 +383,7 @@ const labelFor = (r) => (r.stage === 'msg1' && r.overdueDays > 0 ? 'missed' : ST
 export function renderDripBatch(batch, remaining) {
   const lines = [`📤 *Send these now* — ${friendlyDate()}`, ''];
   for (const r of batch) {
-    const age = r.overdueDays === 0 ? 'due today' : `${r.overdueDays}d overdue`;
+    const age = ageOf(r);
     lines.push(`${labelFor(r)} · ${r.name} · ₹${r.fee} · ${age}`);
     lines.push(r.link);
     lines.push('');
@@ -432,7 +446,7 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     await notify(
       `📤 *Send it yourself* — the bot could not reach them\n` +
       `${labelFor(row)} · ${row.name} · ₹${row.fee} · ` +
-      `${row.overdueDays === 0 ? 'due today' : `${row.overdueDays}d overdue`}\n` +
+      `${ageOf(row)}\n` +
       `_${reason}_\n\n${row.link}` +
       (needsQr(row, firstContact(row)) ? '\n\n📷 Attach the QR — they have not had one this month.' : ''));
     log.info(`📤 Handed ${row.name} (${row.phone}) to the operator — ${reason}`);
@@ -634,6 +648,9 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   // Their billingDate is the cycle id: it moves forward the moment they renew, so next
   // month's first message carries a QR again with nothing to reset or expire.
   function needsQr(row, firstContactThisCycle) {
+    // App-flow members pay inside the app. A UPI QR would be a second way to pay — the very
+    // thing they are being told not to use.
+    if (String(row.stage).startsWith('app_')) return false;
     if (loadQrLog()[String(row.phone)]?.qr === row.billingDate) return false;
     return row.stage === 'msg1' || firstContactThisCycle;
   }
@@ -1292,7 +1309,7 @@ ${detail || ''}
       const cyc = qrLog[String(r.phone)] || {};
       const qr = (cyc.qr !== r.billingDate && (r.stage === 'msg1' || cyc.cycle !== r.billingDate))
         ? ' 📷' : '';
-      const age = r.overdueDays === 0 ? 'due today' : `${r.overdueDays}d over`;
+      const age = ageOf(r, 'over');
       return `${String(i + 1).padStart(3)}. ~${t}  ${labelFor(r)} · ${r.name} · ₹${r.fee} · ${age}${qr}`;
     };
 
