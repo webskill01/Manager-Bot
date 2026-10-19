@@ -29,7 +29,7 @@ test('phone formats collapse to one person across sources', () => {
   const people = buildPeople({
     sheets: { 'bot-abhi': [m('9876543210', 'ACTIVE')], 'bot-nitin': [m('9876543210', 'REMOVED')] },
     allNumbers: [['+91 98765 43210', 'X'], [919876543210, 'Y'], ['', 'blank row']],
-    app: [{ phone: '919876543210', status: 'active', expiresAt: future, paidCount: 1 }],
+    app: [{ phone: '919876543210', status: 'active', expiresAt: future, paidCount: 1, lastPaidAt: new Date().toISOString() }],
   });
   assert.equal(people.size, 1);
   const p = people.get('9876543210');

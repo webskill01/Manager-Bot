@@ -112,3 +112,14 @@ test('PINs are 4 digits; admin resets a PIN; the recovery PIN forces a new one',
   const again = await login('Nitin', 'first-pin-123');
   assert.equal((await again.res.json()).mustSetPassword, true, 'recovery clears the old PIN');
 });
+
+test('app filter narrows the queue; drawer and focus get the same person shape', async () => {
+  const { cookie } = await login('Riya', '9999');
+  const none = await (await call('/queue?app=none', { cookie })).json();
+  assert.equal(none.rows.length, 2);
+  assert.equal((await (await call('/queue?app=signed_up', { cookie })).json()).rows.length, 0);
+  const p = await (await call('/person/9876543211', { cookie })).json();
+  assert.equal(p.row.phone, '9876543211');
+  assert.equal(p.appState, 'none');
+  assert.equal(p.memberships[0].days, -1);
+});

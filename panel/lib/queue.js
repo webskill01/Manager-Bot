@@ -16,7 +16,7 @@ const REASON_RANK = { followup: 0, overdue: 1, due: 2, upcoming: 3 };
 
 const startOfDay = (now) => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d; };
 
-// filter: { view: 'today' | 'range', from?, to? (DD-MM-YYYY), bot?, status?, assignee? ('me'|'none'|id), userId? }
+// filter: { view: 'today' | 'range', from?, to? (DD-MM-YYYY), bot?, status?, app? (appState), assignee? ('me'|'none'|id), userId? }
 // price: what they pay on the app (₹149); the goal is moving them there, not renewing in groups.
 export function buildQueue({ people, botCfg, price = 0, interactions = [], followups = [], assignments = [], claims = [], filter = {}, now = new Date() }) {
   const nowIso = new Date(now).toISOString();
@@ -32,7 +32,7 @@ export function buildQueue({ people, botCfg, price = 0, interactions = [], follo
 
   const rows = [];
   for (const p of people.values()) {
-    if (p.onApp || !p.active.length) continue;
+    if (p.onApp || !p.active.length || (filter.app && filter.app !== p.appState)) continue;
     const fu = fuBy.get(p.phone) || null;
     const fuDue = !!fu && fu.due_at <= nowIso;
 

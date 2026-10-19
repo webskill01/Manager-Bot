@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, qs } from '../api.js';
 import { go } from '../App.jsx';
-import { APP_STATES, REASONS, inr, num, shortDate, daysLabel, botLabel, when } from '../format.js';
-import { Badge, Button, Card, Empty, Loading, useToast } from '../ui.jsx';
-import { CallForm, ContactButtons, Timeline } from './Person.jsx';
+import { num } from '../format.js';
+import { Button, Card, Empty, Loading, useToast } from '../ui.jsx';
+import { PersonBody } from './Person.jsx';
 
 // One person at a time. The server claims them for 10 minutes and re-checks the sheet and
 // the app first, so someone who just paid on the app is skipped instead of being called.
@@ -48,46 +48,12 @@ export default function Focus({ query }) {
         </Card>
       ) : (
         <Card className="p-5 sm:p-6">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2 mb-1">
-                <Badge tone={REASONS[row.reason].tone}>{REASONS[row.reason].label}</Badge>
-                <Badge tone={APP_STATES[row.appState]?.tone}>{APP_STATES[row.appState]?.label}</Badge>
-                <span className="text-xs text-ink-40">{done + 1} of {total}</span>
-              </div>
-              <h1 className="text-2xl font-semibold truncate">{row.name || row.phone}</h1>
-              <p className="text-sm text-ink-60 mt-1">
-                {botLabel(row.bot)}{row.alsoOn.length > 0 && ` + ${row.alsoOn.map(botLabel).join(', ')}`} · billing {shortDate(row.billingDate)} · <span className={row.days < 0 ? 'text-bad font-medium' : ''}>{daysLabel(row.days)}</span>
-              </p>
-            </div>
-            <div className="text-right shrink-0">
-              <div className="text-xs text-ink-40">App plan</div>
-              <div className="text-2xl font-semibold tabular-nums">{inr(row.amount)}</div>
-            </div>
-          </div>
-
-          {row.followup && (
-            <div className="mt-4 rounded-lg bg-brand-sky text-brand-deep text-sm px-3 py-2">
-              {row.followup.kind === 'promise' ? 'Promised to move by' : 'Asked for a call back at'} {when(row.followup.due_at)}
-            </div>
-          )}
-
-          <div className="mt-5"><ContactButtons phone={row.phone} size="lg" /></div>
-
-          <div className="mt-6 pt-5 border-t border-line">
-            <CallForm key={row.phone} phone={row.phone} bot={row.bot} onDone={advance} />
-          </div>
-
-          <div className="mt-3 flex justify-end">
+          <div className="flex items-center justify-between mb-3 text-xs text-ink-40">
+            <span>{done + 1} of {total}</span>
             <Button variant="ghost" size="sm" icon="skip" onClick={skip}>Skip for now</Button>
           </div>
-
-          {cur.timeline?.length > 0 && (
-            <div className="mt-5 pt-5 border-t border-line">
-              <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-40 mb-3">Earlier calls</h3>
-              <Timeline items={cur.timeline} users={cur.users} />
-            </div>
-          )}
+          <PersonBody p={cur.person} onDone={advance}
+            onChanged={() => api(`/person/${row.phone}`).then(person => setCur(c => ({ ...c, person })), () => {})} />
         </Card>
       )}
     </div>

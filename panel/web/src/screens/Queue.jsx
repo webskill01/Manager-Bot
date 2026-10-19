@@ -9,7 +9,8 @@ export default function Queue() {
   const me = useMe();
   const toast = useToast();
   const [dates, setDates] = useStored('q.dates', { preset: 'today' });
-  const [f, setF] = useStored('q.filter', { bot: '', status: '', assignee: '' });
+  const [f, setF] = useStored('q.filter.v2', { bot: '', status: 'due', app: '', assignee: '' });
+  const [sort, setSort] = useStored('q.sort', 'priority');
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(null);
   const [sel, setSel] = useState(new Set());
@@ -34,7 +35,7 @@ export default function Queue() {
     } catch (e) { toast(e.message, 'bad'); }
   };
   const toggle = (phone) => setSel(s => { const n = new Set(s); n.has(phone) ? n.delete(phone) : n.add(phone); return n; });
-  const rows = data?.rows || [];
+  const rows = useMemo(() => sortRows(data?.rows || [], sort), [data, sort]);
   const allSel = rows.length > 0 && rows.every(r => sel.has(r.phone));
 
   return (
@@ -45,8 +46,8 @@ export default function Queue() {
       </PageHead>
 
       {/* phones: date strip full width, then the three filters in one row */}
-      <div className="grid grid-cols-3 sm:flex sm:flex-wrap items-center gap-2 mb-4">
-        <div className="col-span-3 sm:col-auto"><DateFilter value={dates} onChange={setDates} /></div>
+      <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 mb-4">
+        <div className="col-span-2 sm:col-auto"><DateFilter value={dates} onChange={setDates} /></div>
         <Select value={f.bot} onChange={e => setF({ ...f, bot: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="Bot">
           <option value="">All bots</option>
           {me.bots.map(b => <option key={b} value={b}>{botLabel(b)}</option>)}
@@ -55,11 +56,18 @@ export default function Queue() {
           <option value="">Any status</option>
           {Object.entries(REASONS).map(([k, r]) => <option key={k} value={k}>{r.label}</option>)}
         </Select>
+        <Select value={f.app} onChange={e => setF({ ...f, app: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="App status">
+          <option value="">Any app status</option>
+          {['signed_up', 'lapsed', 'none'].map(k => <option key={k} value={k}>{APP_STATES[k].label}</option>)}
+        </Select>
         <Select value={f.assignee} onChange={e => setF({ ...f, assignee: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="Assignee">
           <option value="">{isAdmin ? 'Everyone' : 'Shared + mine'}</option>
           <option value="me">Assigned to me</option>
           <option value="none">Unassigned</option>
           {isAdmin && data && Object.entries(data.users).filter(([id]) => Number(id) !== me.id).map(([id, n]) => <option key={id} value={id}>{n}</option>)}
+        </Select>
+        <Select value={sort} onChange={e => setSort(e.target.value)} className="h-9 w-full sm:w-auto min-w-0" aria-label="Sort">
+          {Object.entries(SORTS).map(([k, [label]]) => <option key={k} value={k}>Sort: {label}</option>)}
         </Select>
       </div>
 
@@ -146,6 +154,20 @@ export default function Queue() {
       <PersonDrawer phone={open} onClose={() => setOpen(null)} onChanged={load} />
     </>
   );
+}
+
+// List order only; Start calling keeps the server's priority order (follow-ups first).
+const APP_RANK = { signed_up: 0, lapsed: 1, none: 2 };
+const SORTS = {
+  priority: ['Priority', null],
+  overdue: ['Most overdue', (a, b) => a.days - b.days],
+  app: ['App status', (a, b) => APP_RANK[a.appState] - APP_RANK[b.appState] || a.days - b.days],
+  lastCall: ['Longest since a call', (a, b) => (a.last?.at || '').localeCompare(b.last?.at || '')],
+  name: ['Name', (a, b) => (a.name || '~').localeCompare(b.name || '~')],
+};
+function sortRows(rows, sort) {
+  const cmp = SORTS[sort]?.[1];
+  return cmp ? [...rows].sort((a, b) => (a.blocked ? 1 : 0) - (b.blocked ? 1 : 0) || cmp(a, b)) : rows;
 }
 
 function Status({ r, users, me }) {

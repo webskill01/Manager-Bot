@@ -3,7 +3,7 @@ import { buildQueue, focusOrder } from './lib/queue.js';
 import { attribute, team, ageing, funnel, recoveredByDay, byBot } from './lib/stats.js';
 import { OUTCOMES } from './lib/db.js';
 import { hashPw, checkPw, newToken, tokenHash, validPin, createRateLimit } from './lib/auth.js';
-import { normalizePhone, parseDate, formatDate } from '../core/globalConfig.js';
+import { normalizePhone, parseDate, formatDate, daysFromToday } from '../core/globalConfig.js';
 import crypto from 'node:crypto';
 
 const COOKIE = 'ecp_s';
@@ -70,6 +70,7 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     }
     if (q.bot && botCfg[q.bot]) f.bot = q.bot;
     if (['followup', 'overdue', 'due', 'upcoming'].includes(q.status)) f.status = q.status;
+    if (['lapsed', 'signed_up', 'none'].includes(q.app)) f.app = q.app;
     if (q.assignee === 'me' || q.assignee === 'none') f.assignee = q.assignee;
     else if (/^\d+$/.test(q.assignee || '')) f.assignee = Number(q.assignee);
     return f;
@@ -199,7 +200,7 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
         exclude.add(next.phone);
         continue;
       }
-      return res.json({ row: fresh, remaining: order.length, timeline: db.timeline(next.phone).slice(0, 5), users: names(), skipped });
+      return res.json({ row: fresh, person: personJson(person, req.user), remaining: order.length, skipped });
     }
     res.json({ row: null, remaining: 0, skipped, busy: true });
   });
@@ -211,24 +212,33 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     if (!p) return res.status(404).json({ error: 'Not found' });
     const assignment = db.assignments().find(a => a.phone === phone) || null;
     if (req.user.role !== 'admin' && assignment && assignment.user_id !== req.user.id) return res.status(403).json({ error: 'Assigned to someone else' });
-    res.json({
+    res.json(personJson(p, req.user));
+  });
+
+  // One shape for the person drawer and Start calling, so both screens show the same thing.
+  function personJson(p, user) {
+    const phone = p.phone;
+    return {
       phone,
+      row: queue({ view: 'today' }, user, new Map([[phone, p]]))[0] || null,
+      price: env.appPrice,
       name: p.name,
       memberships: p.members.map(({ bot, member }) => ({
         bot, status: member.status, billingDate: member.billingDate, joinDate: member.joinDate,
         renewals: member.renewals, paidLast: member.paidLast, lastRenewed: member.lastRenewed,
         amount: botCfg[bot]?.renewal?.fullAmount ?? null, delayUntil: member.delayUntil, carNo: member.carNo,
+        days: daysFromToday(member.billingDate),
       })),
       app: p.app ? { status: p.app.status, expiresAt: p.app.expiresAt, lastPaidAt: p.app.lastPaidAt, paidCount: p.app.paidCount } : null,
       onApp: p.onApp,
       appState: p.appState,
       lead: p.lead,
       followup: db.openFollowups().find(f => f.phone === phone) || null,
-      assignedTo: assignment?.user_id ?? null,
+      assignedTo: db.assignments().find(a => a.phone === phone)?.user_id ?? null,
       timeline: db.timeline(phone),
       users: names(),
-    });
-  });
+    };
+  }
 
   r.post('/person/:phone/interaction', (req, res) => {
     const phone = phoneParam(req, res);
