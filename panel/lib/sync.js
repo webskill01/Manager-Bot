@@ -95,7 +95,7 @@ export function createSync({ env, botCfg, db, log = console }) {
   }
 
   function rebuild() {
-    const next = buildPeople({ sheets: data.sheets, app: [...data.app.values()], allNumbers: data.allNumbers });
+    const next = buildPeople({ sheets: data.sheets, app: [...data.app.values()], allNumbers: data.allNumbers, launch: env.appLaunch });
     const since = new Date(Date.now() - PAYMENT_DEDUPE_MS);
     for (const pay of detectPayments(people, next, botCfg)) {
       if (db.auditByAction('payment_seen', since, new Date(Date.now() + 1000)).some(a => a.target === pay.phone)) continue;

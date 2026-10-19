@@ -10,15 +10,15 @@ import { liveOnApp } from '../../core/handlers/appHandlers.js';
 //
 // Person = { phone, name, members: [{bot, member}], active: [{bot, member}],
 //            app, paidOnApp, appState, onApp, lead: null | { exMember } }
-// appState, from the app's payment count (not its status: the app marks some free/manual plans
-// "active" with no payment behind them):
+// appState, from the app's payments since launch (not its status: the app marks some free/manual
+// plans "active" with no payment behind them):
 //   member    paid on the app and the plan is running: moved, the panel's job is done (onApp)
 //   lapsed    paid on the app before, plan ran out
 //   signed_up has an app account, never paid
 //   none      not on the app
 // `lead` is set only for ALL_NUMBERS phones that are ACTIVE on no bot: those are the
 // people still to pitch. exMember names their old bot(s) so a caller knows the history.
-export function buildPeople({ sheets = {}, app = [], allNumbers = [], now = new Date().toISOString() }) {
+export function buildPeople({ sheets = {}, app = [], allNumbers = [], launch = '', now = new Date().toISOString() }) {
   const people = new Map();
   const get = (raw) => {
     const phone = normalizePhone(raw ?? '');
@@ -48,7 +48,8 @@ export function buildPeople({ sheets = {}, app = [], allNumbers = [], now = new 
 
   for (const p of people.values()) {
     p.paidOnApp = liveOnApp(p.app, now);
-    const paid = (p.app?.paidCount || 0) > 0;
+    // Payments before the app's public launch were tests/beta: they don't count (matches the app's own panel).
+    const paid = (p.app?.paidCount || 0) > 0 && (p.app.lastPaidAt || '') >= launch;
     p.appState = !p.app ? 'none' : !paid ? 'signed_up' : (p.app.expiresAt || '') > now ? 'member' : 'lapsed';
     p.onApp = p.appState === 'member';
     p.name = (p.active[0] || p.members[0])?.member.name || leadNames.get(p.phone) || '';

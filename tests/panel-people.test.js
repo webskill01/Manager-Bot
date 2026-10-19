@@ -58,10 +58,12 @@ test('app state comes from payments, not the app status', () => {
     ['9000000013', { status: 'active', paidCount: 2, expiresAt: gone }, 'lapsed'],
     ['9000000014', { status: 'expired', paidCount: 0 }, 'signed_up'],
     ['9000000015', null, 'none'],
+    ['9000000016', { status: 'active', paidCount: 3, expiresAt: live, lastPaidAt: '2026-09-21T18:10:49Z' }, 'signed_up'],   // paid only before launch
   ];
   const people = buildPeople({
     sheets: { 'bot-abhi': cases.map(([ph]) => m(ph, 'ACTIVE')) },
-    app: cases.filter(c => c[1]).map(([phone, r]) => ({ phone, ...r })),
+    app: cases.filter(c => c[1]).map(([phone, r]) => ({ lastPaidAt: '2026-10-16T10:00:00Z', ...r, phone })),
+    launch: '2026-10-14T18:30:00.000Z',
   });
   for (const [ph, , want] of cases) {
     assert.equal(people.get(ph).appState, want, ph);

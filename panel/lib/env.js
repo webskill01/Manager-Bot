@@ -45,6 +45,8 @@ export function loadEnv(file = path.join(PANEL_DIR, '.env'), env = process.env) 
     adminName: vars.PANEL_ADMIN_NAME || 'admin',
     pin,
     appPrice: parseInt(vars.PANEL_APP_PRICE || '149', 10),
+    // IST midnight of the launch day, as an ISO instant comparable with the app's lastPaidAt
+    appLaunch: new Date(`${vars.PANEL_APP_LAUNCH || '2026-10-15'}T00:00:00+05:30`).toISOString(),
     dbFile: path.resolve(PANEL_DIR, vars.PANEL_DB || 'panel.db'),
     syncMs: parseInt(vars.PANEL_SYNC_MS || '120000', 10),
   });
