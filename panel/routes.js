@@ -85,13 +85,13 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     // Callers see the shared queue and their own work, never a colleague's assignments.
     return user.role === 'admin' ? rows : rows.filter(r => r.assignedTo === null || r.assignedTo === user.id);
   }
-  // Group members (on any bot sheet) by app state. onApp = paying app members; groupsOnly =
+  // Group members (on any bot sheet) by app state, plus every paying app member. groupsOnly =
   // still ACTIVE in a group and not paying on the app (lapsed, signed up or not on it).
   function migration() {
     const n = { member: 0, lapsed: 0, signed_up: 0, none: 0 };
     let groupsOnly = 0;
     for (const p of sync.people().values()) {
-      if (!p.members.length) continue;
+      if (!p.members.length && !p.onApp) continue;   // every paying app member counts, even if on no bot sheet
       n[p.appState]++;
       if (!p.onApp && p.active.length) groupsOnly++;
     }
