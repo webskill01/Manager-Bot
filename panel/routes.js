@@ -238,7 +238,7 @@ export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) 
     const mine = req.query.mine === '1' || req.user.role !== 'admin';
     const rows = db.openFollowups()
       .filter(f => !mine || f.user_id === req.user.id)
-      .map(f => ({ ...f, name: people.get(f.phone)?.name || '', bot: people.get(f.phone)?.active[0]?.bot || '' }));
+      .map(f => ({ ...f, name: people.get(f.phone)?.name || '', bot: people.get(f.phone)?.active[0]?.bot || '', note: db.timeline(f.phone)[0]?.note || '' }));
     res.json({ rows, users: names() });
   });
 
@@ -338,8 +338,11 @@ export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) 
   app.use('/api', r);
   app.use('/api', (req, res) => res.status(404).json({ error: 'Not found' }));
   if (staticDir) {
-    app.use(express.static(staticDir, { index: 'index.html', maxAge: '1h' }));
-    app.get('*', (req, res) => res.sendFile('index.html', { root: staticDir }));
+    // Hashed assets cache for a year; index.html never, so a deploy shows up on the next load.
+    const noCache = (res) => res.set('Cache-Control', 'no-cache');
+    app.use('/assets', express.static(`${staticDir}/assets`, { maxAge: '1y', immutable: true }));
+    app.use(express.static(staticDir, { setHeaders: (res, file) => file.endsWith('.html') && noCache(res) }));
+    app.get('*', (req, res) => { noCache(res); res.sendFile('index.html', { root: staticDir }); });
   }
   app.use((err, req, res, next) => {   // eslint-disable-line no-unused-vars
     console.error('panel error:', err);
