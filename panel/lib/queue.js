@@ -17,7 +17,8 @@ const REASON_RANK = { followup: 0, overdue: 1, due: 2, upcoming: 3 };
 const startOfDay = (now) => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d; };
 
 // filter: { view: 'today' | 'range', from?, to? (DD-MM-YYYY), bot?, status?, assignee? ('me'|'none'|id), userId? }
-export function buildQueue({ people, botCfg, interactions = [], followups = [], assignments = [], claims = [], filter = {}, now = new Date() }) {
+// price: what they pay on the app (₹149); the goal is moving them there, not renewing in groups.
+export function buildQueue({ people, botCfg, price = 0, interactions = [], followups = [], assignments = [], claims = [], filter = {}, now = new Date() }) {
   const nowIso = new Date(now).toISOString();
   const dayStart = startOfDay(now).toISOString();
   const byPhone = (list) => list.reduce((m, x) => m.set(x.phone, [...(m.get(x.phone) || []), x]), new Map());
@@ -31,7 +32,7 @@ export function buildQueue({ people, botCfg, interactions = [], followups = [], 
 
   const rows = [];
   for (const p of people.values()) {
-    if (p.paidOnApp || !p.active.length) continue;
+    if (p.onApp || !p.active.length) continue;
     const fu = fuBy.get(p.phone) || null;
     const fuDue = !!fu && fu.due_at <= nowIso;
 
@@ -64,7 +65,8 @@ export function buildQueue({ people, botCfg, interactions = [], followups = [], 
       name: p.name,
       bot,
       alsoOn: hits.slice(1).map(h => h.bot),
-      amount: botCfg[bot].renewal?.fullAmount ?? 0,
+      amount: price,
+      appState: p.appState,
       billingDate: member.billingDate,
       days,
       reason,

@@ -63,6 +63,9 @@ export function openDb(file) {
       }
       if (pwHash !== undefined) q('UPDATE users SET pw_hash = ? WHERE id = ?').run(pwHash, id);
     },
+    dropSessions(userId) {
+      q('DELETE FROM sessions WHERE user_id = ?').run(userId);
+    },
     addSession: (hash, userId, expires) => q('INSERT INTO sessions VALUES (?,?,?)').run(hash, userId, iso(expires)),
     dropSession: (hash) => q('DELETE FROM sessions WHERE token_hash = ?').run(hash),
     sessionUser(hash) {

@@ -19,9 +19,8 @@ export function checkPw(pw, stored) {
 export const newToken = () => crypto.randomBytes(32).toString('base64url');
 export const tokenHash = (t) => crypto.createHash('sha256').update(String(t)).digest('hex');
 
-export function validPassword(pw) {
-  return typeof pw === 'string' && pw.length >= 8 && pw.length <= 200;
-}
+// 4-digit PIN. ponytail: only 10k values, so login is also rate-limited per name, not just per IP.
+export const validPin = (pin) => typeof pin === 'string' && /^\d{4}$/.test(pin);
 
 // Failed logins per key (client IP). ponytail: in-memory, resets on restart — fine for one process.
 export function createRateLimit({ max = 5, windowMs = 15 * 60e3, now = Date.now } = {}) {

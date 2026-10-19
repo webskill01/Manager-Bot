@@ -77,8 +77,8 @@ function Sidebar({ nav, path, me, onLogout }) {
       <div className="flex items-center gap-3 px-5 h-16 border-b border-line">
         <Logo />
         <div className="leading-tight">
-          <div className="font-semibold text-sm">EaseCab</div>
-          <div className="text-xs text-ink-60">Recovery Panel</div>
+          <div className="font-semibold text-sm">Panel</div>
+          <div className="text-xs text-ink-60">EaseCab team</div>
         </div>
       </div>
       <nav className="flex-1 p-3 space-y-1">
@@ -98,7 +98,7 @@ function Sidebar({ nav, path, me, onLogout }) {
             <div className="text-sm font-medium truncate">{me.name}</div>
             <div className="text-xs text-ink-60 capitalize">{me.role}</div>
           </div>
-          <Button variant="ghost" size="sm" icon="key" onClick={() => setPw(true)} aria-label="Change password" title="Change password" />
+          <Button variant="ghost" size="sm" icon="key" onClick={() => setPw(true)} aria-label="Change PIN" title="Change PIN" />
           <Button variant="ghost" size="sm" icon="logout" onClick={logout} aria-label="Sign out" title="Sign out" />
         </div>
       </div>
@@ -113,14 +113,14 @@ function TopBar({ me, onLogout }) {
   const logout = async () => { await api('/logout', { method: 'POST' }).catch(() => {}); onLogout(); };
   return (
     <header className="lg:hidden sticky top-0 z-30 flex items-center justify-between h-14 px-4 bg-white/95 backdrop-blur border-b border-line">
-      <div className="flex items-center gap-2.5"><Logo className="w-7 h-7" /><span className="font-semibold text-sm">EaseCab Recovery</span></div>
+      <div className="flex items-center gap-2.5"><Logo className="w-7 h-7" /><span className="font-semibold text-sm">Panel</span></div>
       <div className="relative">
         <button type="button" onClick={() => setMenu(m => !m)} aria-label="Account"
           className="w-8 h-8 rounded-full bg-brand-sky text-brand-deep grid place-items-center text-sm font-semibold">{me.name[0].toUpperCase()}</button>
         {menu && (
           <div className="absolute right-0 mt-2 w-52 bg-white border border-line rounded-xl shadow-lg p-1 text-sm">
             <div className="px-3 py-2 border-b border-line mb-1"><div className="font-medium">{me.name}</div><div className="text-xs text-ink-60 capitalize">{me.role}</div></div>
-            <button type="button" className="w-full text-left px-3 py-2 rounded-lg hover:bg-bg" onClick={() => { setMenu(false); setPw(true); }}>Change password</button>
+            <button type="button" className="w-full text-left px-3 py-2 rounded-lg hover:bg-bg" onClick={() => { setMenu(false); setPw(true); }}>Change PIN</button>
             <button type="button" className="w-full text-left px-3 py-2 rounded-lg hover:bg-bg text-bad" onClick={logout}>Sign out</button>
           </div>
         )}
@@ -164,20 +164,20 @@ function SetPassword({ open, forced, onDone }) {
     setBusy(true);
     try {
       await api('/password', { method: 'POST', body: { old, password: pw } });
-      toast('Password saved');
+      toast('PIN saved');
       setOld(''); setPw('');
       onDone();
     } catch (err) { toast(err.message, 'bad'); } finally { setBusy(false); }
   };
   return (
-    <Modal open={open} onClose={forced ? () => {} : onDone} title={forced ? 'Set your password' : 'Change password'}>
-      {forced && <p className="text-sm text-ink-60 mb-4">You signed in with the setup PIN. Choose a password for next time.</p>}
+    <Modal open={open} onClose={forced ? () => {} : onDone} title={forced ? 'Set your PIN' : 'Change PIN'}>
+      {forced && <p className="text-sm text-ink-60 mb-4">Choose a 4-digit PIN for signing in next time.</p>}
       <form onSubmit={save} className="space-y-3">
-        {!forced && me && <Field label="Current password"><input type="password" className={inputCls} value={old} onChange={e => setOld(e.target.value)} autoComplete="current-password" /></Field>}
-        <Field label="New password" hint="At least 8 characters"><input type="password" className={inputCls} value={pw} onChange={e => setPw(e.target.value)} autoComplete="new-password" minLength={8} required autoFocus /></Field>
+        {!forced && me && <Field label="Current PIN"><input type="password" inputMode="numeric" pattern="\d{4}" maxLength={4} className={inputCls} value={old} onChange={e => setOld(e.target.value)} autoComplete="current-password" /></Field>}
+        <Field label="New PIN" hint="4 digits"><input type="password" inputMode="numeric" pattern="\d{4}" maxLength={4} className={inputCls} value={pw} onChange={e => setPw(e.target.value.replace(/\D/g, ''))} autoComplete="new-password" required autoFocus /></Field>
         <div className="flex justify-end gap-2 pt-2">
           {!forced && <Button variant="secondary" onClick={onDone}>Cancel</Button>}
-          <Button type="submit" disabled={busy || pw.length < 8}>Save password</Button>
+          <Button type="submit" disabled={busy || pw.length !== 4}>Save PIN</Button>
         </div>
       </form>
     </Modal>

@@ -188,26 +188,26 @@ export function dateText(v) {
 }
 
 export function DateFilter({ value, onChange }) {
-  const presets = [['today', 'Today'], ['yesterday', 'Yesterday'], ['tomorrow', 'Tomorrow'], ['day', 'Pick a day'], ['range', 'Range']];
+  const presets = [['today', 'Today'], ['yesterday', 'Yesterday'], ['tomorrow', 'Tomorrow'], ['day', 'Day'], ['range', 'Range']];
   const set = (patch) => onChange({ ...value, ...patch });
   const pick = (preset) => set({ preset, from: value.from || dmy(), to: value.to || dmy() });
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <div className="inline-flex rounded-lg border border-line bg-white p-0.5 overflow-x-auto max-w-full">
+    <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+      <div className="flex w-full sm:w-auto rounded-lg border border-line bg-white p-0.5">
         {presets.map(([k, label]) => (
           <button key={k} type="button" onClick={() => pick(k)}
-            className={cx('h-8 px-3 rounded-md text-xs font-medium whitespace-nowrap transition', value.preset === k ? 'bg-brand-sky text-brand-deep' : 'text-ink-60 hover:text-ink')}>
+            className={cx('h-8 flex-1 sm:flex-none px-1.5 sm:px-3 rounded-md text-xs font-medium whitespace-nowrap transition', value.preset === k ? 'bg-brand-sky text-brand-deep' : 'text-ink-60 hover:text-ink')}>
             {label}
           </button>
         ))}
       </div>
       {(value.preset === 'day' || value.preset === 'range') && (
-        <input type="date" aria-label="From" className={cx(inputCls.replace('w-full ', ''), 'h-9')} value={toIso(value.from)} max={isoDay(addDays(60))}
+        <input type="date" aria-label="From" className={cx(inputCls.replace('w-full ', ''), 'h-9 flex-1 min-w-0 sm:flex-none')} value={toIso(value.from)} max={isoDay(addDays(60))}
           onChange={e => e.target.value && set({ from: toDmy(e.target.value), to: value.preset === 'day' ? toDmy(e.target.value) : value.to })} />
       )}
       {value.preset === 'range' && <>
         <span className="text-ink-40 text-sm">to</span>
-        <input type="date" aria-label="To" className={cx(inputCls.replace('w-full ', ''), 'h-9')} value={toIso(value.to)} min={toIso(value.from)}
+        <input type="date" aria-label="To" className={cx(inputCls.replace('w-full ', ''), 'h-9 flex-1 min-w-0 sm:flex-none')} value={toIso(value.to)} min={toIso(value.from)}
           onChange={e => e.target.value && set({ to: toDmy(e.target.value) })} />
       </>}
     </div>

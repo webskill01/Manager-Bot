@@ -10,11 +10,21 @@ export default function Users() {
   const [rows, setRows] = useState(null);
   const [invite, setInvite] = useState(null);
   const [role, setRole] = useState('caller');
+  const [reset, setReset] = useState(null);
+  const [pin, setPin] = useState('');
   const load = useCallback(() => api('/users').then(r => setRows(r.rows), e => toast(e.message, 'bad')), []);  // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { load(); }, [load]);
 
   const update = async (id, patch) => {
     try { await api(`/users/${id}`, { method: 'PATCH', body: patch }); load(); } catch (e) { toast(e.message, 'bad'); }
+  };
+  const resetPin = async (e) => {
+    e.preventDefault();
+    try {
+      await api(`/users/${reset.id}`, { method: 'PATCH', body: { pin } });
+      toast(`New PIN set for ${reset.name}. Tell them on a call.`);
+      setReset(null); setPin(''); load();
+    } catch (err) { toast(err.message, 'bad'); }
   };
   const makeInvite = async () => {
     try {
@@ -34,7 +44,7 @@ export default function Users() {
       </PageHead>
 
       <Card className="mb-4 p-4 text-sm text-ink-60">
-        <b className="text-ink">Callers</b> see the shared queue and their own assignments, log calls and mark renewals (an admin verifies those).
+        <b className="text-ink">Callers</b> see the shared queue and their own assignments, log calls and mark who moved to the app (the app confirms it).
         {' '}<b className="text-ink">Admins</b> also see everyone's work, the dashboard and activity, assign members and manage the team.
       </Card>
 
@@ -45,7 +55,7 @@ export default function Users() {
               <div className="w-9 h-9 rounded-full bg-brand-sky text-brand-deep grid place-items-center text-sm font-semibold">{u.name[0].toUpperCase()}</div>
               <div className="flex-1 min-w-[140px]">
                 <div className="font-medium text-sm">{u.name} {u.id === me.id && <span className="text-ink-40 font-normal">(you)</span>}</div>
-                <div className="text-xs text-ink-40">Joined {when(u.created_at)}{!u.has_password && ' · no password yet'}</div>
+                <div className="text-xs text-ink-40">Joined {when(u.created_at)}{!u.has_password && ' · no PIN yet'}</div>
               </div>
               {!u.active && <Badge tone="red">Disabled</Badge>}
               {u.id === me.id ? <Badge tone="blue" className="capitalize">{u.role}</Badge> : <>
@@ -53,6 +63,7 @@ export default function Users() {
                   <option value="caller">Caller</option>
                   <option value="admin">Admin</option>
                 </Select>
+                <Button size="sm" variant="secondary" icon="key" onClick={() => setReset(u)}>Reset PIN</Button>
                 <Button size="sm" variant={u.active ? 'danger' : 'secondary'} onClick={() => update(u.id, { active: !u.active })}>
                   {u.active ? 'Disable' : 'Enable'}
                 </Button>
@@ -61,6 +72,17 @@ export default function Users() {
           ))}
         </Card>
       )}
+
+      <Modal open={!!reset} onClose={() => setReset(null)} title={`Reset PIN for ${reset?.name}`}>
+        <form onSubmit={resetPin} className="space-y-3">
+          <p className="text-sm text-ink-60">They are signed out everywhere and use this PIN next time. They can change it after.</p>
+          <input type="password" inputMode="numeric" pattern="\d{4}" maxLength={4} aria-label="New PIN" className={inputCls} value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ''))} autoComplete="new-password" required autoFocus />
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setReset(null)}>Cancel</Button>
+            <Button type="submit" disabled={pin.length !== 4}>Set PIN</Button>
+          </div>
+        </form>
+      </Modal>
 
       <Modal open={!!invite} onClose={() => setInvite(null)} title={`Invite a new ${invite?.role}`}>
         <p className="text-sm text-ink-60 mb-3">Send this link on WhatsApp. It works once and expires in {invite?.expiresInDays} days. It is only shown now.</p>

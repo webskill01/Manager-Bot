@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, qs } from '../api.js';
 import { useMe, go, SyncStatus } from '../App.jsx';
-import { BLOCKED, OUTCOMES, REASONS, inr, num, shortDate, daysLabel, ago, botLabel } from '../format.js';
+import { APP_STATES, BLOCKED, OUTCOMES, REASONS, inr, num, shortDate, daysLabel, ago, botLabel } from '../format.js';
 import { Badge, Button, Card, DateFilter, Empty, Kpi, Loading, PageHead, Select, cx, dateQuery, dateText, useStored, useToast } from '../ui.jsx';
 import PersonDrawer from './Person.jsx';
 
@@ -44,17 +44,18 @@ export default function Queue() {
         <Button icon="play" onClick={() => go(`#/focus?${qs(query)}`)} disabled={!data?.kpis.toCall}>Start calling</Button>
       </PageHead>
 
-      <div className="flex flex-wrap items-center gap-2 mb-4">
-        <DateFilter value={dates} onChange={setDates} />
-        <Select value={f.bot} onChange={e => setF({ ...f, bot: e.target.value })} className="h-9" aria-label="Bot">
+      {/* phones: date strip full width, then the three filters in one row */}
+      <div className="grid grid-cols-3 sm:flex sm:flex-wrap items-center gap-2 mb-4">
+        <div className="col-span-3 sm:col-auto"><DateFilter value={dates} onChange={setDates} /></div>
+        <Select value={f.bot} onChange={e => setF({ ...f, bot: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="Bot">
           <option value="">All bots</option>
           {me.bots.map(b => <option key={b} value={b}>{botLabel(b)}</option>)}
         </Select>
-        <Select value={f.status} onChange={e => setF({ ...f, status: e.target.value })} className="h-9" aria-label="Status">
+        <Select value={f.status} onChange={e => setF({ ...f, status: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="Status">
           <option value="">Any status</option>
           {Object.entries(REASONS).map(([k, r]) => <option key={k} value={k}>{r.label}</option>)}
         </Select>
-        <Select value={f.assignee} onChange={e => setF({ ...f, assignee: e.target.value })} className="h-9" aria-label="Assignee">
+        <Select value={f.assignee} onChange={e => setF({ ...f, assignee: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="Assignee">
           <option value="">{isAdmin ? 'Everyone' : 'Shared + mine'}</option>
           <option value="me">Assigned to me</option>
           <option value="none">Unassigned</option>
@@ -67,7 +68,7 @@ export default function Queue() {
           <Kpi label="To call now" value={num(data.kpis.toCall)} sub={`of ${num(data.kpis.total)} in this view`} tone="brand" />
           <Kpi label="Follow-ups due" value={num(data.kpis.followups)} />
           <Kpi label="Promised, waiting" value={num(data.kpis.promised)} />
-          <Kpi label="Amount to recover" value={inr(data.kpis.amount)} />
+          <Kpi label="App members" value={num(data.kpis.onApp)} sub={`${num(data.kpis.groupsOnly)} still only in groups`} tone="ok" />
         </div>
 
         {isAdmin && sel.size > 0 && (
@@ -150,7 +151,10 @@ export default function Queue() {
 function Status({ r, users, me }) {
   if (r.claimedBy && r.claimedBy !== me.id) return <Badge tone="amber">{users[r.claimedBy]} is calling</Badge>;
   if (r.blocked) return <Badge>{BLOCKED[r.blocked]}</Badge>;
-  return <Badge tone={REASONS[r.reason].tone}>{REASONS[r.reason].label}</Badge>;
+  return <>
+    <Badge tone={REASONS[r.reason].tone}>{REASONS[r.reason].label}</Badge>
+    <Badge tone={APP_STATES[r.appState]?.tone}>{APP_STATES[r.appState]?.label}</Badge>
+  </>;
 }
 
 function Last({ r, users, inline }) {

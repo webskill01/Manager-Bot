@@ -13,9 +13,10 @@ const APP_OVERLAP_MS = 2 * 60e3;
 const ALL_NUMBERS_EVERY_MS = 30 * 60e3;
 const PAYMENT_DEDUPE_MS = 3 * 86400e3;
 
-// Pure. Who paid between two snapshots: their billing date moved forward on a bot, or their
-// app plan was extended. Both moving together (the bot's own app sync bumps the sheet) is one
-// payment. The first snapshot (prev empty) records nothing.
+// Pure. Who paid between two snapshots: their app plan was extended (source app = moved to
+// the app), or else their billing date moved forward on a bot (source sheet = renewed in the
+// groups the old way). Both moving together (the bot's own app sync bumps the sheet) is one
+// app payment. The first snapshot (prev empty) records nothing.
 export function detectPayments(prev, next, botCfg) {
   if (!prev.size) return [];
   const at = new Date().toISOString();
@@ -24,17 +25,18 @@ export function detectPayments(prev, next, botCfg) {
     const before = prev.get(p.phone);
     if (!before) continue;
     let hit = null;
-    for (const { bot, member } of p.members) {
+    // Moved to the app (first time on it), or paid again on it.
+    if (p.onApp && (!before.onApp || (p.app.expiresAt || '') > (before.app?.expiresAt || ''))) {
+      const m = (before.active[0] || before.members[0]);
+      hit = { phone: p.phone, bot: m?.bot || 'app', amount: Number(p.app.lastAmount) || 0, billingFrom: m?.member.billingDate || '', source: 'app', at };
+    }
+    for (const { bot, member } of hit ? [] : p.members) {
       const old = before.members.find(x => x.bot === bot)?.member;
       const a = parseDate(old?.billingDate), b = parseDate(member.billingDate);
       if (a && b && b > a) {
         hit = { phone: p.phone, bot, amount: Number(member.paidLast) || botCfg[bot]?.renewal?.fullAmount || 0, billingFrom: old.billingDate, source: 'sheet', at };
         break;
       }
-    }
-    if (!hit && p.app?.expiresAt && p.app.expiresAt > (before.app?.expiresAt || '') && p.paidOnApp) {
-      const m = (before.active[0] || before.members[0]);
-      hit = { phone: p.phone, bot: m?.bot || 'app', amount: Number(p.app.lastAmount) || 0, billingFrom: m?.member.billingDate || '', source: 'app', at };
     }
     if (hit) out.push(hit);
   }

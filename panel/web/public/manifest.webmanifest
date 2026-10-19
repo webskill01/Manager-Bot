@@ -1,6 +1,6 @@
 {
-  "name": "EaseCab Recovery",
-  "short_name": "Recovery",
+  "name": "EaseCab Panel",
+  "short_name": "Panel",
   "description": "Due members, calls and follow-ups",
   "start_url": "/#/queue",
   "scope": "/",

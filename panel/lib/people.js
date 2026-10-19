@@ -9,7 +9,13 @@ import { liveOnApp } from '../../core/handlers/appHandlers.js';
 //   allNumbers [[phone, name, ...]]     bot-nitin's ALL_NUMBERS tab, A:F, no header
 //
 // Person = { phone, name, members: [{bot, member}], active: [{bot, member}],
-//            app, paidOnApp, lead: null | { exMember } }
+//            app, paidOnApp, appState, onApp, lead: null | { exMember } }
+// appState, from the app's payment count (not its status: the app marks some free/manual plans
+// "active" with no payment behind them):
+//   member    paid on the app and the plan is running: moved, the panel's job is done (onApp)
+//   lapsed    paid on the app before, plan ran out
+//   signed_up has an app account, never paid
+//   none      not on the app
 // `lead` is set only for ALL_NUMBERS phones that are ACTIVE on no bot: those are the
 // people still to pitch. exMember names their old bot(s) so a caller knows the history.
 export function buildPeople({ sheets = {}, app = [], allNumbers = [], now = new Date().toISOString() }) {
@@ -17,7 +23,7 @@ export function buildPeople({ sheets = {}, app = [], allNumbers = [], now = new 
   const get = (raw) => {
     const phone = normalizePhone(raw ?? '');
     if (phone.length !== 10) return null;
-    if (!people.has(phone)) people.set(phone, { phone, name: '', members: [], active: [], app: null, paidOnApp: false, lead: null });
+    if (!people.has(phone)) people.set(phone, { phone, name: '', members: [], active: [], app: null, paidOnApp: false, appState: 'none', onApp: false, lead: null });
     return people.get(phone);
   };
 
@@ -42,6 +48,9 @@ export function buildPeople({ sheets = {}, app = [], allNumbers = [], now = new 
 
   for (const p of people.values()) {
     p.paidOnApp = liveOnApp(p.app, now);
+    const paid = (p.app?.paidCount || 0) > 0;
+    p.appState = !p.app ? 'none' : !paid ? 'signed_up' : (p.app.expiresAt || '') > now ? 'member' : 'lapsed';
+    p.onApp = p.appState === 'member';
     p.name = (p.active[0] || p.members[0])?.member.name || leadNames.get(p.phone) || '';
     if (leadNames.has(p.phone) && !p.active.length) {
       p.lead = { exMember: p.members.map(({ bot, member }) => `${bot} (${member.status})`).join(', ') };

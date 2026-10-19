@@ -32,7 +32,7 @@ export function loadEnv(file = path.join(PANEL_DIR, '.env'), env = process.env) 
   const serviceAccount = path.resolve(PANEL_DIR, vars.SERVICE_ACCOUNT || 'service-account.json');
   if (!fs.existsSync(serviceAccount)) errors.push(`SERVICE_ACCOUNT file not found: ${serviceAccount}`);
   const pin = vars.PANEL_PIN || '';
-  if (pin.length < 8) errors.push('PANEL_PIN (bootstrap admin password, 8+ chars)');
+  if (pin.length < 8) errors.push('PANEL_PIN (admin recovery PIN, 8+ chars)');
   if (errors.length) throw new Error(`panel/.env is incomplete:\n  - ${errors.join('\n  - ')}`);
 
   return Object.freeze({
@@ -44,6 +44,7 @@ export function loadEnv(file = path.join(PANEL_DIR, '.env'), env = process.env) 
     port: parseInt(vars.PANEL_PORT || '8110', 10),
     adminName: vars.PANEL_ADMIN_NAME || 'admin',
     pin,
+    appPrice: parseInt(vars.PANEL_APP_PRICE || '149', 10),
     dbFile: path.resolve(PANEL_DIR, vars.PANEL_DB || 'panel.db'),
     syncMs: parseInt(vars.PANEL_SYNC_MS || '120000', 10),
   });

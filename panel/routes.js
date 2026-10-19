@@ -2,7 +2,7 @@ import express from 'express';
 import { buildQueue, focusOrder } from './lib/queue.js';
 import { attribute, team, ageing, funnel, recoveredByDay, byBot } from './lib/stats.js';
 import { OUTCOMES } from './lib/db.js';
-import { hashPw, checkPw, newToken, tokenHash, validPassword, createRateLimit } from './lib/auth.js';
+import { hashPw, checkPw, newToken, tokenHash, validPin, createRateLimit } from './lib/auth.js';
 import { normalizePhone, parseDate, formatDate } from '../core/globalConfig.js';
 import crypto from 'node:crypto';
 
@@ -24,10 +24,11 @@ function cookieValue(req) {
   return '';
 }
 
-export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) {
+export function createApp({ db, sync, botCfg, env, staticDir = null }) {
   const app = express();
   const r = express.Router();
   const loginLimit = createRateLimit();
+  const nameLimit = createRateLimit({ max: 10, windowMs: 60 * 60e3 });   // PINs are short: cap guesses per account too
   let lastManualRefresh = 0;
 
   app.set('trust proxy', 'loopback');
@@ -75,7 +76,7 @@ export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) 
   }
   function queue(filter, user, people = sync.people(), now = new Date()) {
     const rows = buildQueue({
-      people, botCfg, filter, now,
+      people, botCfg, filter, now, price: env.appPrice,
       interactions: db.interactionsSince(new Date(now - HISTORY_MS)),
       followups: db.openFollowups(),
       assignments: db.assignments(),
@@ -83,6 +84,18 @@ export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) 
     });
     // Callers see the shared queue and their own work, never a colleague's assignments.
     return user.role === 'admin' ? rows : rows.filter(r => r.assignedTo === null || r.assignedTo === user.id);
+  }
+  // Group members (on any bot sheet) by app state. onApp = paying app members; groupsOnly =
+  // still ACTIVE in a group and not paying on the app (lapsed, signed up or not on it).
+  function migration() {
+    const n = { member: 0, lapsed: 0, signed_up: 0, none: 0 };
+    let groupsOnly = 0;
+    for (const p of sync.people().values()) {
+      if (!p.members.length) continue;
+      n[p.appState]++;
+      if (!p.onApp && p.active.length) groupsOnly++;
+    }
+    return { onApp: n.member, lapsedOnApp: n.lapsed, signedUpOnApp: n.signed_up, notOnApp: n.none, groupsOnly };
   }
   const names = () => Object.fromEntries(db.users().map(u => [u.id, u.name]));
   const payments = (from, to = new Date()) =>
@@ -93,20 +106,23 @@ export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) 
 
   r.post('/login', (req, res) => {
     const ip = req.ip;
-    if (!loginLimit.allowed(ip)) return res.status(429).json({ error: 'Too many attempts. Try again in 15 minutes.' });
     const { name = '', password = '' } = req.body || {};
+    const key = String(name).trim().toLowerCase();
+    if (!loginLimit.allowed(ip) || !nameLimit.allowed(key)) return res.status(429).json({ error: 'Too many attempts. Try again later.' });
+    const isAdmin = key === env.adminName.toLowerCase();
     let user = db.userByName(String(name).trim());
-    // First run: the configured admin logs in with PANEL_PIN until they set a password.
-    if (!user && String(name).trim().toLowerCase() === env.adminName.toLowerCase()) {
+    if (!user && isAdmin) {
       db.createUser({ name: env.adminName, role: 'admin' });
       user = db.userByName(env.adminName);
     }
-    const ok = user && user.active && (user.pw_hash
-      ? checkPw(String(password), user.pw_hash)
-      : user.name.toLowerCase() === env.adminName.toLowerCase()
-        && crypto.timingSafeEqual(crypto.createHash('sha256').update(String(password)).digest(), crypto.createHash('sha256').update(env.pin).digest()));
-    if (!ok) { loginLimit.fail(ip); return res.status(401).json({ error: 'Wrong name or password' }); }
-    loginLimit.clear(ip);
+    // PANEL_PIN (server .env only) gets the configured admin in on first run, and back in if
+    // they forget their PIN: it clears the old one, so they must set a new one.
+    const recovery = isAdmin && crypto.timingSafeEqual(
+      crypto.createHash('sha256').update(String(password)).digest(), crypto.createHash('sha256').update(env.pin).digest());
+    const ok = user && user.active && (recovery || checkPw(String(password), user.pw_hash));
+    if (!ok) { loginLimit.fail(ip); nameLimit.fail(key); return res.status(401).json({ error: 'Wrong name or PIN' }); }
+    loginLimit.clear(ip); nameLimit.clear(key);
+    if (recovery && user.pw_hash) { db.updateUser(user.id, { pwHash: '' }); user = db.userById(user.id); }
     setSession(res, user.id);
     db.audit(user.id, 'login', '', { ip });
     res.json(pub(user));
@@ -116,7 +132,7 @@ export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) 
     const { token = '', name = '', password = '' } = req.body || {};
     const clean = String(name).trim();
     if (!NAME_RE.test(clean)) return res.status(400).json({ error: 'Name: 2-30 letters, numbers, spaces' });
-    if (!validPassword(password)) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    if (!validPin(password)) return res.status(400).json({ error: 'PIN must be 4 digits' });
     if (db.userByName(clean)) return res.status(409).json({ error: 'That name is taken' });
     const inv = db.takeInvite(tokenHash(token));
     if (!inv) return res.status(400).json({ error: 'This invite link is used or expired. Ask an admin for a new one.' });
@@ -137,8 +153,8 @@ export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) 
   r.get('/me', (req, res) => res.json({ ...pub(req.user), bots: Object.keys(botCfg), sync: sync.status() }));
   r.post('/password', (req, res) => {
     const { old = '', password = '' } = req.body || {};
-    if (req.user.pw_hash && !checkPw(String(old), req.user.pw_hash)) return res.status(400).json({ error: 'Current password is wrong' });
-    if (!validPassword(password)) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    if (req.user.pw_hash && !checkPw(String(old), req.user.pw_hash)) return res.status(400).json({ error: 'Current PIN is wrong' });
+    if (!validPin(password)) return res.status(400).json({ error: 'PIN must be 4 digits' });
     db.updateUser(req.user.id, { pwHash: hashPw(password) });
     db.audit(req.user.id, 'password_changed', req.user.name);
     res.json({ ok: true });
@@ -158,6 +174,7 @@ export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) 
         followups: rows.filter(x => x.reason === 'followup').length,
         promised: rows.filter(x => x.blocked === 'promised').length,
         amount: open.reduce((s, x) => s + x.amount, 0),
+        ...migration(),
       },
       sync: sync.status(),
     });
@@ -178,7 +195,7 @@ export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) 
       const person = await sync.recheck(next.phone);
       const fresh = person && queue(filter, req.user, new Map([[person.phone, person]])).find(x => x.phone === next.phone);
       if (!fresh || fresh.blocked) {
-        skipped.push({ name: next.name, reason: person?.paidOnApp ? 'paid on app' : 'paid or changed' });
+        skipped.push({ name: next.name, reason: person?.onApp ? 'moved to the app' : 'changed' });
         exclude.add(next.phone);
         continue;
       }
@@ -203,7 +220,8 @@ export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) 
         amount: botCfg[bot]?.renewal?.fullAmount ?? null, delayUntil: member.delayUntil, carNo: member.carNo,
       })),
       app: p.app ? { status: p.app.status, expiresAt: p.app.expiresAt, lastPaidAt: p.app.lastPaidAt, paidCount: p.app.paidCount } : null,
-      paidOnApp: p.paidOnApp,
+      onApp: p.onApp,
+      appState: p.appState,
       lead: p.lead,
       followup: db.openFollowups().find(f => f.phone === phone) || null,
       assignedTo: assignment?.user_id ?? null,
@@ -225,12 +243,13 @@ export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) 
     res.json({ ok: true });
   });
 
-  r.post('/person/:phone/renew', async (req, res) => {
+  // "They say they moved": ask the app right now. If it agrees they leave the queue by themselves.
+  r.post('/person/:phone/check', async (req, res) => {
     const phone = phoneParam(req, res);
     if (!phone) return;
-    const { bot = '', seenBillingDate = '' } = req.body || {};
-    const out = await renewer.markRenewed({ phone, bot, seenBillingDate, user: req.user });
-    res.status(out.status).json(out.status === 200 ? { ok: true, message: out.message } : { error: out.error });
+    const p = await sync.recheck(phone);
+    if (!p) return res.status(404).json({ error: 'Not found' });
+    res.json({ onApp: p.onApp, appState: p.appState });
   });
 
   r.get('/followups', (req, res) => {
@@ -272,33 +291,26 @@ export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) 
     const interactions = db.interactionsBetween(lo, hi);
     const allPays = attribute(payments(new Date(lo - 40 * 86400e3)), db.interactionsSince(new Date(lo - 40 * 86400e3)));
     const inWindow = allPays.filter(p => p.at >= lo.toISOString() && p.at < hi.toISOString());
+    // The team's job is moving people to the app; group renewals are counted but not credited.
+    const moved = inWindow.filter(p => p.source === 'app');
     const users = db.users();
     res.json({
       from, to,
-      funnel: funnel({ rows: unpaid, interactions, payments: allPays, from, to }),
+      funnel: funnel({ rows: unpaid, interactions, payments: allPays.filter(p => p.source === 'app'), from, to }),
       ageing: ageing(queue({ view: 'today' }, req.user)),
       byBot: byBot(unpaid, inWindow),
-      recovered: recoveredByDay(inWindow),
+      recovered: recoveredByDay(moved),
       totals: {
-        recovered: inWindow.reduce((s, p) => s + p.amount, 0),
-        byTeam: inWindow.filter(p => p.userId).reduce((s, p) => s + p.amount, 0),
+        moved: moved.length,
+        movedAmount: moved.reduce((s, p) => s + p.amount, 0),
+        byTeam: moved.filter(p => p.userId).length,
+        renewedInGroups: inWindow.length - moved.length,
         unpaidAmount: unpaid.reduce((s, x) => s + x.amount, 0),
         calls: interactions.length,
+        ...migration(),
       },
-      team: team({ users, interactions, followups: db.followupsBetween(lo, hi), payments: inWindow }),
+      team: team({ users, interactions, followups: db.followupsBetween(lo, hi), payments: moved }),
     });
-  });
-
-  r.get('/renewals/unverified', admin, (req, res) => {
-    const verified = new Set(db.auditByAction('renew_verified', new Date(0), new Date(Date.now() + 1000)).map(a => a.target));
-    const rows = db.auditByAction('renewed', new Date(Date.now() - 60 * 86400e3), new Date(Date.now() + 1000))
-      .filter(a => !JSON.parse(a.detail).verified && !verified.has(String(a.id)))
-      .map(a => ({ id: a.id, phone: a.target, at: a.at, user: names()[a.user_id], ...JSON.parse(a.detail), name: sync.people().get(a.target)?.name || '' }));
-    res.json({ rows });
-  });
-  r.post('/renewals/:id/verify', admin, (req, res) => {
-    db.audit(req.user.id, 'renew_verified', String(Number(req.params.id)));
-    res.json({ ok: true });
   });
 
   r.get('/users', admin, (req, res) => res.json({ rows: db.users() }));
@@ -314,12 +326,15 @@ export function createApp({ db, sync, botCfg, renewer, env, staticDir = null }) 
     const u = db.userById(id);
     if (!u) return res.status(404).json({ error: 'Not found' });
     if (id === req.user.id) return res.status(400).json({ error: 'You cannot change your own role or access' });
-    const { role, active } = req.body || {};
+    const { role, active, pin } = req.body || {};
+    if (pin !== undefined && !validPin(pin)) return res.status(400).json({ error: 'PIN must be 4 digits' });
     db.updateUser(id, {
       role: ['admin', 'caller'].includes(role) ? role : undefined,
       active: typeof active === 'boolean' ? active : undefined,
+      pwHash: pin !== undefined ? hashPw(pin) : undefined,
     });
-    db.audit(req.user.id, 'user_updated', u.name, { role, active });
+    if (pin !== undefined) db.dropSessions(id);
+    db.audit(req.user.id, pin !== undefined ? 'pin_reset' : 'user_updated', u.name, { role, active });
     res.json({ ok: true });
   });
 

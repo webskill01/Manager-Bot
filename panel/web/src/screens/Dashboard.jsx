@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, qs } from '../api.js';
-import { addDays, dmy, inr, num, shortDate, when, botLabel, toDmy, toIso } from '../format.js';
-import { Button, Card, Empty, Kpi, Loading, PageHead, cx, inputCls, useStored, useToast } from '../ui.jsx';
+import { APP_STATES, addDays, dmy, inr, num, shortDate, botLabel, toDmy, toIso } from '../format.js';
+import { Card, Empty, Kpi, Loading, PageHead, cx, inputCls, useStored, useToast } from '../ui.jsx';
 
 const PRESETS = [['today', 'Today'], ['7d', '7 days'], ['month', 'This month'], ['range', 'Custom']];
 function range(v) {
@@ -15,22 +15,19 @@ export default function Dashboard() {
   const toast = useToast();
   const [v, setV] = useStored('dash.range', { preset: '7d', from: dmy(addDays(-6)), to: dmy() });
   const [d, setD] = useState(null);
-  const [unverified, setUnverified] = useState([]);
   const r = useMemo(() => range(v), [v]);
   const load = useCallback(() => {
     api(`/dashboard?${qs(r)}`).then(setD, e => toast(e.message, 'bad'));
-    api('/renewals/unverified').then(x => setUnverified(x.rows), () => {});
   }, [r]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { setD(null); load(); }, [load]);
-  const verify = async (id) => { await api(`/renewals/${id}/verify`, { method: 'POST' }); load(); };
 
   return (
     <>
-      <PageHead title="Recovery dashboard" sub={`${shortDate(r.from)} – ${shortDate(r.to)}`}>
-        <div className="inline-flex rounded-lg border border-line bg-white p-0.5">
+      <PageHead title="Dashboard" sub={`${shortDate(r.from)} – ${shortDate(r.to)}`}>
+        <div className="flex w-full sm:w-auto rounded-lg border border-line bg-white p-0.5">
           {PRESETS.map(([k, l]) => (
             <button key={k} type="button" onClick={() => setV({ ...v, preset: k })}
-              className={cx('h-8 px-3 rounded-md text-xs font-medium', v.preset === k ? 'bg-brand-sky text-brand-deep' : 'text-ink-60 hover:text-ink')}>{l}</button>
+              className={cx('h-8 flex-1 sm:flex-none px-1.5 sm:px-3 whitespace-nowrap rounded-md text-xs font-medium', v.preset === k ? 'bg-brand-sky text-brand-deep' : 'text-ink-60 hover:text-ink')}>{l}</button>
           ))}
         </div>
         {v.preset === 'range' && <>
@@ -41,16 +38,24 @@ export default function Dashboard() {
 
       {!d ? <Loading /> : (
         <div className="space-y-5">
+          <Card className="p-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
+              <h2 className="text-sm font-semibold">Group members on the app <span className="font-normal text-ink-40">· now</span></h2>
+              <span className="text-sm text-ink-60"><b className="text-ink">{pct(d.totals.onApp, migrated(d.totals))}%</b> paying on the app</span>
+            </div>
+            <Migration t={d.totals} />
+          </Card>
+
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <Kpi label="Recovered" value={inr(d.totals.recovered)} sub={`${num(d.recovered.reduce((s, x) => s + x.count, 0))} payments`} tone="ok" />
-            <Kpi label="After a team call" value={inr(d.totals.byTeam)} sub="paid within 7 days of a call" />
-            <Kpi label="Still unpaid" value={inr(d.totals.unpaidAmount)} sub="billing in this range" tone="bad" />
+            <Kpi label="Moved to app" value={num(d.totals.moved)} sub={`${inr(d.totals.movedAmount)} paid on the app`} tone="ok" />
+            <Kpi label="After a team call" value={num(d.totals.byTeam)} sub="moved within 7 days of a call" />
+            <Kpi label="Renewed in groups" value={num(d.totals.renewedInGroups)} sub="the old way, still to move" tone="warn" />
             <Kpi label="Calls logged" value={num(d.totals.calls)} />
           </div>
 
           <div className="grid lg:grid-cols-3 gap-5">
             <Card className="p-5 lg:col-span-2">
-              <h2 className="text-sm font-semibold mb-4">Recovered per day</h2>
+              <h2 className="text-sm font-semibold mb-4">Moved to app per day</h2>
               <DayBars days={fillDays(d.recovered, r.from, r.to)} />
             </Card>
             <Card className="p-5">
@@ -65,7 +70,7 @@ export default function Dashboard() {
               {!d.team.length ? <Empty title="No team yet" /> : (
                 <table className="w-full text-sm">
                   <thead className="bg-bg text-xs text-ink-60 text-left">
-                    <tr>{['Caller', 'Calls', 'Connected', 'Promises', 'Kept', 'Paid', 'Recovered'].map((h, i) => <th key={h} className={cx('px-5 py-2.5 font-medium', i && 'text-right')}>{h}</th>)}</tr>
+                    <tr>{['Caller', 'Calls', 'Connected', 'Promises', 'Kept', 'Moved', 'App ₹'].map((h, i) => <th key={h} className={cx('px-5 py-2.5 font-medium', i && 'text-right')}>{h}</th>)}</tr>
                   </thead>
                   <tbody className="divide-y divide-line tabular-nums">
                     {d.team.map(t => (
@@ -89,13 +94,13 @@ export default function Dashboard() {
             </Card>
           </div>
 
-          <div className="grid lg:grid-cols-2 gap-5">
+          <div>
             <Card className="overflow-x-auto">
               <h2 className="text-sm font-semibold px-5 pt-5 pb-3">By bot</h2>
               {!d.byBot.length ? <Empty title="Nothing in this range" /> : (
                 <table className="w-full text-sm">
                   <thead className="bg-bg text-xs text-ink-60 text-left">
-                    <tr>{['Bot', 'Unpaid', 'Unpaid ₹', 'Paid', 'Paid ₹'].map((h, i) => <th key={h} className={cx('px-5 py-2.5 font-medium', i && 'text-right')}>{h}</th>)}</tr>
+                    <tr>{['Bot', 'To move', 'At ₹149', 'Moved / renewed', '₹'].map((h, i) => <th key={h} className={cx('px-5 py-2.5 font-medium', i && 'text-right')}>{h}</th>)}</tr>
                   </thead>
                   <tbody className="divide-y divide-line tabular-nums">
                     {d.byBot.map(b => (
@@ -111,27 +116,34 @@ export default function Dashboard() {
                 </table>
               )}
             </Card>
-            <Card>
-              <h2 className="text-sm font-semibold px-5 pt-5 pb-1">Renewals to verify</h2>
-              <p className="text-xs text-ink-40 px-5 pb-3">Marked renewed by a caller. Check the money arrived.</p>
-              {!unverified.length ? <Empty title="All verified" /> : (
-                <ul className="divide-y divide-line">
-                  {unverified.map(u => (
-                    <li key={u.id} className="flex items-center gap-3 px-5 py-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium truncate">{u.name || u.phone} <span className="text-ink-40 font-normal">· {botLabel(u.bot)}</span></div>
-                        <div className="text-xs text-ink-60">{u.user} · {when(u.at)} · was due {shortDate(u.from)}</div>
-                      </div>
-                      <Button size="sm" variant="secondary" icon="check" onClick={() => verify(u.id)}>Verified</Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </Card>
           </div>
         </div>
       )}
     </>
+  );
+}
+
+const migrated = (t) => t.onApp + t.lapsedOnApp + t.signedUpOnApp + t.notOnApp;
+const pct = (n, of) => (of ? Math.round((n / of) * 100) : 0);
+
+// Every group member (any bot sheet) by app state; one stacked bar plus the counts.
+function Migration({ t }) {
+  const parts = [['member', t.onApp, 'bg-ok'], ['lapsed', t.lapsedOnApp, 'bg-warn'], ['signed_up', t.signedUpOnApp, 'bg-brand'], ['none', t.notOnApp, 'bg-line']];
+  const total = migrated(t);
+  return (
+    <div>
+      <div className="flex h-3 rounded-full overflow-hidden bg-bg">
+        {parts.map(([k, n, c]) => <div key={k} className={c} style={{ width: `${pct(n, total)}%` }} title={`${APP_STATES[k].label}: ${n}`} />)}
+      </div>
+      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
+        {parts.map(([k, n, c]) => (
+          <div key={k}>
+            <dt className="flex items-center gap-1.5 text-xs text-ink-60"><span className={cx('w-2 h-2 rounded-full', c)} />{APP_STATES[k].label}</dt>
+            <dd className="text-lg font-semibold tabular-nums">{num(n)}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }
 
@@ -165,7 +177,7 @@ function DayBars({ days }) {
 }
 
 function Funnel({ f }) {
-  const steps = [['Due', f.due], ['Contacted', f.contacted], ['Promised', f.promised], ['Paid', f.paid]];
+  const steps = [['Due', f.due], ['Contacted', f.contacted], ['Promised', f.promised], ['Moved to app', f.paid]];
   const max = Math.max(f.due, 1);
   return (
     <div className="space-y-3">

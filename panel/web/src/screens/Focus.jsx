@@ -1,18 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, qs } from '../api.js';
 import { go } from '../App.jsx';
-import { REASONS, inr, num, shortDate, daysLabel, botLabel, when } from '../format.js';
+import { APP_STATES, REASONS, inr, num, shortDate, daysLabel, botLabel, when } from '../format.js';
 import { Badge, Button, Card, Empty, Loading, useToast } from '../ui.jsx';
-import { CallForm, ContactButtons, RenewModal, Timeline } from './Person.jsx';
+import { CallForm, ContactButtons, Timeline } from './Person.jsx';
 
 // One person at a time. The server claims them for 10 minutes and re-checks the sheet and
-// the app first, so someone who just paid is skipped instead of being called.
+// the app first, so someone who just paid on the app is skipped instead of being called.
 export default function Focus({ query }) {
   const toast = useToast();
   const [cur, setCur] = useState(undefined);   // undefined = loading, null = queue done
   const [done, setDone] = useState(0);
   const [stats, setStats] = useState(null);
-  const [renew, setRenew] = useState(false);
   const skippedHere = useRef([]);
 
   const next = useCallback(async () => {
@@ -36,7 +35,7 @@ export default function Focus({ query }) {
     <div className="max-w-2xl mx-auto">
       <div className="flex items-center justify-between gap-3 mb-4">
         <Button variant="ghost" size="sm" onClick={() => go('#/queue')}>← Back to queue</Button>
-        {stats && <div className="text-xs text-ink-60 text-right">Today: <b className="text-ink">{num(stats.calls)}</b> calls · <b className="text-ink">{num(stats.promises)}</b> promises · <b className="text-ok">{inr(stats.recovered)}</b></div>}
+        {stats && <div className="text-xs text-ink-60 text-right">Today: <b className="text-ink">{num(stats.calls)}</b> calls · <b className="text-ink">{num(stats.promises)}</b> promises · <b className="text-ok">{num(stats.paidCount)}</b> moved</div>}
       </div>
 
       <div className="h-1.5 rounded-full bg-line overflow-hidden mb-5" role="progressbar" aria-valuenow={done} aria-valuemax={total}>
@@ -53,6 +52,7 @@ export default function Focus({ query }) {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2 mb-1">
                 <Badge tone={REASONS[row.reason].tone}>{REASONS[row.reason].label}</Badge>
+                <Badge tone={APP_STATES[row.appState]?.tone}>{APP_STATES[row.appState]?.label}</Badge>
                 <span className="text-xs text-ink-40">{done + 1} of {total}</span>
               </div>
               <h1 className="text-2xl font-semibold truncate">{row.name || row.phone}</h1>
@@ -61,21 +61,21 @@ export default function Focus({ query }) {
               </p>
             </div>
             <div className="text-right shrink-0">
-              <div className="text-xs text-ink-40">Due</div>
+              <div className="text-xs text-ink-40">App plan</div>
               <div className="text-2xl font-semibold tabular-nums">{inr(row.amount)}</div>
             </div>
           </div>
 
           {row.followup && (
             <div className="mt-4 rounded-lg bg-brand-sky text-brand-deep text-sm px-3 py-2">
-              {row.followup.kind === 'promise' ? 'Promised to pay by' : 'Asked for a call back at'} {when(row.followup.due_at)}
+              {row.followup.kind === 'promise' ? 'Promised to move by' : 'Asked for a call back at'} {when(row.followup.due_at)}
             </div>
           )}
 
           <div className="mt-5"><ContactButtons phone={row.phone} size="lg" /></div>
 
           <div className="mt-6 pt-5 border-t border-line">
-            <CallForm key={row.phone} phone={row.phone} bot={row.bot} onDone={advance} onPaid={() => setRenew(true)} />
+            <CallForm key={row.phone} phone={row.phone} bot={row.bot} onDone={advance} />
           </div>
 
           <div className="mt-3 flex justify-end">
@@ -88,7 +88,6 @@ export default function Focus({ query }) {
               <Timeline items={cur.timeline} users={cur.users} />
             </div>
           )}
-          <RenewModal open={renew} onClose={() => setRenew(false)} phone={row.phone} name={row.name} bot={row.bot} billingDate={row.billingDate} onDone={advance} />
         </Card>
       )}
     </div>

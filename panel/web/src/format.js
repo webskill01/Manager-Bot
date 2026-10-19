@@ -26,12 +26,19 @@ export const daysLabel = (d) => d === 0 ? 'Due today' : d < 0 ? `${-d}d overdue`
 export const botLabel = (b) => b.replace(/^bot-/, '');
 
 export const OUTCOMES = {
-  paid: { label: 'Paid', tone: 'green' },
+  paid: { label: 'Moved to app', tone: 'green' },
   promise: { label: 'Promised', tone: 'blue' },
   callback: { label: 'Call back', tone: 'amber' },
   no_answer: { label: 'No answer', tone: 'gray' },
   not_interested: { label: 'Not interested', tone: 'red' },
   wrong_number: { label: 'Wrong number', tone: 'red' },
+};
+// Same four states as panel/lib/people.js. Paid = the app's payment count, not its status.
+export const APP_STATES = {
+  member: { label: 'App member', tone: 'green', hint: 'Paid on the app, plan running. Nothing to do.' },
+  lapsed: { label: 'App lapsed', tone: 'amber', hint: 'Paid on the app before, plan ran out. Ask them to renew on the app.' },
+  signed_up: { label: 'Signed up on app', tone: 'blue', hint: "Has an app account but never paid. Help them finish." },
+  none: { label: 'Not on app', tone: 'gray', hint: 'Not on the app yet.' },
 };
 export const REASONS = {
   followup: { label: 'Follow-up', tone: 'blue' },

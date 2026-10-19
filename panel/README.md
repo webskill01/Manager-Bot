@@ -1,11 +1,11 @@
-# EaseCab Recovery Panel
+# EaseCab Panel
 
 Web panel at **panel.easecab.com** for calling due members: today's queue across all bots,
-focus calling over WhatsApp, follow-ups, mark renewed, team stats and an activity log.
+focus calling over WhatsApp, follow-ups, team stats and an activity log. Its job: move
+group members onto the EaseCab app (₹149). Whoever has paid on the app drops out of the queue.
 
 It reads the bots' Google Sheets and the EaseCab app's member-sync API, polling every 2 minutes,
 and keeps its own data (users, calls, follow-ups, assignments, audit) in `panel/panel.db` (SQLite).
-"Mark renewed" runs the bot's own `renewed` handler, so the billing math is shared.
 
 ## Run locally
 
@@ -41,7 +41,7 @@ Tests: `node --test tests/panel-*.test.js`.
    ```
 
    Cloudflare SSL mode is "Full (strict)". The session cookie is `Secure`, so the panel only works over https.
-5. First login: `PANEL_ADMIN_NAME` + `PANEL_PIN`, then set a password. Invite others from **Team**.
+5. First login: `PANEL_ADMIN_NAME` + `PANEL_PIN`, then set a 4-digit PIN. The same login resets a forgotten admin PIN; admins reset others from **Team**. Invite others from **Team**.
 
 Updates: `git pull`, rebuild `panel/web`, `pm2 restart easecab-panel`.
 

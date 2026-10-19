@@ -16,7 +16,7 @@ const mem = (phone, billingDate, extra = {}) => ({ name: `M${phone.slice(-2)}`, 
 
 function q({ sheets, interactions = [], followups = [], assignments = [], claims = [], filter = { view: 'today' }, app = [] }) {
   const people = buildPeople({ sheets, app });
-  return buildQueue({ people, botCfg, interactions, followups, assignments, claims, filter, now: NOW });
+  return buildQueue({ people, botCfg, interactions, followups, assignments, claims, filter, now: NOW, price: 149 });
 }
 const phones = (rows) => rows.map(r => r.phone);
 
@@ -31,7 +31,7 @@ test('today view orders follow-ups, then most overdue, then due today', () => {
   assert.deepEqual(phones(rows), ['9000000004', '9000000002', '9000000003', '9000000001']);
   assert.equal(rows[0].reason, 'followup');
   assert.equal(rows[1].days, -6);
-  assert.equal(rows[1].amount, 100);
+  assert.equal(rows[1].amount, 149);
 });
 
 test('removal day is per bot: aayush2 drops at 6 days overdue', () => {
@@ -79,7 +79,7 @@ test('paid on app, delayed and non-active members never show', () => {
       mem('9000000001', day(-2)), mem('9000000002', day(-2), { status: 'REMOVED' }),
       mem('9000000003', day(-2), { delayUntil: day(2) }), mem('9000000004', day(-1)),
     ] },
-    app: [{ phone: '9000000001', status: 'active', expiresAt: new Date(NOW.getTime() + 86400e3 * 20).toISOString() }],
+    app: [{ phone: '9000000001', status: 'active', paidCount: 1, expiresAt: new Date(NOW.getTime() + 86400e3 * 20).toISOString() }],
   });
   assert.deepEqual(phones(rows), ['9000000004']);
 });

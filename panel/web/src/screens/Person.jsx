@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useMe } from '../App.jsx';
-import { OUTCOMES, inr, shortDate, when, ago, botLabel, addDays, isoDay } from '../format.js';
-import { Badge, Button, Drawer, Field, Loading, Modal, Select, copy, cx, inputCls, useToast } from '../ui.jsx';
+import { APP_STATES, OUTCOMES, inr, shortDate, when, ago, botLabel, addDays, isoDay } from '../format.js';
+import { Badge, Button, Drawer, Field, Loading, Select, copy, cx, inputCls, useToast } from '../ui.jsx';
 
 const waLink = (phone) => `https://wa.me/91${phone}`;
 
@@ -16,15 +16,26 @@ export function ContactButtons({ phone, size = 'md' }) {
   );
 }
 
-// Log one call. Promise / call back need a date; "Paid" goes through Mark renewed instead,
-// because that is what moves the billing date in the sheet.
-export function CallForm({ phone, bot, onDone, onPaid }) {
+// Log one call. Promise / call back need a date. "Moved to app" asks the app first and only
+// counts once they have paid there; then they leave the queue by themselves.
+export function CallForm({ phone, bot, onDone }) {
   const toast = useToast();
   const [outcome, setOutcome] = useState('');
   const [note, setNote] = useState('');
   const [dueAt, setDueAt] = useState(`${isoDay(addDays(1))}T11:00`);
   const [busy, setBusy] = useState(false);
   const needsDate = outcome === 'promise' || outcome === 'callback';
+  const moved = async () => {
+    setBusy(true);
+    try {
+      const r = await api(`/person/${phone}/check`, { method: 'POST', body: {} });
+      if (!r.onApp) return toast(`Not yet: ${APP_STATES[r.appState].label.toLowerCase()}`, 'bad');
+      await api(`/person/${phone}/interaction`, { method: 'POST', body: { outcome: 'paid', note, bot, dueAt: null } });
+      toast('Paid on the app: done');
+      setNote('');
+      onDone?.('paid');
+    } catch (err) { toast(err.message, 'bad'); } finally { setBusy(false); }
+  };
   const save = async (e) => {
     e.preventDefault();
     setBusy(true);
@@ -39,16 +50,16 @@ export function CallForm({ phone, bot, onDone, onPaid }) {
     <form onSubmit={save} className="space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
         {Object.entries(OUTCOMES).map(([k, o]) => (
-          <button key={k} type="button" onClick={() => (k === 'paid' ? onPaid?.() : setOutcome(k))}
+          <button key={k} type="button" disabled={busy} onClick={() => (k === 'paid' ? moved() : setOutcome(k))}
             className={cx('h-11 rounded-lg border text-sm font-medium transition',
               outcome === k ? 'border-brand bg-brand-sky text-brand-deep' : 'border-line bg-white text-ink hover:bg-bg',
               k === 'paid' && 'text-emerald-700')}>
-            {k === 'paid' ? 'Paid · mark renewed' : o.label}
+            {o.label}
           </button>
         ))}
       </div>
       {needsDate && (
-        <Field label={outcome === 'promise' ? 'They will pay by' : 'Call them back at'}>
+        <Field label={outcome === 'promise' ? 'They will move to the app by' : 'Call them back at'}>
           <input type="datetime-local" className={inputCls} value={dueAt} min={`${isoDay()}T00:00`} onChange={e => setDueAt(e.target.value)} required />
         </Field>
       )}
@@ -56,34 +67,6 @@ export function CallForm({ phone, bot, onDone, onPaid }) {
         value={note} onChange={e => setNote(e.target.value)} />
       <Button type="submit" className="w-full" disabled={!outcome || busy}>{busy ? 'Saving…' : 'Save call'}</Button>
     </form>
-  );
-}
-
-export function RenewModal({ open, onClose, phone, name, bot, billingDate, onDone }) {
-  const toast = useToast();
-  const me = useMe();
-  const [busy, setBusy] = useState(false);
-  const go = async () => {
-    setBusy(true);
-    try {
-      const r = await api(`/person/${phone}/renew`, { method: 'POST', body: { bot, seenBillingDate: billingDate } });
-      toast(r.message?.split('\n')[0] || 'Renewed');
-      onDone?.();
-      onClose();
-    } catch (err) { toast(err.message, 'bad'); } finally { setBusy(false); }
-  };
-  return (
-    <Modal open={open} onClose={onClose} title="Mark renewed?">
-      <p className="text-sm text-ink-60">
-        <b className="text-ink">{name}</b> on <b className="text-ink">{botLabel(bot || '')}</b>. Their billing date {shortDate(billingDate)} moves one
-        month forward in the sheet, exactly like the bot's <code>renewed</code> command.
-      </p>
-      {me?.role !== 'admin' && <p className="text-xs text-ink-40 mt-2">An admin will verify this renewal.</p>}
-      <div className="flex justify-end gap-2 mt-5">
-        <Button variant="secondary" onClick={onClose}>Cancel</Button>
-        <Button onClick={go} disabled={busy} icon="check">{busy ? 'Saving…' : 'Yes, renewed'}</Button>
-      </div>
-    </Modal>
   );
 }
 
@@ -110,7 +93,6 @@ export default function PersonDrawer({ phone, onClose, onChanged }) {
   const me = useMe();
   const toast = useToast();
   const [p, setP] = useState(null);
-  const [renew, setRenew] = useState(null);
   const load = useCallback(() => {
     if (!phone) return;
     api(`/person/${phone}`).then(setP, (e) => { toast(e.message, 'bad'); onClose(); });
@@ -131,10 +113,13 @@ export default function PersonDrawer({ phone, onClose, onChanged }) {
         <div className="p-5 space-y-6">
           <ContactButtons phone={p.phone} />
 
-          {p.paidOnApp && <div className="rounded-lg bg-emerald-50 text-emerald-800 text-sm px-3 py-2">Paid on the EaseCab app, plan active till {when(p.app.expiresAt)}.</div>}
+          <div className={cx('rounded-lg text-sm px-3 py-2', p.onApp ? 'bg-emerald-50 text-emerald-800' : 'bg-bg text-ink-60')}>
+            <Badge tone={APP_STATES[p.appState].tone}>{APP_STATES[p.appState].label}</Badge> {APP_STATES[p.appState].hint}
+            {p.app?.paidCount > 0 && <span className="block text-xs mt-1">Paid {p.app.paidCount}× · plan {p.onApp ? 'till' : 'ended'} {when(p.app.expiresAt)}</span>}
+          </div>
           {p.followup && (
             <div className="rounded-lg bg-brand-sky text-brand-deep text-sm px-3 py-2">
-              Open {p.followup.kind === 'promise' ? 'promise to pay' : 'call back'}: {when(p.followup.due_at)} ({p.users[p.followup.user_id]})
+              Open {p.followup.kind === 'promise' ? 'promise to move' : 'call back'}: {when(p.followup.due_at)} ({p.users[p.followup.user_id]})
             </div>
           )}
 
@@ -152,9 +137,6 @@ export default function PersonDrawer({ phone, onClose, onChanged }) {
                     <div><dt className="text-ink-40">Amount</dt><dd className="font-medium">{inr(m.amount)}</dd></div>
                     <div><dt className="text-ink-40">Renewals</dt><dd className="font-medium">{m.renewals || 0}</dd></div>
                   </dl>
-                  {m.status === 'ACTIVE' && (
-                    <Button size="sm" variant="secondary" icon="check" onClick={() => setRenew(m)}>Mark renewed</Button>
-                  )}
                 </div>
               ))}
             </div>
@@ -173,7 +155,7 @@ export default function PersonDrawer({ phone, onClose, onChanged }) {
           {active.length > 0 && (
             <section>
               <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-40 mb-2">Log a call</h3>
-              <CallForm phone={p.phone} bot={active[0].bot} onDone={changed} onPaid={() => setRenew(active[0])} />
+              <CallForm phone={p.phone} bot={active[0].bot} onDone={changed} />
             </section>
           )}
 
@@ -184,7 +166,6 @@ export default function PersonDrawer({ phone, onClose, onChanged }) {
           {p.app && <p className="text-xs text-ink-40">App: {p.app.status}, last paid {ago(p.app.lastPaidAt)}</p>}
         </div>
       )}
-      <RenewModal open={!!renew} onClose={() => setRenew(null)} phone={phone} name={p?.name} bot={renew?.bot} billingDate={renew?.billingDate} onDone={changed} />
     </Drawer>
   );
 }

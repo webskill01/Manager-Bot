@@ -34,10 +34,10 @@ export function Login({ onDone }) {
   const [password, setPassword] = useState('');
   const { busy, error, submit } = useSubmit(async () => { await api('/login', { method: 'POST', body: { name, password } }); onDone(); });
   return (
-    <Shell title="Recovery Panel" sub="Sign in to see today's calls">
+    <Shell title="Panel" sub="EaseCab team · sign in to see today's calls">
       <form onSubmit={submit} className="space-y-4">
         <Field label="Name"><input className={inputCls} value={name} onChange={e => setName(e.target.value)} autoComplete="username" autoFocus required /></Field>
-        <Field label="Password"><input type="password" className={inputCls} value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></Field>
+        <Field label="PIN"><input type="password" inputMode="numeric" className={inputCls} value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" required /></Field>
         {error && <p className="text-sm text-bad" role="alert">{error}</p>}
         <Button type="submit" className="w-full" disabled={busy}>{busy ? 'Signing in…' : 'Sign in'}</Button>
       </form>
@@ -50,10 +50,10 @@ export function Join({ token, onDone }) {
   const [password, setPassword] = useState('');
   const { busy, error, submit } = useSubmit(async () => { await api('/join', { method: 'POST', body: { token, name, password } }); onDone(); });
   return (
-    <Shell title="Join the team" sub="Pick the name your team will see and a password">
+    <Shell title="Join the team" sub="Pick the name your team will see and a 4-digit PIN">
       <form onSubmit={submit} className="space-y-4">
         <Field label="Your name"><input className={inputCls} value={name} onChange={e => setName(e.target.value)} autoComplete="username" maxLength={30} autoFocus required /></Field>
-        <Field label="Password" hint="At least 8 characters"><input type="password" className={inputCls} value={password} onChange={e => setPassword(e.target.value)} autoComplete="new-password" minLength={8} required /></Field>
+        <Field label="PIN" hint="4 digits"><input type="password" inputMode="numeric" pattern="\d{4}" maxLength={4} className={inputCls} value={password} onChange={e => setPassword(e.target.value.replace(/\D/g, ''))} autoComplete="new-password" required /></Field>
         {error && <p className="text-sm text-bad" role="alert">{error}</p>}
         <Button type="submit" className="w-full" disabled={busy}>{busy ? 'Creating…' : 'Create account'}</Button>
       </form>
