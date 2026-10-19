@@ -86,3 +86,10 @@ Thumbs.db
 bots/*/app-sync-state.json
 bots/*/group-scan.json
 .superpowers/
+# EaseCab panel: secrets, data, build output
+panel/.env
+panel/service-account.json
+panel/*.db
+panel/*.db-*
+panel/web/dist/
+panel/web/node_modules/
