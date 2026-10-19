@@ -48,3 +48,8 @@ test('ALL_NUMBERS-only phone is a fresh lead; expired app plan is not paid', () 
   assert.equal(p.name, 'New guy');
   assert.equal(p.paidOnApp, false);
 });
+
+test('a nameless ALL_NUMBERS row is still a lead', () => {
+  const people = buildPeople({ allNumbers: [['9000000002', '']] });
+  assert.deepEqual(people.get('9000000002').lead, { exMember: '' });
+});

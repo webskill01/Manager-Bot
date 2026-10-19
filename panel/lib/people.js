@@ -32,7 +32,7 @@ export function buildPeople({ sheets = {}, app = [], allNumbers = [], now = new 
   const leadNames = new Map();
   for (const [phone, name] of allNumbers) {
     const p = get(phone);
-    if (p && name && !leadNames.has(p.phone)) leadNames.set(p.phone, String(name));
+    if (p && !leadNames.get(p.phone)) leadNames.set(p.phone, String(name ?? ''));
   }
   for (const row of app) {
     const p = people.get(normalizePhone(row.phone ?? ''));   // app-only users are nobody we call
