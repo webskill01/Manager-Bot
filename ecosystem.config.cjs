@@ -125,6 +125,27 @@ module.exports = {
       },
     },
     {
+      // panel.easecab.com: nginx → 127.0.0.1:8110. Config in panel/.env (see panel/README.md).
+      name: 'easecab-panel',
+      script: './panel/server.js',
+      cwd: './',
+      instances: 1,
+      exec_mode: 'fork',
+      autorestart: true,
+      watch: false,
+      restart_delay: 5000,
+      max_memory_restart: '300M',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      error_file: './logs/easecab-panel-error.log',
+      out_file: './logs/easecab-panel-out.log',
+      merge_logs: true,
+      log_type: 'raw',
+      env: {
+        NODE_ENV: 'production',
+        TZ: 'Asia/Kolkata',
+      },
+    },
+    {
       name: 'watchdog',
       script: './scripts/watchdog.js',
       cwd: './',
