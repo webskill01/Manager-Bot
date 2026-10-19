@@ -13,6 +13,16 @@ import { daysFromToday, parseDate, todayStr } from './globalConfig.js';
 
 export const APP_STATUS_PENDING = 'PENDING_APP';
 
+// Public launch of the app (IST midnight). Payments before it were tests/beta.
+export const APP_LAUNCH = new Date(`${process.env.APP_LAUNCH || '2026-10-15'}T00:00:00+05:30`).toISOString();
+
+// Paying app member right now: a plan running AND a real payment since launch. The app's own
+// "active" status alone is not enough: it also marks free/manual plans active with no payment.
+export function liveOnApp(row, nowIso = new Date().toISOString()) {
+  return !!row && row.status === 'active' && !!row.expiresAt && row.expiresAt > nowIso
+    && (row.paidCount || 0) > 0 && (row.lastPaidAt || '') >= APP_LAUNCH;
+}
+
 export function isAppFlow(member, config, today = todayStr()) {
   if (member?.appPaidUntil) return true;
   const cutover = parseDate(config?.app?.cutover || '');

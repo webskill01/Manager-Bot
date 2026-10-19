@@ -74,7 +74,7 @@ test('sendlinks: refused unless paid on the app; force overrides; payment activa
 
   store = memStore([pending]);
   h = createMemberHandlers(store, groupManager, config(), log,
-    fakeSync({ phone: '9000000001', status: 'active', expiresAt: iso(30), lastAmount: 149 }));
+    fakeSync({ phone: '9000000001', status: 'active', paidCount: 1, lastPaidAt: new Date().toISOString(), expiresAt: iso(30), lastAmount: 149 }));
   assert.match(await h.handleSendLinks(['9000000001']), /chat\.whatsapp\.com/);
   assert.strictEqual(store.rows[0].status, 'ACTIVE');
   assert.strictEqual(store.rows[0].billingDate, ddmm(30));
@@ -86,7 +86,7 @@ test('buildPeople splits app only / groups only / both across sheets', () => {
     { bot: 'bot-nitin', members: [{ phone: '1', name: 'A', status: 'ACTIVE' }, { phone: '2', name: 'B', status: 'ACTIVE' }] },
     { bot: 'bot-abhi', members: [{ phone: '1', name: 'A', status: 'ACTIVE' }, { phone: '4', name: 'D', status: 'REMOVED' }] },
   ];
-  const app = [{ phone: '1', status: 'active', expiresAt: iso(10) }, { phone: '3', status: 'active', expiresAt: iso(10) },
+  const app = [{ phone: '1', status: 'active', paidCount: 1, lastPaidAt: new Date().toISOString(), expiresAt: iso(10) }, { phone: '3', status: 'active', paidCount: 1, lastPaidAt: new Date().toISOString(), expiresAt: iso(10) },
     { phone: '4', status: 'expired', expiresAt: iso(-3) }];
   const p = buildPeople(sheets, app);
   assert.deepStrictEqual(['1', '2', '3', '4'].map(x => p.get(x).kind), ['both', 'groups', 'app', null]);
@@ -98,7 +98,7 @@ test('buildPeople splits app only / groups only / both across sheets', () => {
 
 test('summary: paid only, split; money only on the pooled (fleet) bot', async () => {
   const store = memStore([{ phone: '9000000001', name: 'A', status: 'ACTIVE' }]);
-  const row = { phone: '9000000001', status: 'active', expiresAt: iso(30) };
+  const row = { phone: '9000000001', status: 'active', paidCount: 1, lastPaidAt: new Date().toISOString(), expiresAt: iso(30) };
   const client = { async payments() { return { payments: [{ phone: '9000000001', amount: 149, first: true }, { phone: '9000000009', amount: 149, first: false }] }; } };
   const fleet = (isFleet) => ({ isFleet, sheets: async () => [{ bot: 'bot-nitin', members: store.getAll() }] });
   const out = await createAppHandlers({ config: config(), appSync: fakeSync(row), client, fleet: fleet(true), log }).handleSummary();
@@ -178,7 +178,7 @@ test('fleet view reads the other bots\' GROUPS tab', async () => {
 test('add after they already paid on the app: ACTIVE, billing = app end date, links in the reply', async () => {
   const store = memStore();
   const h = createMemberHandlers(store, groupManager, config(), log,
-    fakeSync({ phone: '9000000001', status: 'active', expiresAt: iso(30), lastAmount: 149 }));
+    fakeSync({ phone: '9000000001', status: 'active', paidCount: 1, lastPaidAt: new Date().toISOString(), expiresAt: iso(30), lastAmount: 149 }));
   const reply = await h.handleAdd(['Ravi', '9000000001']);
   assert.strictEqual(store.rows[0].status, 'ACTIVE');
   assert.strictEqual(store.rows[0].billingDate, ddmm(30));
@@ -205,7 +205,7 @@ test('appstats <bot> lists one sheet by name: on the app, not yet, waiting, in g
   ]);
   const groupScan = { phones: () => new Map([['9000000001', 1], ['9000000004', 1]]), at: () => 'x', atMs: () => 0 };
   const fleet = createFleetView({ config: { botName: 'bot-abhi' }, store, log, groupScan });
-  const sync = { snapshot: () => new Map([['9000000001', { phone: '9000000001', status: 'active', expiresAt: iso(30) }]]) };
+  const sync = { snapshot: () => new Map([['9000000001', { phone: '9000000001', status: 'active', paidCount: 1, lastPaidAt: new Date().toISOString(), expiresAt: iso(30) }]]) };
   const out = (await createAppHandlers({ config: config(), appSync: sync, client: null, fleet, log, groupScan }).handleAppStats(['abhi'])).join('\n');
   assert.match(out, /ACTIVE members: 2/);
   assert.match(out, /On the app \(1\)\n {2}1\. OnApp · 9000000001 · till/);
@@ -219,7 +219,7 @@ test('ALL_NUMBERS: keeps A-F, adds the app columns, appends phones it lacks', ()
   const tab = [['PHONE', 'NAME', 'SRC', 'N', 'INT', 'STATUS'], [919000000001, 'A', 'bot-nitin (ACTIVE)', 1, 'yes', 'ACTIVE'], ['9000000009', 'Old', 'x', 1, '', 'REMOVED']];
   const people = buildPeople(
     [{ bot: 'bot-abhi', members: [{ phone: '9000000002', name: 'B', status: 'ACTIVE' }], inGroups: new Set(['9000000001', '9000000003']) }],
-    [{ phone: '9000000001', status: 'active', expiresAt: iso(30) }]);
+    [{ phone: '9000000001', status: 'active', paidCount: 1, lastPaidAt: new Date().toISOString(), expiresAt: iso(30) }]);
   const { rows, added } = buildAllNumbers(tab, people);
   assert.deepStrictEqual(rows[0].slice(6), ['ON APP', 'APP TILL', 'IN GROUPS']);
   assert.deepStrictEqual(rows[1], [919000000001, 'A', 'bot-nitin (ACTIVE)', 1, 'yes', 'ACTIVE', 'YES', ddmm(30), 'abhi']);

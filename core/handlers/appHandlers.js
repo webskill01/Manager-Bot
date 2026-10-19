@@ -1,7 +1,7 @@
 import { normalizePhone, todayStr, formatDate, friendlyDate, chunkByChars, dateMatches } from '../globalConfig.js';
 import { appDate } from '../appSync.js';
 import { shortName } from '../fleetView.js';
-import { APP_STATUS_PENDING } from '../appFlow.js';
+import { APP_STATUS_PENDING, liveOnApp } from '../appFlow.js';
 import { buildAllNumbers, TAB as ALL_NUMBERS_TAB } from '../allNumbers.js';
 
 // Commands for the EaseCab app era: platform, today, summary, revenue, appstats, applist.
@@ -17,9 +17,7 @@ export const KINDS = [['both', '📱👥 App + groups'], ['groups', '👥 Groups
 const dayStart = (offset = 0) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + offset); return d; };
 const inDays = (n) => formatDate(dayStart(n));
 
-export function liveOnApp(row, nowIso = new Date().toISOString()) {
-  return !!row && row.status === 'active' && !!row.expiresAt && row.expiresAt > nowIso;
-}
+export { liveOnApp };   // lives in appFlow.js; other modules import it from here
 
 // Pure: one record per phone across every sheet plus the app snapshot.
 //   → Map phone → { phone, name, bots: [short names, ACTIVE rows only], rows: [{bot, member}], app, kind,

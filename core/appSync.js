@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { formatDate, formatDateTime, parseDate, todayStr, daysFromToday, friendlyDate } from './globalConfig.js';
-import { APP_STATUS_PENDING } from './appFlow.js';
+import { APP_STATUS_PENDING, liveOnApp } from './appFlow.js';
 
 // EaseCab app → sheet. The app is the source of truth for who paid; the sheet keeps
 // everything else (per-bot data, referrals, call results).
@@ -32,7 +32,7 @@ export function planSync(members, appRows, nowIso = new Date().toISOString()) {
   const renew = [], activate = [], quiet = [];
   for (const m of members) {
     const r = byPhone.get(m.phone);
-    if (!r || r.status !== 'active' || !r.expiresAt || r.expiresAt <= nowIso) continue;
+    if (!liveOnApp(r, nowIso)) continue;   // free/manual or pre-launch plans never activate a row
     const until = appDate(r.expiresAt);
     const known = parseDate(m.appPaidUntil);
     if (known && parseDate(until) <= known) continue;

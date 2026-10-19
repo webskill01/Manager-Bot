@@ -10,7 +10,7 @@ import { formatDate } from '../core/globalConfig.js';
 const inDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); d.setHours(12, 0, 0, 0); return d; };
 const iso = (n) => inDays(n).toISOString();
 const ddmm = (n) => formatDate(inDays(n));
-const row = (phone, expDays, extra = {}) => ({ phone, status: 'active', expiresAt: iso(expDays), lastAmount: 149, ...extra });
+const row = (phone, expDays, extra = {}) => ({ phone, status: 'active', expiresAt: iso(expDays), lastAmount: 149, paidCount: 1, lastPaidAt: new Date().toISOString(), ...extra });
 
 test('planSync: a later app expiry renews an ACTIVE row; the same expiry is a no-op', () => {
   const members = [
