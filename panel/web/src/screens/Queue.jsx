@@ -11,6 +11,11 @@ export default function Queue() {
   const [dates, setDates] = useStored('q.dates', { preset: 'today' });
   const [f, setF] = useStored('q.filter.v2', { bot: '', status: 'due', app: '', assignee: '' });
   const [sort, setSort] = useStored('q.sort', 'priority');
+  // Picking a day preset also picks its matching status; the status can still be changed after.
+  const pickDates = (d) => {
+    if (d.preset !== dates.preset) setF({ ...f, status: PRESET_STATUS[d.preset] ?? '' });
+    setDates(d);
+  };
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(null);
   const [sel, setSel] = useState(new Set());
@@ -47,7 +52,7 @@ export default function Queue() {
 
       {/* phones: date strip full width, then the three filters in one row */}
       <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 mb-4">
-        <div className="col-span-2 sm:col-auto"><DateFilter value={dates} onChange={setDates} /></div>
+        <div className="col-span-2 sm:col-auto"><DateFilter value={dates} onChange={pickDates} /></div>
         <Select value={f.bot} onChange={e => setF({ ...f, bot: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="Bot">
           <option value="">All bots</option>
           {me.bots.map(b => <option key={b} value={b}>{botLabel(b)}</option>)}
@@ -155,6 +160,8 @@ export default function Queue() {
     </>
   );
 }
+
+const PRESET_STATUS = { today: 'due', yesterday: 'overdue', tomorrow: 'upcoming' };   // day / range: any status
 
 // List order only; Start calling keeps the server's priority order (follow-ups first).
 const APP_RANK = { signed_up: 0, lapsed: 1, none: 2 };
