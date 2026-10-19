@@ -52,7 +52,11 @@ export function createMemberStore(sheetClient, botName) {
   // otherwise pay a full sheet read per member — 100 members = 200 API calls. They pass
   // skipRefresh and call refresh() once at the end. Returns null in that case, since the
   // in-memory copy is deliberately stale until that final refresh.
+  // The whole row is rewritten from the cache, so the cache must be fresh: the EaseCab panel
+  // writes renewals into this same sheet, and a stale row here would silently undo them.
+  // Bulk callers (skipRefresh) refresh once themselves before their loop.
   async function update(phone, updates, { skipRefresh = false } = {}) {
+    if (!skipRefresh) await refresh();
     const member = findByPhone(phone);
     if (!member) throw new Error(`Member not found: ${phone}`);
     const updated = { ...member, ...updates, lastUpdated: new Date().toISOString() };
