@@ -54,6 +54,9 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
   };
   const admin = (req, res, next) => req.user.role === 'admin' ? next() : res.status(403).json({ error: 'Admins only' });
   const pub = (u) => ({ id: u.id, name: u.name, role: u.role, mustSetPassword: !u.pw_hash });
+  // Bots this user may see: their own limit if an admin set one, else all.
+  const botsOf = (u) => { const own = String(u.bots || '').split(',').filter(b => botCfg[b]); return own.length ? own : Object.keys(botCfg); };
+  const list = (v, ok) => String(v || '').split(',').filter(x => ok.includes(x));
   const phoneParam = (req, res) => {
     const p = normalizePhone(req.params.phone);
     if (p.length !== 10) { res.status(400).json({ error: 'Bad phone' }); return null; }
@@ -68,9 +71,11 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
       if (!DATE_RE.test(q.from || '') || !DATE_RE.test(q.to || '')) return null;
       f.from = q.from; f.to = q.to;
     }
-    if (q.bot && botCfg[q.bot]) f.bot = q.bot;
-    if (['followup', 'overdue', 'due', 'upcoming'].includes(q.status)) f.status = q.status;
-    if (['lapsed', 'signed_up', 'none'].includes(q.app)) f.app = q.app;
+    const allowed = botsOf(user);
+    const asked = list(q.bot, allowed);
+    f.bot = asked.length ? asked : q.bot ? ['-'] : allowed;   // '-' matches no bot: asked only for bots outside the limit
+    f.status = list(q.status, ['followup', 'overdue', 'due', 'upcoming']);
+    f.app = list(q.app, ['lapsed', 'signed_up', 'none']);
     if (q.assignee === 'me' || q.assignee === 'none') f.assignee = q.assignee;
     else if (/^\d+$/.test(q.assignee || '')) f.assignee = Number(q.assignee);
     return f;
@@ -151,7 +156,7 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     res.clearCookie(COOKIE, { path: '/' });
     res.json({ ok: true });
   });
-  r.get('/me', (req, res) => res.json({ ...pub(req.user), bots: Object.keys(botCfg), sync: sync.status() }));
+  r.get('/me', (req, res) => res.json({ ...pub(req.user), bots: botsOf(req.user), allBots: Object.keys(botCfg), sync: sync.status() }));
   r.post('/password', (req, res) => {
     const { old = '', password = '' } = req.body || {};
     if (req.user.pw_hash && !checkPw(String(old), req.user.pw_hash)) return res.status(400).json({ error: 'Current PIN is wrong' });
@@ -265,10 +270,18 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
   r.get('/followups', (req, res) => {
     const people = sync.people();
     const mine = req.query.mine === '1' || req.user.role !== 'admin';
+    const allowed = botsOf(req.user);
+    const seen = (phone) => { const p = people.get(phone); return p && !p.onApp && p.active.some(m => allowed.includes(m.bot)) ? p : null; };
     const rows = db.openFollowups()
-      .filter(f => !mine || f.user_id === req.user.id)
+      .filter(f => (!mine || f.user_id === req.user.id) && seen(f.phone))
       .map(f => ({ ...f, name: people.get(f.phone)?.name || '', bot: people.get(f.phone)?.active[0]?.bot || '', note: db.timeline(f.phone)[0]?.note || '' }));
-    res.json({ rows, users: names() });
+    // No answer: their latest call in the last 3 days went unanswered and nothing newer is open.
+    const latest = new Map(db.interactionsSince(new Date(Date.now() - 3 * 86400e3)).map(i => [i.phone, i]));   // time-ordered: last wins
+    const open = new Set(rows.map(f => f.phone));
+    const noAnswer = [...latest.values()]
+      .filter(i => i.outcome === 'no_answer' && !open.has(i.phone) && (!mine || i.user_id === req.user.id) && seen(i.phone))
+      .map(i => ({ id: `na${i.id}`, phone: i.phone, user_id: i.user_id, at: i.at, note: i.note, name: people.get(i.phone).name, bot: people.get(i.phone).active[0]?.bot || '' }));
+    res.json({ rows, noAnswer, users: names() });
   });
 
   r.get('/me/stats', (req, res) => {
@@ -336,15 +349,17 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     const u = db.userById(id);
     if (!u) return res.status(404).json({ error: 'Not found' });
     if (id === req.user.id) return res.status(400).json({ error: 'You cannot change your own role or access' });
-    const { role, active, pin } = req.body || {};
+    const { role, active, pin, bots } = req.body || {};
     if (pin !== undefined && !validPin(pin)) return res.status(400).json({ error: 'PIN must be 4 digits' });
+    if (bots !== undefined && (!Array.isArray(bots) || bots.some(b => !botCfg[b]))) return res.status(400).json({ error: 'Unknown bot' });
     db.updateUser(id, {
       role: ['admin', 'caller'].includes(role) ? role : undefined,
       active: typeof active === 'boolean' ? active : undefined,
       pwHash: pin !== undefined ? hashPw(pin) : undefined,
+      bots: bots !== undefined ? bots.join(',') : undefined,
     });
     if (pin !== undefined) db.dropSessions(id);
-    db.audit(req.user.id, pin !== undefined ? 'pin_reset' : 'user_updated', u.name, { role, active });
+    db.audit(req.user.id, pin !== undefined ? 'pin_reset' : 'user_updated', u.name, { role, active, bots });
     res.json({ ok: true });
   });
 

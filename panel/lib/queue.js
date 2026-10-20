@@ -14,9 +14,11 @@ const RETRY_MS = 4 * 3600e3;
 const MAX_NO_ANSWER = 3;
 const REASON_RANK = { followup: 0, overdue: 1, due: 2, upcoming: 3 };
 
+const has = (want, x) => !want || (Array.isArray(want) ? !want.length || want.includes(x) : want === x);
 const startOfDay = (now) => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d; };
 
 // filter: { view: 'today' | 'range', from?, to? (DD-MM-YYYY), bot?, status?, app? (appState), assignee? ('me'|'none'|id), userId? }
+// bot / status / app take one value or a list (any of them matches); empty = no filter.
 // price: what they pay on the app (₹149); the goal is moving them there, not renewing in groups.
 export function buildQueue({ people, botCfg, price = 0, interactions = [], followups = [], assignments = [], claims = [], filter = {}, now = new Date() }) {
   const nowIso = new Date(now).toISOString();
@@ -32,13 +34,13 @@ export function buildQueue({ people, botCfg, price = 0, interactions = [], follo
 
   const rows = [];
   for (const p of people.values()) {
-    if (p.onApp || !p.active.length || (filter.app && filter.app !== p.appState)) continue;
+    if (p.onApp || !p.active.length || !has(filter.app, p.appState)) continue;
     const fu = fuBy.get(p.phone) || null;
     const fuDue = !!fu && fu.due_at <= nowIso;
 
     // Every ACTIVE membership that matches the filter, most overdue first.
     const hits = p.active
-      .filter(({ bot, member }) => botCfg[bot] && !isDelayActive(member) && (!filter.bot || filter.bot === bot))
+      .filter(({ bot, member }) => botCfg[bot] && !isDelayActive(member) && has(filter.bot, bot))
       .map(({ bot, member }) => ({ bot, member, days: daysFromToday(member.billingDate) }))
       .filter(({ bot, member, days }) => {
         if (days === null) return false;
@@ -53,7 +55,7 @@ export function buildQueue({ people, botCfg, price = 0, interactions = [], follo
 
     const { bot, member, days } = hits[0];
     const reason = fuDue ? 'followup' : days < 0 ? 'overdue' : days === 0 ? 'due' : 'upcoming';
-    if (filter.status && filter.status !== reason) continue;
+    if (!has(filter.status, reason)) continue;
 
     const assignedTo = assigned.get(p.phone) ?? null;
     if (filter.assignee === 'none' && assignedTo !== null) continue;

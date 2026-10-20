@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api.js';
 import { useMe } from '../App.jsx';
-import { when } from '../format.js';
-import { Badge, Button, Card, Loading, Modal, PageHead, Select, copy, inputCls, useToast } from '../ui.jsx';
+import { botLabel, when } from '../format.js';
+import { Badge, Button, Card, Loading, Modal, MultiSelect, PageHead, Select, copy, inputCls, useToast } from '../ui.jsx';
 
 export default function Users() {
   const me = useMe();
@@ -44,7 +44,7 @@ export default function Users() {
       </PageHead>
 
       <Card className="mb-4 p-4 text-sm text-ink-60">
-        <b className="text-ink">Callers</b> see the shared queue and their own assignments, log calls and mark who moved to the app (the app confirms it).
+        <b className="text-ink">Callers</b> see the shared queue and their own assignments, log calls and mark who moved to the app (the app confirms it). Use the bot picker on a row to limit someone to some bots.
         {' '}<b className="text-ink">Admins</b> also see everyone's work, the dashboard and activity, assign members and manage the team.
       </Card>
 
@@ -63,6 +63,8 @@ export default function Users() {
                   <option value="caller">Caller</option>
                   <option value="admin">Admin</option>
                 </Select>
+                <MultiSelect label={`Bots for ${u.name}`} value={u.bots ? u.bots.split(',') : []} onChange={bots => update(u.id, { bots })}
+                  all="All bots" className="text-xs" options={me.allBots.map(b => [b, botLabel(b)])} />
                 <Button size="sm" variant="secondary" icon="key" onClick={() => setReset(u)}>Reset PIN</Button>
                 <Button size="sm" variant={u.active ? 'danger' : 'secondary'} onClick={() => update(u.id, { active: !u.active })}>
                   {u.active ? 'Disable' : 'Enable'}

@@ -7,7 +7,7 @@ import { hashPw } from '../panel/lib/auth.js';
 import { formatDate } from '../core/globalConfig.js';
 
 const day = (n) => formatDate(new Date(Date.now() + n * 86400e3));
-const botCfg = { 'bot-abhi': { botName: 'bot-abhi', renewal: { fullAmount: 100, referralAmount: 100 }, removalDay: 7 } };
+const botCfg = { 'bot-abhi': { botName: 'bot-abhi', renewal: { fullAmount: 100, referralAmount: 100 }, removalDay: 7 }, 'bot-nitin': { botName: 'bot-nitin', removalDay: 7 } };
 const people = buildPeople({
   sheets: { 'bot-abhi': [
     { name: 'Gurpreet', phone: '9876543210', status: 'ACTIVE', billingDate: day(-2), paidLast: 100 },
@@ -122,4 +122,21 @@ test('app filter narrows the queue; drawer and focus get the same person shape',
   assert.equal(p.row.phone, '9876543211');
   assert.equal(p.appState, 'none');
   assert.equal(p.memberships[0].days, -1);
+});
+
+test('bot limits, stacked filters and no-answer follow-ups', async () => {
+  const admin = await login('Nitin', 'first-pin-123');
+  await call('/password', { cookie: admin.cookie, method: 'POST', body: { password: '4321' } });
+  const { cookie } = await login('Riya', '9999');
+  await call('/person/9876543211/interaction', { cookie, method: 'POST', body: { outcome: 'no_answer', bot: 'bot-abhi' } });
+  const fu = await (await call('/followups', { cookie })).json();
+  assert.deepEqual(fu.noAnswer.map(x => x.phone), ['9876543211']);
+  assert.equal((await (await call('/queue?status=followup,overdue', { cookie })).json()).rows.length, 2, 'statuses stack');
+  const riya = db.userByName('Riya').id;
+  assert.equal((await call(`/users/${riya}`, { cookie: admin.cookie, method: 'PATCH', body: { bots: ['bot-nope'] } })).status, 400);
+  db.updateUser(riya, { bots: 'bot-nitin' });   // a bot with no members here
+  assert.deepEqual((await (await call('/me', { cookie })).json()).bots, ['bot-nitin']);
+  assert.equal((await (await call('/queue?bot=bot-abhi', { cookie })).json()).rows.length, 0, 'outside the limit = nothing');
+  db.updateUser(riya, { bots: '' });
+  assert.equal((await (await call('/queue', { cookie })).json()).rows.length, 2);
 });

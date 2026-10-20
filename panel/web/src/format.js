@@ -36,7 +36,7 @@ export const OUTCOMES = {
 // Same four states as panel/lib/people.js. Paid = the app's payment count, not its status.
 export const APP_STATES = {
   member: { label: 'App member', tone: 'green', hint: 'Paid on the app, plan running. Nothing to do.' },
-  lapsed: { label: 'App lapsed', tone: 'amber', hint: 'Paid on the app before, plan ran out. Ask them to renew on the app.' },
+  lapsed: { label: 'App expired', tone: 'amber', hint: 'Paid on the app before, plan expired. Ask them to renew on the app.' },
   signed_up: { label: 'Signed up on app', tone: 'blue', hint: "Has an app account but never paid. Help them finish." },
   none: { label: 'Not downloaded', tone: 'gray', hint: 'No app account yet. Get them to download it and sign up.' },
 };

@@ -2,18 +2,19 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, qs } from '../api.js';
 import { useMe, go, SyncStatus } from '../App.jsx';
 import { APP_STATES, BLOCKED, OUTCOMES, REASONS, inr, num, shortDate, daysLabel, ago, botLabel } from '../format.js';
-import { Badge, Button, Card, DateFilter, Empty, Kpi, Loading, PageHead, Select, cx, dateQuery, dateText, useStored, useToast } from '../ui.jsx';
+import { Badge, Button, Card, DateFilter, Empty, Kpi, Loading, MultiSelect, PageHead, Select, cx, dateQuery, dateText, useStored, useToast } from '../ui.jsx';
 import PersonDrawer from './Person.jsx';
 
 export default function Queue() {
   const me = useMe();
   const toast = useToast();
   const [dates, setDates] = useStored('q.dates', { preset: 'today' });
-  const [f, setF] = useStored('q.filter.v2', { bot: '', status: 'due', app: '', assignee: '' });
+  // bot / status / app are lists (any of them). Admins start on bot-nitin.
+  const [f, setF] = useStored('q.filter.v3', { bot: me.role === 'admin' && me.bots.includes('bot-nitin') ? ['bot-nitin'] : [], status: ['due'], app: [], assignee: '' });
   const [sort, setSort] = useStored('q.sort', 'priority');
   // Picking a day preset also picks its matching status; the status can still be changed after.
   const pickDates = (d) => {
-    if (d.preset !== dates.preset) setF({ ...f, status: PRESET_STATUS[d.preset] ?? '' });
+    if (d.preset !== dates.preset) setF({ ...f, status: PRESET_STATUS[d.preset] ? [PRESET_STATUS[d.preset]] : [] });
     setDates(d);
   };
   const [data, setData] = useState(null);
@@ -53,18 +54,12 @@ export default function Queue() {
       {/* phones: date strip full width, then the three filters in one row */}
       <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 mb-4">
         <div className="col-span-2 sm:col-auto"><DateFilter value={dates} onChange={pickDates} /></div>
-        <Select value={f.bot} onChange={e => setF({ ...f, bot: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="Bot">
-          <option value="">All bots</option>
-          {me.bots.map(b => <option key={b} value={b}>{botLabel(b)}</option>)}
-        </Select>
-        <Select value={f.status} onChange={e => setF({ ...f, status: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="Status">
-          <option value="">Any status</option>
-          {Object.entries(REASONS).map(([k, r]) => <option key={k} value={k}>{r.label}</option>)}
-        </Select>
-        <Select value={f.app} onChange={e => setF({ ...f, app: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="App status">
-          <option value="">Any app status</option>
-          {['signed_up', 'lapsed', 'none'].map(k => <option key={k} value={k}>{APP_STATES[k].label}</option>)}
-        </Select>
+        {me.bots.length > 1 && <MultiSelect label="Bot" value={f.bot} onChange={bot => setF({ ...f, bot })} all="All bots" className="min-w-0"
+          options={me.bots.map(b => [b, botLabel(b)])} />}
+        <MultiSelect label="Status" value={f.status} onChange={status => setF({ ...f, status })} all="Any status" className="min-w-0"
+          options={Object.entries(REASONS).map(([k, r]) => [k, r.label])} />
+        <MultiSelect label="App status" value={f.app} onChange={app => setF({ ...f, app })} all="Any app status" className="min-w-0"
+          options={['signed_up', 'lapsed', 'none'].map(k => [k, APP_STATES[k].label])} />
         <Select value={f.assignee} onChange={e => setF({ ...f, assignee: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="Assignee">
           <option value="">{isAdmin ? 'Everyone' : 'Shared + mine'}</option>
           <option value="me">Assigned to me</option>
@@ -135,6 +130,12 @@ export default function Queue() {
             </table>
 
             {/* phones: cards */}
+            {isAdmin && (
+              <label className="md:hidden flex items-center gap-3 px-4 py-2.5 bg-bg text-xs text-ink-60 border-b border-line">
+                <input type="checkbox" checked={allSel} onChange={() => setSel(allSel ? new Set() : new Set(rows.map(r => r.phone)))} />
+                Select all {num(rows.length)}
+              </label>
+            )}
             <ul className="md:hidden divide-y divide-line">
               {rows.map(r => (
                 <li key={r.phone} className={cx('flex gap-3 p-4', r.blocked && 'opacity-70')}>

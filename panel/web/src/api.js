@@ -15,4 +15,5 @@ export async function api(path, { method = 'GET', body } = {}) {
   return data;
 }
 
-export const qs = (o) => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
+// Lists go as one comma value (bot=a,b); empty ones are dropped.
+export const qs = (o) => new URLSearchParams(Object.entries(o).map(([k, v]) => [k, Array.isArray(v) ? v.join(',') : v]).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();

@@ -36,6 +36,8 @@ export function openDb(file) {
   const db = new DatabaseSync(file);
   db.exec('PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;');
   db.exec(SCHEMA);
+  // Added later. bots: comma list a user is limited to; '' = every bot.
+  try { db.exec("ALTER TABLE users ADD COLUMN bots TEXT NOT NULL DEFAULT ''"); } catch { /* already there */ }
   const q = (sql) => db.prepare(sql);
 
   function tx(fn) {
@@ -54,8 +56,9 @@ export function openDb(file) {
     },
     userByName: (name) => q('SELECT * FROM users WHERE name = ?').get(name) || null,
     userById: (id) => q('SELECT * FROM users WHERE id = ?').get(id) || null,
-    users: () => q('SELECT id, name, role, active, created_at, pw_hash != \'\' AS has_password FROM users ORDER BY id').all(),
-    updateUser(id, { role, active, pwHash }) {
+    users: () => q('SELECT id, name, role, active, bots, created_at, pw_hash != \'\' AS has_password FROM users ORDER BY id').all(),
+    updateUser(id, { role, active, pwHash, bots }) {
+      if (bots !== undefined) q('UPDATE users SET bots = ? WHERE id = ?').run(bots, id);
       if (role !== undefined) q('UPDATE users SET role = ? WHERE id = ?').run(role, id);
       if (active !== undefined) {
         q('UPDATE users SET active = ? WHERE id = ?').run(active ? 1 : 0, id);

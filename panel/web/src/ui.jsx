@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { addDays, dmy, toDmy, toIso, isoDay, shortDate } from './format.js';
 
 export const cx = (...c) => c.filter(Boolean).join(' ');
@@ -106,6 +106,33 @@ export const Select = ({ className, children, ...p }) =>
   <select className={cx(inputCls.replace('w-full ', ''), 'pr-8', className)} {...p}>{children}</select>;
 
 // Right-side panel on desktop, full screen on phones.
+// Pick any number of options; none picked = `all`. A native <details> so it works on phones.
+export function MultiSelect({ value, onChange, options, all, label, className }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const close = (e) => { if (ref.current && !ref.current.contains(e.target)) ref.current.open = false; };
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, []);
+  const flip = (k) => onChange(value.includes(k) ? value.filter(x => x !== k) : [...value, k]);
+  const text = !value.length ? all : value.length === 1 ? options.find(([k]) => k === value[0])?.[1] : `${value.length} picked`;
+  return (
+    <details ref={ref} className={cx('relative', className)}>
+      <summary aria-label={label} className="h-9 flex items-center justify-between gap-2 rounded-lg border border-line bg-white px-3 text-sm text-ink cursor-pointer list-none whitespace-nowrap">
+        <span className="truncate">{text}</span><span className="text-ink-40 text-xs">▾</span>
+      </summary>
+      <div className="absolute z-30 mt-1 min-w-full w-max rounded-lg border border-line bg-white shadow-lg py-1">
+        {options.map(([k, l]) => (
+          <label key={k} className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-bg cursor-pointer whitespace-nowrap">
+            <input type="checkbox" checked={value.includes(k)} onChange={() => flip(k)} />{l}
+          </label>
+        ))}
+        {value.length > 0 && <button type="button" onClick={() => onChange([])} className="w-full text-left px-3 py-2 text-xs text-brand border-t border-line">Clear · {all}</button>}
+      </div>
+    </details>
+  );
+}
+
 export function Drawer({ open, onClose, title, children, width = 'max-w-xl' }) {
   useEffect(() => {
     if (!open) return;

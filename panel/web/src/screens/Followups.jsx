@@ -25,7 +25,7 @@ export default function Followups() {
 
   return (
     <>
-      <PageHead title="Follow-ups" sub="Promises to pay and call-backs, oldest first">
+      <PageHead title="Follow-ups" sub="Promises, call-backs and unanswered calls, oldest first">
         {me.role === 'admin' && (
           <div className="inline-flex rounded-lg border border-line bg-white p-0.5">
             {[[true, 'Mine'], [false, 'Everyone']].map(([v, l]) => (
@@ -35,7 +35,7 @@ export default function Followups() {
           </div>
         )}
       </PageHead>
-      {!data ? <Loading /> : !rows.length ? <Card><Empty title="No open follow-ups" hint="Promises and call-backs you log show up here." /></Card> : (
+      {!data ? <Loading /> : !rows.length && !data.noAnswer?.length ? <Card><Empty title="No open follow-ups" hint="Promises and call-backs you log show up here." /></Card> : (
         <div className="space-y-6">
           {groups.filter(([, xs]) => xs.length).map(([title, xs]) => (
             <section key={title}>
@@ -56,6 +56,25 @@ export default function Followups() {
               </Card>
             </section>
           ))}
+          {data.noAnswer?.length > 0 && (
+            <section>
+              <h2 className="text-xs font-semibold uppercase tracking-wide mb-2 text-ink-40">No answer · last 3 days · {data.noAnswer.length}</h2>
+              <Card className="divide-y divide-line">
+                {data.noAnswer.map(f => (
+                  <button key={f.id} type="button" onClick={() => setOpen(f.phone)} className="w-full text-left flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 hover:bg-bg">
+                    <div className="w-32 shrink-0 text-sm tabular-nums text-ink-60">{when(f.at)}</div>
+                    <div className="flex-1 min-w-[160px]">
+                      <div className="font-medium text-sm">{f.name || f.phone}</div>
+                      {f.note && <div className="text-xs text-ink-60 truncate max-w-md">{f.note}</div>}
+                    </div>
+                    <Badge tone="gray">No answer</Badge>
+                    <span className="text-xs text-ink-40 w-20">{botLabel(f.bot)}</span>
+                    {!mine && <span className="text-xs text-ink-60 w-20 truncate">{data.users[f.user_id]}</span>}
+                  </button>
+                ))}
+              </Card>
+            </section>
+          )}
         </div>
       )}
       <PersonDrawer phone={open} onClose={() => setOpen(null)} onChanged={load} />
