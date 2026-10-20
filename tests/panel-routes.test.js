@@ -151,3 +151,17 @@ test('bot limits, stacked filters and no-answer follow-ups', async () => {
   db.updateUser(riya, { bots: '' });
   assert.equal((await (await call('/queue', { cookie })).json()).rows.length, 2);
 });
+
+test('summary: callers see only their own calls; admins pick callers', async () => {
+  const dmy = (n) => { const d = new Date(Date.now() + n * 864e5); return `${String(d.getDate()).padStart(2, '0')}-${String(d.getMonth() + 1).padStart(2, '0')}-${d.getFullYear()}`; };
+  const range = `from=${dmy(-1)}&to=${dmy(1)}`;
+  const riya = await login('Riya', '9999');
+  const mine = await (await call(`/summary?${range}&users=${db.userByName('Nitin').id}`, { cookie: riya.cookie })).json();
+  assert.equal(mine.days.length, 3);
+  assert.ok(mine.total.calls >= 2, 'a caller always gets their own, whatever they ask for');
+  assert.equal(mine.callers.every(c => c.userId === db.userByName('Riya').id), true);
+  const admin = await login('Nitin', '4321');
+  const other = await (await call(`/summary?${range}&users=${db.userByName('Nitin').id}`, { cookie: admin.cookie })).json();
+  assert.equal(other.total.calls, 0);
+  assert.equal((await call('/summary?from=05-10-2026&to=01-10-2026', { cookie: admin.cookie })).status, 400);
+});

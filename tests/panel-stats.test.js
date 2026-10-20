@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { attribute, team, ageing, funnel, recoveredByDay } from '../panel/lib/stats.js';
+import { attribute, team, ageing, funnel, recoveredByDay, summary } from '../panel/lib/stats.js';
 
 const T = Date.parse('2026-10-19T12:00:00Z');
 const at = (days) => new Date(T + days * 86400e3).toISOString();
@@ -47,4 +47,18 @@ test('funnel counts paid people back into "due" by their old billing date', () =
 test('recovered by day sums rupees per IST day', () => {
   assert.deepEqual(recoveredByDay([pay('1', 0, 90), pay('2', 0, 100), pay('3', -1, 100)]),
     [{ date: '18-10-2026', amount: 100, count: 1 }, { date: '19-10-2026', amount: 190, count: 2 }]);
+});
+
+test('summary: per-day outcomes, distinct people, moves on their day and caller', () => {
+  const day = (iso) => iso.slice(0, 10);
+  const calls = [
+    { phone: '1', user_id: 1, outcome: 'no_answer', at: '2026-10-19T05:00:00Z' },
+    { phone: '1', user_id: 1, outcome: 'promise', at: '2026-10-20T05:00:00Z' },
+    { phone: '2', user_id: 2, outcome: 'not_interested', at: '2026-10-20T06:00:00Z' },
+  ];
+  const s = summary({ calls, moves: [{ phone: '1', userId: 1, amount: 149, at: '2026-10-20T07:00:00Z' }], days: ['2026-10-19', '2026-10-20'], day });
+  assert.deepEqual(s.days.map(d => [d.day, d.calls, d.people, d.connected, d.moved]), [['2026-10-20', 2, 2, 2, 1], ['2026-10-19', 1, 1, 0, 0]]);
+  assert.equal(s.total.people, 2);
+  assert.equal(s.total.not_interested, 1);
+  assert.deepEqual(s.callers.find(c => c.userId === 1), { userId: 1, ...s.callers.find(c => c.userId === 1), calls: 2, moved: 1, amount: 149 });
 });

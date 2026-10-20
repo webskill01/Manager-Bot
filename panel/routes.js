@@ -1,6 +1,6 @@
 import express from 'express';
 import { buildQueue, focusOrder } from './lib/queue.js';
-import { attribute, team, ageing, funnel, recoveredByDay, byBot } from './lib/stats.js';
+import { attribute, team, ageing, funnel, recoveredByDay, byBot, summary } from './lib/stats.js';
 import { OUTCOMES } from './lib/db.js';
 import { hashPw, checkPw, newToken, tokenHash, validPin, createRateLimit } from './lib/auth.js';
 import { normalizePhone, parseDate, formatDate, daysFromToday } from '../core/globalConfig.js';
@@ -103,6 +103,9 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     }
     return { onApp: n.member, lapsedOnApp: n.lapsed, signedUpOnApp: n.signed_up, notOnApp: n.none, groupsOnly };
   }
+  // bot 'app' = an app-only user (recorded briefly on 20 Oct); only group members count as moved.
+  const isMove = (p) => p.source === 'app' && p.bot !== 'app';
+  const istDay = (iso) => new Date(iso).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });   // YYYY-MM-DD
   const names = () => Object.fromEntries(db.users().map(u => [u.id, u.name]));
   const payments = (from, to = new Date()) =>
     db.auditByAction('payment_seen', from, to).map(a => ({ ...JSON.parse(a.detail), at: a.at, phone: a.target }));
@@ -318,6 +321,29 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     res.json({ ok: true, count: clean.length });
   });
 
+  // Progress: per-day calls, outcomes and app moves after a call. Admins pick callers (none = everyone);
+  // a caller only ever sees their own.
+  r.get('/summary', (req, res) => {
+    const today = formatDate(new Date());
+    const from = DATE_RE.test(req.query.from || '') ? req.query.from : today;
+    const to = DATE_RE.test(req.query.to || '') ? req.query.to : today;
+    const istMidnight = (dmy) => new Date(`${dmy.split('-').reverse().join('-')}T00:00:00+05:30`);
+    const lo = istMidnight(from), hi = new Date(istMidnight(to).getTime() + 86400e3);
+    if (lo >= hi || hi - lo > 366 * 86400e3) return res.status(400).json({ error: 'Pick up to a year, From before To' });
+    const ids = req.user.role === 'admin' ? list(req.query.users, db.users().map(u => String(u.id))).map(Number) : [req.user.id];
+    const allowed = botsOf(req.user);
+    const bots = list(req.query.bot, allowed);
+    const okBot = (b) => (bots.length ? bots : allowed).includes(b) || (!b && !bots.length);
+    const who = (id) => !ids.length || ids.includes(id);
+    const calls = db.interactionsBetween(lo, hi).filter(i => who(i.user_id) && okBot(i.bot) && i.outcome !== 'paid');
+    const early = new Date(lo - 7 * 86400e3);
+    const moves = attribute(payments(early), db.interactionsSince(early))
+      .filter(p => isMove(p) && p.userId && who(p.userId) && okBot(p.bot) && p.at >= lo.toISOString() && p.at < hi.toISOString());
+    const days = [];
+    for (let t = lo.getTime(); t < hi.getTime(); t += 86400e3) days.push(istDay(t));
+    res.json({ from, to, ...summary({ calls, moves, days, day: istDay }), users: names() });
+  });
+
   r.get('/dashboard', admin, (req, res) => {
     const today = formatDate(new Date());
     const from = DATE_RE.test(req.query.from || '') ? req.query.from : today;
@@ -329,8 +355,6 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     const allPays = attribute(payments(new Date(lo - 40 * 86400e3)), db.interactionsSince(new Date(lo - 40 * 86400e3)));
     const inWindow = allPays.filter(p => p.at >= lo.toISOString() && p.at < hi.toISOString());
     // The team's job is moving people to the app; group renewals are counted but not credited.
-    // bot 'app' = an app-only user (recorded briefly on 20 Oct); only group members count as moved.
-    const isMove = (p) => p.source === 'app' && p.bot !== 'app';
     const moved = inWindow.filter(isMove);
     const users = db.users();
     res.json({

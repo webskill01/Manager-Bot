@@ -7,6 +7,7 @@ import Queue from './screens/Queue.jsx';
 import Focus from './screens/Focus.jsx';
 import Followups from './screens/Followups.jsx';
 import Dashboard from './screens/Dashboard.jsx';
+import Summary from './screens/Summary.jsx';
 import Users from './screens/Users.jsx';
 import Audit from './screens/Audit.jsx';
 
@@ -33,6 +34,7 @@ export const go = (hash) => { location.hash = hash; };
 const NAV = [
   { path: 'queue', label: 'Queue', icon: 'list' },
   { path: 'followups', label: 'Follow-ups', icon: 'calendar' },
+  { path: 'summary', label: 'Summary', icon: 'bars' },
   { path: 'dashboard', label: 'Dashboard', icon: 'chart', admin: true },
   { path: 'users', label: 'Team', icon: 'users', admin: true },
   { path: 'audit', label: 'Activity', icon: 'activity', admin: true },
@@ -50,7 +52,7 @@ export default function App() {
 
   const nav = NAV.filter(n => !n.admin || me.role === 'admin');
   const path = nav.some(n => n.path === route.path) || route.path === 'focus' ? route.path : 'queue';
-  const Screen = { queue: Queue, focus: Focus, followups: Followups, dashboard: Dashboard, users: Users, audit: Audit }[path];
+  const Screen = { queue: Queue, focus: Focus, followups: Followups, summary: Summary, dashboard: Dashboard, users: Users, audit: Audit }[path];
 
   return (
     <MeCtx.Provider value={{ ...me, reload: load }}>

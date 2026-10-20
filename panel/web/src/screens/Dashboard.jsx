@@ -4,11 +4,27 @@ import { APP_STATES, addDays, dmy, inr, num, shortDate, botLabel, toDmy, toIso }
 import { Card, Empty, Kpi, Loading, PageHead, cx, inputCls, useStored, useToast } from '../ui.jsx';
 
 const PRESETS = [['today', 'Today'], ['7d', '7 days'], ['month', 'This month'], ['range', 'Custom']];
-function range(v) {
+export function range(v) {
   if (v.preset === 'today') return { from: dmy(), to: dmy() };
   if (v.preset === '7d') return { from: dmy(addDays(-6)), to: dmy() };
   if (v.preset === 'month') { const d = new Date(); d.setDate(1); return { from: dmy(d), to: dmy() }; }
   return { from: v.from, to: v.to };
+}
+
+// Today / 7 days / this month / custom, shared with Summary.
+export function RangePicker({ v, setV }) {
+  return <>
+    <div className="flex w-full sm:w-auto rounded-lg border border-line bg-white p-0.5">
+      {PRESETS.map(([k, l]) => (
+        <button key={k} type="button" onClick={() => setV({ ...v, preset: k })}
+          className={cx('h-8 flex-1 sm:flex-none px-1.5 sm:px-3 whitespace-nowrap rounded-md text-xs font-medium', v.preset === k ? 'bg-brand-sky text-brand-deep' : 'text-ink-60 hover:text-ink')}>{l}</button>
+      ))}
+    </div>
+    {v.preset === 'range' && <>
+      <input type="date" aria-label="From" className={cx(inputCls.replace('w-full ', ''), 'h-9')} value={toIso(v.from)} onChange={e => e.target.value && setV({ ...v, from: toDmy(e.target.value) })} />
+      <input type="date" aria-label="To" className={cx(inputCls.replace('w-full ', ''), 'h-9')} value={toIso(v.to)} min={toIso(v.from)} onChange={e => e.target.value && setV({ ...v, to: toDmy(e.target.value) })} />
+    </>}
+  </>;
 }
 
 export default function Dashboard() {
@@ -24,16 +40,7 @@ export default function Dashboard() {
   return (
     <>
       <PageHead title="Dashboard" sub={`${shortDate(r.from)} – ${shortDate(r.to)}`}>
-        <div className="flex w-full sm:w-auto rounded-lg border border-line bg-white p-0.5">
-          {PRESETS.map(([k, l]) => (
-            <button key={k} type="button" onClick={() => setV({ ...v, preset: k })}
-              className={cx('h-8 flex-1 sm:flex-none px-1.5 sm:px-3 whitespace-nowrap rounded-md text-xs font-medium', v.preset === k ? 'bg-brand-sky text-brand-deep' : 'text-ink-60 hover:text-ink')}>{l}</button>
-          ))}
-        </div>
-        {v.preset === 'range' && <>
-          <input type="date" aria-label="From" className={cx(inputCls.replace('w-full ', ''), 'h-9')} value={toIso(v.from)} onChange={e => e.target.value && setV({ ...v, from: toDmy(e.target.value) })} />
-          <input type="date" aria-label="To" className={cx(inputCls.replace('w-full ', ''), 'h-9')} value={toIso(v.to)} min={toIso(v.from)} onChange={e => e.target.value && setV({ ...v, to: toDmy(e.target.value) })} />
-        </>}
+        <RangePicker v={v} setV={setV} />
       </PageHead>
 
       {!d ? <Loading /> : (
