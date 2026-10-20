@@ -41,7 +41,9 @@ export function buildPeople({ sheets = {}, app = [], allNumbers = [], launch = '
     if (p && !leadNames.get(p.phone)) leadNames.set(p.phone, String(name ?? ''));
   }
   for (const row of app) {
-    const p = people.get(normalizePhone(row.phone ?? ''));   // app-only users are nobody we call
+    // App-only users are nobody we call, but a paying one still counts as an app member.
+    const paidHere = (row.paidCount || 0) > 0 && (row.lastPaidAt || '') >= launch;
+    const p = paidHere ? get(row.phone) : people.get(normalizePhone(row.phone ?? ''));
     if (!p) continue;
     if (!p.app || (row.expiresAt || '') > (p.app.expiresAt || '')) p.app = row;
   }

@@ -70,3 +70,15 @@ test('app state comes from payments, not the app status', () => {
     assert.equal(people.get(ph).onApp, want === 'member', ph);
   }
 });
+
+test('a paying app user on no sheet still counts; a non-paying one is dropped', () => {
+  const people = buildPeople({
+    app: [
+      { phone: '9800000001', paidCount: 1, lastPaidAt: '2026-10-16T00:00:00Z', expiresAt: future },
+      { phone: '9800000002', paidCount: 0, expiresAt: future },
+    ],
+    launch: '2026-10-15',
+  });
+  assert.equal(people.get('9800000001')?.onApp, true);
+  assert.equal(people.has('9800000002'), false);
+});
