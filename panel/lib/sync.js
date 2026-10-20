@@ -25,10 +25,10 @@ export function detectPayments(prev, next, botCfg) {
     const before = prev.get(p.phone);
     if (!before) continue;
     let hit = null;
-    // Moved to the app (first time on it), or paid again on it.
-    if (p.onApp && (!before.onApp || (p.app.expiresAt || '') > (before.app?.expiresAt || ''))) {
-      const m = (before.active[0] || before.members[0]);
-      hit = { phone: p.phone, bot: m?.bot || 'app', amount: Number(p.app.lastAmount) || 0, billingFrom: m?.member.billingDate || '', source: 'app', at };
+    // Moved to the app (first time on it), or paid again on it. Only group members (on a sheet) count.
+    const m = before.active[0] || before.members[0];
+    if (m && p.onApp && (!before.onApp || (p.app.expiresAt || '') > (before.app?.expiresAt || ''))) {
+      hit = { phone: p.phone, bot: m.bot, amount: Number(p.app.lastAmount) || 0, billingFrom: m.member.billingDate || '', source: 'app', at };
     }
     for (const { bot, member } of hit ? [] : p.members) {
       const old = before.members.find(x => x.bot === bot)?.member;

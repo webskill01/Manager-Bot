@@ -91,13 +91,13 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     // Callers see the shared queue and their own work, never a colleague's assignments.
     return user.role === 'admin' ? rows : rows.filter(r => r.assignedTo === null || r.assignedTo === user.id);
   }
-  // Group members (on any bot sheet) by app state, plus every paying app member. groupsOnly =
+  // Group members (on any bot sheet) by app state; only they count as converted. groupsOnly =
   // still ACTIVE in a group and not paying on the app (lapsed, signed up or not on it).
   function migration() {
     const n = { member: 0, lapsed: 0, signed_up: 0, none: 0 };
     let groupsOnly = 0;
     for (const p of sync.people().values()) {
-      if (!p.members.length && !p.onApp) continue;   // every paying app member counts, even if on no bot sheet
+      if (!p.members.length) continue;   // ALL_NUMBERS-only and app-only people are not group conversions
       n[p.appState]++;
       if (!p.onApp && p.active.length) groupsOnly++;
     }
@@ -267,33 +267,47 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     res.json({ onApp: p.onApp, appState: p.appState });
   });
 
+  // The follow-up log: everyone called (since an admin last cleared them), one row each with
+  // their latest call, how many calls, and the open promise / call back. The page filters it.
   r.get('/followups', (req, res) => {
     const people = sync.people();
-    const mine = req.query.mine === '1' || req.user.role !== 'admin';
     const allowed = botsOf(req.user);
-    const seen = (phone) => { const p = people.get(phone); return p && !p.onApp && p.active.some(m => allowed.includes(m.bot)) ? p : null; };
-    const rows = db.openFollowups()
-      .filter(f => (!mine || f.user_id === req.user.id) && seen(f.phone))
-      .map(f => ({ ...f, name: people.get(f.phone)?.name || '', bot: people.get(f.phone)?.active[0]?.bot || '', note: db.timeline(f.phone)[0]?.note || '' }));
-    // No answer: their latest call in the last 3 days went unanswered and nothing newer is open.
-    const latest = new Map(db.interactionsSince(new Date(Date.now() - 3 * 86400e3)).map(i => [i.phone, i]));   // time-ordered: last wins
-    const open = new Set(rows.map(f => f.phone));
-    const noAnswer = [...latest.values()]
-      .filter(i => i.outcome === 'no_answer' && !open.has(i.phone) && (!mine || i.user_id === req.user.id) && seen(i.phone))
-      .map(i => ({ id: `na${i.id}`, phone: i.phone, user_id: i.user_id, at: i.at, note: i.note, name: people.get(i.phone).name, bot: people.get(i.phone).active[0]?.bot || '' }));
-    res.json({ rows, noAnswer, users: names() });
+    const mine = req.query.mine === '1' || req.user.role !== 'admin';
+    const cleared = db.cleared();
+    const open = new Map(db.openFollowups().map(f => [f.phone, f]));
+    const calls = new Map();
+    for (const i of db.interactionsSince(new Date(0))) {   // ponytail: whole table each load, page it past ~50k calls
+      if (i.at <= (cleared.get(i.phone) || '')) continue;
+      if (!calls.has(i.phone)) calls.set(i.phone, []);
+      calls.get(i.phone).push(i);
+    }
+    const rows = [];
+    for (const [phone, xs] of calls) {
+      const p = people.get(phone);
+      const last = xs.at(-1);
+      const bot = last.bot || p?.active[0]?.bot || p?.members[0]?.bot || '';
+      if (bot && !allowed.includes(bot)) continue;
+      if (mine && !xs.some(c => c.user_id === req.user.id)) continue;
+      const fu = open.get(phone);
+      rows.push({
+        phone, bot, name: p?.name || '', appState: p?.appState || 'none', converted: !!p?.onApp, active: !!p?.active.length,
+        count: xs.length, at: xs.map(c => c.at),
+        last: { outcome: last.outcome, note: last.note, at: last.at, user_id: last.user_id },
+        followup: fu ? { kind: fu.kind, due_at: fu.due_at } : null,
+      });
+    }
+    res.json({ rows, users: names() });
   });
 
-  r.get('/me/stats', (req, res) => {
-    const from = startOfDay();
-    const interactions = db.interactionsBetween(from, new Date());
-    const pays = attribute(payments(new Date(from - 7 * 86400e3)), db.interactionsSince(new Date(from - 7 * 86400e3)))
-      .filter(p => p.at >= from.toISOString());
-    const [mine] = team({ users: [req.user], interactions, followups: db.followupsBetween(from, new Date()), payments: pays });
-    res.json(mine);
+  r.post('/followups/clear', admin, (req, res) => {
+    const { phones } = req.body || {};
+    if (!Array.isArray(phones) || !phones.length || phones.length > 3000) return res.status(400).json({ error: 'Pick some people' });
+    const clean = [...new Set(phones.map(normalizePhone).filter(p => p.length === 10))];
+    db.clear(clean, req.user.id);
+    db.audit(req.user.id, 'followups_cleared', '', { count: clean.length });
+    res.json({ ok: true, count: clean.length });
   });
 
-  // --- admin ---------------------------------------------------------------------------
   r.post('/assign', admin, (req, res) => {
     const { phones, userId = null } = req.body || {};
     if (!Array.isArray(phones) || !phones.length || phones.length > 3000) return res.status(400).json({ error: 'Pick some members' });

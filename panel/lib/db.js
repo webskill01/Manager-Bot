@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS claims(phone TEXT PRIMARY KEY, user_id INTEGER NOT NU
 CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, user_id INTEGER, action TEXT NOT NULL, target TEXT NOT NULL DEFAULT '',
   detail TEXT NOT NULL DEFAULT '', at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_audit_action ON audit(action, at);
+-- Cleared from the follow-up log: their calls up to this time are hidden; a new call brings them back.
+CREATE TABLE IF NOT EXISTS cleared(phone TEXT PRIMARY KEY, user_id INTEGER NOT NULL, at TEXT NOT NULL);
 `;
 
 const iso = (d = new Date()) => new Date(d).toISOString();
@@ -102,6 +104,15 @@ export function openDb(file) {
     },
     closeFollowups: (phone, at = new Date()) =>
       q("UPDATE followups SET status = 'closed', closed_at = ? WHERE phone = ? AND status = 'open'").run(iso(at), phone),
+    clear(phones, userId, at = new Date()) {
+      tx(() => {
+        for (const p of phones) {
+          q('INSERT OR REPLACE INTO cleared VALUES (?,?,?)').run(p, userId, iso(at));
+          q("UPDATE followups SET status = 'closed', closed_at = ? WHERE phone = ? AND status = 'open'").run(iso(at), p);
+        }
+      });
+    },
+    cleared: () => new Map(q('SELECT phone, at FROM cleared').all().map(r => [r.phone, r.at])),
     openFollowups: () => q("SELECT * FROM followups WHERE status = 'open' ORDER BY due_at").all(),
     followupsBetween: (from, to) => q('SELECT * FROM followups WHERE created_at >= ? AND created_at < ?').all(iso(from), iso(to)),
     interactionsSince: (since) => q('SELECT * FROM interactions WHERE at >= ? ORDER BY at').all(iso(since)),
