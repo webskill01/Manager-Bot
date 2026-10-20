@@ -293,7 +293,7 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
         phone, bot, name: p?.name || '', appState: p?.appState || 'none', converted: !!p?.onApp, active: !!p?.active.length,
         count: xs.length, at: xs.map(c => c.at),
         last: { outcome: last.outcome, note: last.note, at: last.at, user_id: last.user_id },
-        followup: fu ? { kind: fu.kind, due_at: fu.due_at } : null,
+        followup: fu && !p?.onApp ? { kind: fu.kind, due_at: fu.due_at } : null,   // paid: the promise is kept
       });
     }
     res.json({ rows, users: names() });
@@ -329,11 +329,13 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     const allPays = attribute(payments(new Date(lo - 40 * 86400e3)), db.interactionsSince(new Date(lo - 40 * 86400e3)));
     const inWindow = allPays.filter(p => p.at >= lo.toISOString() && p.at < hi.toISOString());
     // The team's job is moving people to the app; group renewals are counted but not credited.
-    const moved = inWindow.filter(p => p.source === 'app');
+    // bot 'app' = an app-only user (recorded briefly on 20 Oct); only group members count as moved.
+    const isMove = (p) => p.source === 'app' && p.bot !== 'app';
+    const moved = inWindow.filter(isMove);
     const users = db.users();
     res.json({
       from, to,
-      funnel: funnel({ rows: unpaid, interactions, payments: allPays.filter(p => p.source === 'app'), from, to }),
+      funnel: funnel({ rows: unpaid, interactions, payments: allPays.filter(isMove), from, to }),
       ageing: ageing(queue({ view: 'today' }, req.user)),
       byBot: byBot(unpaid, inWindow),
       recovered: recoveredByDay(moved),
@@ -341,7 +343,7 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
         moved: moved.length,
         movedAmount: moved.reduce((s, p) => s + p.amount, 0),
         byTeam: moved.filter(p => p.userId).length,
-        renewedInGroups: inWindow.length - moved.length,
+        renewedInGroups: inWindow.filter(p => p.source === 'sheet').length,
         unpaidAmount: unpaid.reduce((s, x) => s + x.amount, 0),
         calls: interactions.length,
         ...migration(),

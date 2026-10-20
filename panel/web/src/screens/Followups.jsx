@@ -6,7 +6,8 @@ import { Badge, Button, Card, Empty, Loading, MultiSelect, PageHead, Select, cx,
 import PersonDrawer from './Person.jsx';
 
 // Everyone called, one row each: latest call (chip + note + time), times called, open follow-up.
-// Paying on the app shows as "Moved to app" by itself. Rows stay until an admin clears them.
+// Paying on the app moves them out of the list into the "Moved to app" count by itself.
+// Other rows stay until an admin clears them.
 const CALLED = { any: 'Called any time', today: 'Called today', yesterday: 'Called yesterday', week: 'Last 7 days', day: 'Called on…' };
 const TIMES = { any: 'Any no. of calls', 1: 'Called once', 2: 'Called twice', 3: '3+ calls', 5: '5+ calls' };
 const SORTS = {
@@ -16,7 +17,6 @@ const SORTS = {
   due: ['Next follow-up', (a, b) => (a.followup?.due_at || '~').localeCompare(b.followup?.due_at || '~')],
   name: ['Name', (a, b) => (a.name || a.phone).localeCompare(b.name || b.phone)],
 };
-const result = (r) => (r.converted ? 'paid' : r.last.outcome);
 
 export default function Followups() {
   const me = useMe();
@@ -31,9 +31,9 @@ export default function Followups() {
 
   const rows = useMemo(() => {
     const [from, to] = { today: [isoDay(), isoDay()], yesterday: [isoDay(addDays(-1)), isoDay(addDays(-1))], week: [isoDay(addDays(-6)), isoDay()], day: [f.day, f.day] }[f.called] || [];
-    return (data?.rows || []).filter(r =>
+    return (data?.rows || []).filter(r => !r.converted   // paid on the app: done, counted on the dashboard
       (!from || r.at.some(t => { const d = isoDay(new Date(t)); return d >= from && d <= to; }))
-      && (!f.outcome.length || f.outcome.includes(result(r)))
+      && (!f.outcome.length || f.outcome.includes(r.last.outcome))
       && (!f.bot.length || f.bot.includes(r.bot))
       && (f.times === 'any' || (Number(f.times) < 3 ? r.count === Number(f.times) : r.count >= Number(f.times)))
       && (!f.caller || String(r.last.user_id) === f.caller),
@@ -51,7 +51,8 @@ export default function Followups() {
 
   return (
     <>
-      <PageHead title="Follow-ups" sub={data ? `${num(rows.length)} people · ${num(rows.reduce((s, r) => s + r.count, 0))} calls` : 'Everyone you called'} />
+      <PageHead title="Follow-ups" sub={data ? `${num(rows.length)} people · ${num(rows.reduce((s, r) => s + r.count, 0))} calls · paid ones leave by themselves` : 'Everyone you called'} />
+
 
       <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 mb-4">
         <Select value={f.called} onChange={e => setF({ ...f, called: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="Called when">
@@ -59,7 +60,7 @@ export default function Followups() {
         </Select>
         {f.called === 'day' && <input type="date" aria-label="Day called" className={cx(inputCls, 'h-9 sm:w-auto')} value={f.day} max={isoDay()} onChange={e => setF({ ...f, day: e.target.value })} />}
         <MultiSelect label="Last action" value={f.outcome} onChange={outcome => setF({ ...f, outcome })} all="Any action" className="min-w-0"
-          options={Object.entries(OUTCOMES).map(([k, o]) => [k, o.label])} />
+          options={Object.entries(OUTCOMES).filter(([k]) => k !== 'paid').map(([k, o]) => [k, o.label])} />
         {me.bots.length > 1 && <MultiSelect label="Bot" value={f.bot} onChange={bot => setF({ ...f, bot })} all="All bots" className="min-w-0"
           options={me.bots.map(b => [b, botLabel(b)])} />}
         <Select value={f.times} onChange={e => setF({ ...f, times: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="Times called">
@@ -97,7 +98,7 @@ export default function Followups() {
             </label>
           )}
           {rows.map(r => {
-            const o = OUTCOMES[result(r)];
+            const o = OUTCOMES[r.last.outcome];
             const late = r.followup && r.followup.due_at < now;
             return (
               <div key={r.phone} className="flex gap-3 px-4 py-3">
@@ -105,8 +106,8 @@ export default function Followups() {
                 <button type="button" onClick={() => setOpen(r.phone)} className="flex-1 min-w-0 text-left">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <span className="font-medium text-sm">{r.name || r.phone}</span>
-                    <Badge tone={o?.tone}>{r.converted ? 'Moved to app' : o?.label || r.last.outcome}</Badge>
-                    {!r.converted && r.appState !== 'none' && <Badge tone={APP_STATES[r.appState].tone}>{APP_STATES[r.appState].label}</Badge>}
+                    <Badge tone={o?.tone}>{o?.label || r.last.outcome}</Badge>
+                    {r.appState !== 'none' && <Badge tone={APP_STATES[r.appState].tone}>{APP_STATES[r.appState].label}</Badge>}
                     <Badge tone={r.count >= 3 ? 'amber' : 'gray'}>{r.count}× called</Badge>
                   </div>
                   {r.last.note && <div className="text-sm text-ink-60 mt-1">{r.last.note}</div>}
