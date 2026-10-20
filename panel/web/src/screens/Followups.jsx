@@ -32,7 +32,7 @@ export default function Followups() {
   const rows = useMemo(() => {
     const [from, to] = { today: [isoDay(), isoDay()], yesterday: [isoDay(addDays(-1)), isoDay(addDays(-1))], week: [isoDay(addDays(-6)), isoDay()], day: [f.day, f.day] }[f.called] || [];
     return (data?.rows || []).filter(r => !r.converted   // paid on the app: done, counted on the dashboard
-      (!from || r.at.some(t => { const d = isoDay(new Date(t)); return d >= from && d <= to; }))
+      && (!from || r.at.some(t => { const d = isoDay(new Date(t)); return d >= from && d <= to; }))
       && (!f.outcome.length || f.outcome.includes(r.last.outcome))
       && (!f.bot.length || f.bot.includes(r.bot))
       && (f.times === 'any' || (Number(f.times) < 3 ? r.count === Number(f.times) : r.count >= Number(f.times)))
