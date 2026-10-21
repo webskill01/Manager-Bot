@@ -78,3 +78,14 @@ test('app users on no sheet are dropped, paying or not (the app panel counts new
   });
   assert.equal(people.size, 0);
 });
+
+test('a member linked to the number they paid with on the app takes that plan', () => {
+  const paidRow = { phone: '9111111111', status: 'active', expiresAt: future, paidCount: 1, lastPaidAt: new Date().toISOString() };
+  const sheets = { 'bot-abhi': [m('9876543210', 'ACTIVE')] };
+  assert.equal(buildPeople({ sheets, app: [paidRow] }).get('9876543210').onApp, false);
+  const people = buildPeople({ sheets, app: [paidRow], links: new Map([['9876543210', '9111111111']]) });
+  assert.equal(people.get('9876543210').onApp, true);
+  assert.equal(people.has('9111111111'), false, 'the app-only number still is not a person');
+  const told = buildPeople({ sheets, links: new Map([['9876543210', '9222222222']]) }).get('9876543210');
+  assert.equal(told.onApp, true, 'no app row for that number: still paid on what the caller was told');
+});

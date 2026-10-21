@@ -24,6 +24,7 @@ export function CallForm({ phone, bot, onDone }) {
   const [note, setNote] = useState('');
   const [dueAt, setDueAt] = useState(`${isoDay(addDays(1))}T11:00`);
   const [busy, setBusy] = useState(false);
+  const [other, setOther] = useState(null);   // null = closed; else the number they paid with ('' = they don't know)
   const needsDate = outcome === 'promise' || outcome === 'callback';
   const moved = async () => {
     setBusy(true);
@@ -33,6 +34,16 @@ export function CallForm({ phone, bot, onDone }) {
       await api(`/person/${phone}/interaction`, { method: 'POST', body: { outcome: 'paid', note, bot, dueAt: null } });
       toast('Paid on the app: done');
       setNote('');
+      onDone?.('paid');
+    } catch (err) { toast(err.message, 'bad'); } finally { setBusy(false); }
+  };
+  // Sheet has one number, they paid on the app with another (they told us on the call).
+  const linkOther = async () => {
+    setBusy(true);
+    try {
+      await api(`/person/${phone}/link`, { method: 'POST', body: { appPhone: other, note, bot } });
+      toast(other ? `Marked paid (app number ${other})` : 'Marked paid on another number');
+      setOther(null); setNote('');
       onDone?.('paid');
     } catch (err) { toast(err.message, 'bad'); } finally { setBusy(false); }
   };
@@ -58,6 +69,19 @@ export function CallForm({ phone, bot, onDone }) {
           </button>
         ))}
       </div>
+      {other === null ? (
+        <button type="button" disabled={busy} onClick={() => { setOther(''); setOutcome(''); }}
+          className="w-full h-11 rounded-lg border border-line bg-white text-sm font-medium text-emerald-700 hover:bg-bg">
+          Paid with another number
+        </button>
+      ) : (
+        <div className="flex gap-2">
+          <input type="tel" inputMode="numeric" className={inputCls} placeholder="Number they paid with (optional)" autoFocus
+            value={other} onChange={e => setOther(e.target.value.replace(/[^\d+ ]/g, ''))} maxLength={16} />
+          <Button type="button" disabled={busy || (other !== '' && other.replace(/\D/g, '').length < 10)} onClick={linkOther}>{busy ? 'Saving…' : 'Mark paid'}</Button>
+          <Button type="button" variant="secondary" disabled={busy} onClick={() => setOther(null)}>Cancel</Button>
+        </div>
+      )}
       {needsDate && (
         <Field label={outcome === 'promise' ? 'They will move to the app by' : 'Call them back at'}>
           <input type="datetime-local" className={inputCls} value={dueAt} min={`${isoDay()}T00:00`} onChange={e => setDueAt(e.target.value)} required />
@@ -103,6 +127,13 @@ export function PersonBody({ p, onDone, onChanged }) {
       onChanged?.();
     } catch (e) { toast(e.message, 'bad'); }
   };
+  const unlink = async () => {
+    try {
+      await api(`/person/${p.phone}/unlink`, { method: 'POST', body: {} });
+      toast('Undone: back in the queue');
+      onChanged?.();
+    } catch (e) { toast(e.message, 'bad'); }
+  };
   return (
     <div className="space-y-5">
       <div className="flex items-start justify-between gap-4">
@@ -127,6 +158,7 @@ export function PersonBody({ p, onDone, onChanged }) {
 
       <div className={cx('rounded-lg text-sm px-3 py-2', p.onApp ? 'bg-emerald-50 text-emerald-800' : 'bg-bg text-ink-60')}>
         {st.hint}
+        {p.link && <span className="block text-xs mt-1">Paid on the app with {p.link.appPhone || 'another number'} (they told us on a call)</span>}
         {p.app?.paidCount > 0 && <span className="block text-xs mt-1">Paid {p.app.paidCount}× · plan {p.onApp ? 'till' : 'ended'} {when(p.app.expiresAt)} · last paid {ago(p.app.lastPaidAt)}</span>}
       </div>
       {p.followup && (
@@ -162,6 +194,13 @@ export function PersonBody({ p, onDone, onChanged }) {
           ))}
         </div>
       </section>
+
+      {p.link && (me.role === 'admin' || p.link.userId === me.id) && (
+        <section className="flex items-center gap-3">
+          <span className="text-sm text-ink-60">Marked paid by mistake?</span>
+          <Button size="sm" variant="secondary" onClick={unlink}>Undo paid</Button>
+        </section>
+      )}
 
       {me.role === 'admin' && (
         <section className="flex items-center gap-3">

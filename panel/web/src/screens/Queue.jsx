@@ -73,7 +73,7 @@ export default function Queue() {
 
       {!data ? <Loading /> : <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
-          <Kpi label="To call now" value={num(data.kpis.toCall)} sub={`of ${num(data.kpis.total)} in this view`} tone="brand" />
+          <Kpi label="To call now" value={num(data.kpis.toCall)} sub={`of ${num(data.kpis.total)} in this view${data.kpis.moved ? ` · ${num(data.kpis.moved)} moved` : ''}`} tone="brand" />
           <Kpi label="Follow-ups due" value={num(data.kpis.followups)} />
           <Kpi label="Promised, waiting" value={num(data.kpis.promised)} />
           <Kpi label="App members" value={num(data.kpis.onApp)} sub={`${num(data.kpis.groupsOnly)} still only in groups`} tone="ok" />
@@ -109,7 +109,7 @@ export default function Queue() {
               </thead>
               <tbody className="divide-y divide-line">
                 {rows.map(r => (
-                  <tr key={r.phone} onClick={() => setOpen(r.phone)} className={cx('cursor-pointer hover:bg-bg', r.blocked && 'text-ink-60')}>
+                  <tr key={r.phone} onClick={() => setOpen(r.phone)} className={cx('cursor-pointer hover:bg-bg', r.blocked && 'text-ink-60', r.blocked === 'moved' && 'bg-emerald-50/60 opacity-70')}>
                     {isAdmin && <td className="pl-4" onClick={e => e.stopPropagation()}><input type="checkbox" aria-label={`Select ${r.name}`} checked={sel.has(r.phone)} onChange={() => toggle(r.phone)} /></td>}
                     <td className="px-4 py-2.5">
                       <div className="font-medium text-ink">{r.name || '—'}</div>
@@ -138,7 +138,7 @@ export default function Queue() {
             )}
             <ul className="md:hidden divide-y divide-line">
               {rows.map(r => (
-                <li key={r.phone} className={cx('flex gap-3 p-4', r.blocked && 'opacity-70')}>
+                <li key={r.phone} className={cx('flex gap-3 p-4', r.blocked && 'opacity-70', r.blocked === 'moved' && 'bg-emerald-50/60')}>
                   {isAdmin && <input type="checkbox" className="mt-1" aria-label={`Select ${r.name}`} checked={sel.has(r.phone)} onChange={() => toggle(r.phone)} />}
                   <button type="button" onClick={() => setOpen(r.phone)} className="flex-1 text-left min-w-0">
                     <div className="flex items-start justify-between gap-2">
@@ -175,12 +175,13 @@ const SORTS = {
 };
 function sortRows(rows, sort) {
   const cmp = SORTS[sort]?.[1];
-  return cmp ? [...rows].sort((a, b) => (a.blocked ? 1 : 0) - (b.blocked ? 1 : 0) || cmp(a, b)) : rows;
+  const rank = (r) => (r.blocked === 'moved' ? 2 : r.blocked ? 1 : 0);   // moved people always last
+  return cmp ? [...rows].sort((a, b) => rank(a) - rank(b) || cmp(a, b)) : rows;
 }
 
 function Status({ r, users, me }) {
   if (r.claimedBy && r.claimedBy !== me.id) return <Badge tone="amber">{users[r.claimedBy]} is calling</Badge>;
-  if (r.blocked) return <Badge>{BLOCKED[r.blocked]}</Badge>;
+  if (r.blocked) return <Badge tone={r.blocked === 'moved' ? 'green' : undefined}>{BLOCKED[r.blocked]}</Badge>;
   return <>
     <Badge tone={REASONS[r.reason].tone}>{REASONS[r.reason].label}</Badge>
     <Badge tone={APP_STATES[r.appState]?.tone}>{APP_STATES[r.appState]?.label}</Badge>

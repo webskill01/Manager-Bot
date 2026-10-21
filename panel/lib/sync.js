@@ -17,7 +17,7 @@ const PAYMENT_DEDUPE_MS = 3 * 86400e3;
 // the app), or else their billing date moved forward on a bot (source sheet = renewed in the
 // groups the old way). Both moving together (the bot's own app sync bumps the sheet) is one
 // app payment. The first snapshot (prev empty) records nothing.
-export function detectPayments(prev, next, botCfg) {
+export function detectPayments(prev, next, botCfg, price = 0) {
   if (!prev.size) return [];
   const at = new Date().toISOString();
   const out = [];
@@ -27,8 +27,8 @@ export function detectPayments(prev, next, botCfg) {
     let hit = null;
     // Moved to the app (first time on it), or paid again on it. Only group members (on a sheet) count.
     const m = before.active[0] || before.members[0];
-    if (m && p.onApp && (!before.onApp || (p.app.expiresAt || '') > (before.app?.expiresAt || ''))) {
-      hit = { phone: p.phone, bot: m.bot, amount: Number(p.app.lastAmount) || 0, billingFrom: m.member.billingDate || '', source: 'app', at };
+    if (m && p.onApp && (!before.onApp || (p.app?.expiresAt || '') > (before.app?.expiresAt || ''))) {
+      hit = { phone: p.phone, bot: m.bot, amount: Number(p.app?.lastAmount) || price, billingFrom: m.member.billingDate || '', source: 'app', at };
     }
     for (const { bot, member } of hit ? [] : p.members) {
       const old = before.members.find(x => x.bot === bot)?.member;
@@ -95,9 +95,9 @@ export function createSync({ env, botCfg, db, log = console }) {
   }
 
   function rebuild() {
-    const next = buildPeople({ sheets: data.sheets, app: [...data.app.values()], allNumbers: data.allNumbers, launch: env.appLaunch });
+    const next = buildPeople({ sheets: data.sheets, app: [...data.app.values()], allNumbers: data.allNumbers, links: db.links(), launch: env.appLaunch });
     const since = new Date(Date.now() - PAYMENT_DEDUPE_MS);
-    for (const pay of detectPayments(people, next, botCfg)) {
+    for (const pay of detectPayments(people, next, botCfg, env.appPrice)) {
       if (db.auditByAction('payment_seen', since, new Date(Date.now() + 1000)).some(a => a.target === pay.phone)) continue;
       db.audit(null, 'payment_seen', pay.phone, pay);
       db.closeFollowups(pay.phone);
@@ -115,11 +115,13 @@ export function createSync({ env, botCfg, db, log = console }) {
     return running;
   }
 
-  // One person, fresh, right before a caller dials them: their bots' sheets + their app row.
+  // One person, fresh, right before a caller dials them: their bots' sheets + their app row
+  // (and the app row of the other number they paid with, if linked).
   async function recheck(phone) {
     const p = people.get(phone);
     const theirBots = p ? [...new Set(p.members.map(m => m.bot))] : [];
-    await Promise.all([...theirBots.map(readBot), readApp([phone])]);
+    const linked = db.links().get(phone);
+    await Promise.all([...theirBots.map(readBot), readApp(linked ? [phone, linked] : [phone])]);
     rebuild();
     return people.get(phone) || null;
   }

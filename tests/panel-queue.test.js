@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildQueue, focusOrder } from '../panel/lib/queue.js';
+import { buildQueue, focusOrder, movedRows } from '../panel/lib/queue.js';
 import { buildPeople } from '../panel/lib/people.js';
 import { formatDate } from '../core/globalConfig.js';
 
@@ -99,4 +99,25 @@ test('a member active on two bots is one row, on the more urgent bot', () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].bot, 'bot-aayush2');
   assert.deepEqual(rows[0].alsoOn, ['bot-abhi']);
+});
+
+test('moved people show on the list by the billing date they had when they paid, only while on the app', () => {
+  const future = new Date(NOW.getTime() + 20 * 86400e3).toISOString();
+  const paidRow = (phone) => ({ phone, status: 'active', expiresAt: future, paidCount: 1, lastPaidAt: hoursAgo(2) });
+  // The bot moved both sheet billing dates to the app expiry; the payments remember the old one.
+  const people = buildPeople({
+    sheets: { 'bot-abhi': [mem('9000000001', day(20)), mem('9000000002', day(20))] },
+    app: [paidRow('9000000001')],
+  });
+  const payments = [
+    { phone: '9000000001', bot: 'bot-abhi', amount: 149, billingFrom: day(-2), source: 'app', at: hoursAgo(2) },
+    { phone: '9000000002', bot: 'bot-abhi', amount: 149, billingFrom: day(0), source: 'app', at: hoursAgo(3) },   // plan gone since
+    { phone: '9000000001', bot: 'bot-abhi', amount: 100, billingFrom: day(-2), source: 'sheet', at: hoursAgo(1) },  // group renewal: not a move
+  ];
+  const rows = movedRows({ people, payments, botCfg, filter: { view: 'today' } });
+  assert.deepEqual(phones(rows), ['9000000001']);
+  assert.equal(rows[0].blocked, 'moved');
+  assert.equal(rows[0].reason, 'overdue');
+  assert.equal(movedRows({ people, payments, botCfg, filter: { view: 'today', status: ['due'] } }).length, 0);
+  assert.equal(movedRows({ people, payments, botCfg, filter: { view: 'today', app: ['none'] } }).length, 0);
 });

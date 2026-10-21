@@ -51,4 +51,5 @@ export const BLOCKED = {
   called_today: 'Called today',
   max_tries: '3 no-answers',
   retry_later: 'Retry later',
+  moved: 'Moved to app',
 };

@@ -1,5 +1,5 @@
 import express from 'express';
-import { buildQueue, focusOrder } from './lib/queue.js';
+import { buildQueue, focusOrder, movedRows } from './lib/queue.js';
 import { attribute, team, ageing, funnel, recoveredByDay, byBot, summary } from './lib/stats.js';
 import { OUTCOMES } from './lib/db.js';
 import { hashPw, checkPw, newToken, tokenHash, validPin, createRateLimit } from './lib/auth.js';
@@ -174,11 +174,17 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     if (!filter) return res.status(400).json({ error: 'Dates must be DD-MM-YYYY' });
     const rows = queue(filter, req.user);
     const open = rows.filter(x => !x.blocked);
+    const early = new Date(Math.min(Date.now(), filter.from ? parseDate(filter.from).getTime() : Infinity) - 40 * 86400e3);
+    const moved = movedRows({
+      people: sync.people(), payments: payments(early).sort((a, b) => a.at.localeCompare(b.at)), botCfg, filter,
+      interactions: db.interactionsSince(early), assignments: db.assignments(),
+    }).filter(x => req.user.role === 'admin' || x.assignedTo === null || x.assignedTo === req.user.id);
     res.json({
-      rows,
+      rows: [...rows, ...moved],
       users: names(),
       kpis: {
         total: rows.length,
+        moved: moved.length,
         toCall: open.length,
         followups: rows.filter(x => x.reason === 'followup').length,
         promised: rows.filter(x => x.blocked === 'promised').length,
@@ -242,6 +248,7 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
       appState: p.appState,
       lead: p.lead,
       followup: db.openFollowups().find(f => f.phone === phone) || null,
+      link: (({ app_phone, user_id } = {}) => user_id ? { appPhone: app_phone, userId: user_id } : null)(db.linkOf(phone) || {}),
       assignedTo: db.assignments().find(a => a.phone === phone)?.user_id ?? null,
       timeline: db.timeline(phone),
       users: names(),
@@ -268,6 +275,39 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     const p = await sync.recheck(phone);
     if (!p) return res.status(404).json({ error: 'Not found' });
     res.json({ onApp: p.onApp, appState: p.appState });
+  });
+
+  // "Paid on the app with another number": the person told the caller, we take their word. They
+  // count as an app member from now on (leave the queue, count as moved).
+  r.post('/person/:phone/link', async (req, res) => {
+    const phone = phoneParam(req, res);
+    if (!phone) return;
+    const { appPhone = '', note = '', bot = '' } = req.body || {};
+    const other = normalizePhone(String(appPhone));   // optional: not everyone knows which number
+    if (other && (other.length !== 10 || other === phone)) return res.status(400).json({ error: 'The other number must be 10 digits' });
+    if (typeof note !== 'string' || note.length > 900) return res.status(400).json({ error: 'Note too long' });
+    if (!sync.people().has(phone)) return res.status(404).json({ error: 'Not found' });
+    // The call goes in first, so the move the recheck records is credited to this caller.
+    const said = other ? `Paid on the app with ${other}.` : 'Paid on the app with another number.';
+    const id = db.logInteraction({ phone, bot: botCfg[bot] ? bot : '', userId: req.user.id, outcome: 'paid', note: `${said} ${note.trim()}`.trim() });
+    db.link(phone, other, req.user.id, id);
+    db.audit(req.user.id, 'linked_number', phone, { appPhone: other });
+    await sync.recheck(phone);
+    res.json({ ok: true });
+  });
+
+  // Undo a wrong "paid with another number" (whoever marked it, or an admin): drop the mark and
+  // the move it made, so they are back in the queue and off the counts as if it never happened.
+  r.post('/person/:phone/unlink', async (req, res) => {
+    const phone = phoneParam(req, res);
+    if (!phone) return;
+    const l = db.linkOf(phone);
+    if (!l) return res.status(404).json({ error: 'Not marked paid on another number' });
+    if (req.user.role !== 'admin' && l.user_id !== req.user.id) return res.status(403).json({ error: 'Only an admin or whoever marked it can undo' });
+    db.unlink(phone);
+    db.audit(req.user.id, 'unlinked_number', phone, { appPhone: l.app_phone });
+    await sync.recheck(phone);
+    res.json({ ok: true });
   });
 
   // The follow-up log: everyone called (since an admin last cleared them), one row each with

@@ -42,14 +42,7 @@ export function buildQueue({ people, botCfg, price = 0, interactions = [], follo
     const hits = p.active
       .filter(({ bot, member }) => botCfg[bot] && !isDelayActive(member) && has(filter.bot, bot))
       .map(({ bot, member }) => ({ bot, member, days: daysFromToday(member.billingDate) }))
-      .filter(({ bot, member, days }) => {
-        if (days === null) return false;
-        if (filter.view === 'range') {
-          const d = parseDate(member.billingDate);
-          return from && to && d >= from && d <= to;
-        }
-        return (days <= 0 && days >= -botCfg[bot].removalDay) || (fuDue && days <= 0);
-      })
+      .filter(({ bot, member, days }) => inView({ bot, billingDate: member.billingDate, days, filter, from, to, botCfg, fuDue }))
       .sort((a, b) => a.days - b.days);
     if (!hits.length) continue;
 
@@ -58,9 +51,7 @@ export function buildQueue({ people, botCfg, price = 0, interactions = [], follo
     if (!has(filter.status, reason)) continue;
 
     const assignedTo = assigned.get(p.phone) ?? null;
-    if (filter.assignee === 'none' && assignedTo !== null) continue;
-    if (filter.assignee === 'me' && assignedTo !== filter.userId) continue;
-    if (typeof filter.assignee === 'number' && assignedTo !== filter.assignee) continue;
+    if (!assigneeOk(assignedTo, filter)) continue;
 
     rows.push({
       phone: p.phone,
@@ -86,6 +77,47 @@ export function buildQueue({ people, botCfg, price = 0, interactions = [], follo
     || (a.reason === 'followup' ? a.followup.due_at.localeCompare(b.followup.due_at) : 0)
     || a.days - b.days
     || a.name.localeCompare(b.name));
+}
+
+function inView({ bot, billingDate, days, filter, from, to, botCfg, fuDue = false }) {
+  if (days === null) return false;
+  if (filter.view === 'range') {
+    const d = parseDate(billingDate);
+    return from && to && d >= from && d <= to;
+  }
+  return (days <= 0 && days >= -botCfg[bot].removalDay) || (fuDue && days <= 0);
+}
+
+const assigneeOk = (assignedTo, filter) =>
+  !(filter.assignee === 'none' && assignedTo !== null)
+  && !(filter.assignee === 'me' && assignedTo !== filter.userId)
+  && !(typeof filter.assignee === 'number' && assignedTo !== filter.assignee);
+
+// For the list only: people who would be on it, by the billing date they had when they paid
+// on the app (the bot then moves it to the app expiry), but who moved. Shown last, greyed and
+// green, so the team sees who actually moved. payments: payment_seen details, time-ordered.
+export function movedRows({ people, payments, botCfg, interactions = [], assignments = [], filter = {} }) {
+  if (filter.app?.length) return [];   // the app filter picks among the unpaid states
+  const from = filter.view === 'range' ? parseDate(filter.from) : null;
+  const to = filter.view === 'range' ? parseDate(filter.to) : null;
+  const latest = new Map(payments.filter(x => x.source === 'app' && botCfg[x.bot]).map(x => [x.phone, x]));
+  const lastAny = new Map(interactions.map(i => [i.phone, i]));
+  const assigned = new Map(assignments.map(a => [a.phone, a.user_id]));
+  const rows = [];
+  for (const pay of latest.values()) {
+    const p = people.get(pay.phone);
+    const days = daysFromToday(pay.billingFrom);
+    if (!p?.onApp || !has(filter.bot, pay.bot) || !inView({ bot: pay.bot, billingDate: pay.billingFrom, days, filter, from, to, botCfg })) continue;
+    const reason = days < 0 ? 'overdue' : days === 0 ? 'due' : 'upcoming';
+    const assignedTo = assigned.get(p.phone) ?? null;
+    if (!has(filter.status, reason) || !assigneeOk(assignedTo, filter)) continue;
+    rows.push({
+      phone: p.phone, name: p.name, bot: pay.bot, alsoOn: [], amount: pay.amount, appState: p.appState,
+      billingDate: pay.billingFrom, days, reason, followup: null, last: lastAny.get(p.phone) || null,
+      assignedTo, claimedBy: null, blocked: 'moved', movedAt: pay.at,
+    });
+  }
+  return rows.sort((a, b) => b.movedAt.localeCompare(a.movedAt));
 }
 
 function blockReason(today, fu, fuDue, now) {

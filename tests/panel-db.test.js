@@ -56,3 +56,17 @@ test('sessions resolve to active users only', () => {
   assert.equal(db.sessionUser('h1'), null);
   assert.equal(db.userByName('nitin').id, u, 'names are case-insensitive');
 });
+
+test('unlink drops the link, its paid call and the move recorded after it', () => {
+  const db = openDb(':memory:');
+  const u = db.createUser({ name: 'A', role: 'admin' });
+  db.logInteraction({ phone: '9876543210', userId: u, outcome: 'no_answer' });
+  const id = db.logInteraction({ phone: '9876543210', userId: u, outcome: 'paid', note: 'Paid on the app with another number.' });
+  db.link('9876543210', '', u, id);   // they did not know which number
+  assert.equal(db.links().has('9876543210'), true);
+  db.audit(null, 'payment_seen', '9876543210', { source: 'app' });
+  db.unlink('9876543210');
+  assert.equal(db.links().size, 0);
+  assert.deepEqual(db.timeline('9876543210').map(i => i.outcome), ['no_answer']);
+  assert.equal(db.auditByAction('payment_seen', new Date(0), new Date(Date.now() + 1000)).length, 0);
+});

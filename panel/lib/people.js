@@ -7,6 +7,8 @@ import { liveOnApp } from '../../core/handlers/appHandlers.js';
 //   sheets     { bot: member[] }        rows as sheetClient.getAll() returns them
 //   app        [{ phone, status, expiresAt, ... }]   EaseCab member-sync rows
 //   allNumbers [[phone, name, ...]]     bot-nitin's ALL_NUMBERS tab, A:F, no header
+//   links      Map(phone → appPhone|'') paid on the app with another number (caller's word): an app
+//                                       member, showing that number's app row when we have it
 //
 // Person = { phone, name, members: [{bot, member}], active: [{bot, member}],
 //            app, paidOnApp, appState, onApp, lead: null | { exMember } }
@@ -18,7 +20,7 @@ import { liveOnApp } from '../../core/handlers/appHandlers.js';
 //   none      not on the app
 // `lead` is set only for ALL_NUMBERS phones that are ACTIVE on no bot: those are the
 // people still to pitch. exMember names their old bot(s) so a caller knows the history.
-export function buildPeople({ sheets = {}, app = [], allNumbers = [], launch = '', now = new Date().toISOString() }) {
+export function buildPeople({ sheets = {}, app = [], allNumbers = [], links = new Map(), launch = '', now = new Date().toISOString() }) {
   const people = new Map();
   const get = (raw) => {
     const phone = normalizePhone(raw ?? '');
@@ -40,11 +42,14 @@ export function buildPeople({ sheets = {}, app = [], allNumbers = [], launch = '
     const p = get(phone);
     if (p && !leadNames.get(p.phone)) leadNames.set(p.phone, String(name ?? ''));
   }
+  const linkedTo = new Map();   // app phone → the sheet phones that paid with it
+  for (const [phone, appPhone] of links) if (appPhone) linkedTo.set(appPhone, [...(linkedTo.get(appPhone) || []), phone]);
   for (const row of app) {
     // App-only users are nobody we call and not ours to count: new app users are the app panel's number.
-    const p = people.get(normalizePhone(row.phone ?? ''));
-    if (!p) continue;
-    if (!p.app || (row.expiresAt || '') > (p.app.expiresAt || '')) p.app = row;
+    const phone = normalizePhone(row.phone ?? '');
+    for (const p of [phone, ...(linkedTo.get(phone) || [])].map(x => people.get(x)).filter(Boolean)) {
+      if (!p.app || (row.expiresAt || '') > (p.app.expiresAt || '')) p.app = row;
+    }
   }
 
   for (const p of people.values()) {
@@ -52,6 +57,8 @@ export function buildPeople({ sheets = {}, app = [], allNumbers = [], launch = '
     // Payments before the app's public launch were tests/beta: they don't count (matches the app's own panel).
     const paid = (p.app?.paidCount || 0) > 0 && (p.app.lastPaidAt || '') >= launch;
     p.appState = !p.app ? 'none' : !paid ? 'signed_up' : (p.app.expiresAt || '') > now ? 'member' : 'lapsed';
+    // ponytail: a link is member for good, even if that plan lapses; unlink if renewals must be chased
+    if (links.has(p.phone)) p.appState = 'member';
     p.onApp = p.appState === 'member';
     p.name = (p.active[0] || p.members[0])?.member.name || leadNames.get(p.phone) || '';
     if (leadNames.has(p.phone) && !p.active.length) {

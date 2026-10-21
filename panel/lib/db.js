@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS audit(id INTEGER PRIMARY KEY, user_id INTEGER, action
 CREATE INDEX IF NOT EXISTS ix_audit_action ON audit(action, at);
 -- Cleared from the follow-up log: their calls up to this time are hidden; a new call brings them back.
 CREATE TABLE IF NOT EXISTS cleared(phone TEXT PRIMARY KEY, user_id INTEGER NOT NULL, at TEXT NOT NULL);
+-- Paid on the app with another number (the person told a caller): phone counts as an app member.
+-- app_phone '' = they did not know which number; interaction_id = the "paid" call it logged.
+CREATE TABLE IF NOT EXISTS links(phone TEXT PRIMARY KEY, app_phone TEXT NOT NULL, user_id INTEGER NOT NULL, at TEXT NOT NULL,
+  interaction_id INTEGER);
 `;
 
 const iso = (d = new Date()) => new Date(d).toISOString();
@@ -112,6 +116,20 @@ export function openDb(file) {
         }
       });
     },
+    link: (phone, appPhone, userId, interactionId) => q('INSERT OR REPLACE INTO links(phone, app_phone, user_id, at, interaction_id) VALUES (?,?,?,?,?)')
+      .run(phone, appPhone, userId, iso(), interactionId),
+    linkOf: (phone) => q('SELECT * FROM links WHERE phone = ?').get(phone) || null,
+    // Also drops what the link made: its "paid" call and the move sync recorded after it.
+    unlink(phone) {
+      tx(() => {
+        const l = q('SELECT * FROM links WHERE phone = ?').get(phone);
+        if (!l) return;
+        q('DELETE FROM interactions WHERE id = ?').run(l.interaction_id);
+        q("DELETE FROM audit WHERE action = 'payment_seen' AND target = ? AND at >= ?").run(phone, l.at);
+        q('DELETE FROM links WHERE phone = ?').run(phone);
+      });
+    },
+    links: () => new Map(q('SELECT phone, app_phone FROM links').all().map(r => [r.phone, r.app_phone])),
     cleared: () => new Map(q('SELECT phone, at FROM cleared').all().map(r => [r.phone, r.at])),
     openFollowups: () => q("SELECT * FROM followups WHERE status = 'open' ORDER BY due_at").all(),
     followupsBetween: (from, to) => q('SELECT * FROM followups WHERE created_at >= ? AND created_at < ?').all(iso(from), iso(to)),
