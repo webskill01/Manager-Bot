@@ -16,8 +16,9 @@ export function ContactButtons({ phone, size = 'md' }) {
   );
 }
 
-// Log one call. Promise / call back need a date. "Moved to app" asks the app first and only
-// counts once they have paid there; then they leave the queue by themselves.
+// Log one call. Promise / call back need a date. Paying on the app is picked up by the sync on
+// its own (they leave the queue), so there is no "moved" button; only "paid with another number",
+// which the sync cannot see.
 export function CallForm({ phone, bot, onDone }) {
   const toast = useToast();
   const [outcome, setOutcome] = useState('');
@@ -26,17 +27,6 @@ export function CallForm({ phone, bot, onDone }) {
   const [busy, setBusy] = useState(false);
   const [other, setOther] = useState(null);   // null = closed; else the number they paid with ('' = they don't know)
   const needsDate = outcome === 'promise' || outcome === 'callback';
-  const moved = async () => {
-    setBusy(true);
-    try {
-      const r = await api(`/person/${phone}/check`, { method: 'POST', body: {} });
-      if (!r.onApp) return toast(`Not yet: ${APP_STATES[r.appState].label.toLowerCase()}`, 'bad');
-      await api(`/person/${phone}/interaction`, { method: 'POST', body: { outcome: 'paid', note, bot, dueAt: null } });
-      toast('Paid on the app: done');
-      setNote('');
-      onDone?.('paid');
-    } catch (err) { toast(err.message, 'bad'); } finally { setBusy(false); }
-  };
   // Sheet has one number, they paid on the app with another (they told us on the call).
   const linkOther = async () => {
     setBusy(true);
@@ -60,26 +50,25 @@ export function CallForm({ phone, bot, onDone }) {
   return (
     <form onSubmit={save} className="space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-        {Object.entries(OUTCOMES).map(([k, o]) => (
-          <button key={k} type="button" disabled={busy} onClick={() => (k === 'paid' ? moved() : setOutcome(k))}
-            className={cx('h-11 rounded-lg border text-sm font-medium transition',
-              outcome === k ? 'border-brand bg-brand-sky text-brand-deep' : 'border-line bg-white text-ink hover:bg-bg',
-              k === 'paid' && 'text-emerald-700')}>
+        <button type="button" disabled={busy} onClick={() => { setOther(other === null ? '' : null); setOutcome(''); }}
+          className={cx('min-h-[2.75rem] px-2 py-1.5 leading-tight break-words rounded-lg border text-sm font-medium transition text-emerald-700',
+            other !== null ? 'border-brand bg-brand-sky' : 'border-line bg-white hover:bg-bg')}>
+          Paid with another number
+        </button>
+        {Object.entries(OUTCOMES).filter(([k]) => k !== 'paid').map(([k, o]) => (
+          <button key={k} type="button" disabled={busy} onClick={() => { setOutcome(k); setOther(null); }}
+            className={cx('min-h-[2.75rem] px-2 py-1.5 leading-tight break-words rounded-lg border text-sm font-medium transition',
+              outcome === k ? 'border-brand bg-brand-sky text-brand-deep' : 'border-line bg-white text-ink hover:bg-bg')}>
             {o.label}
           </button>
         ))}
       </div>
-      {other === null ? (
-        <button type="button" disabled={busy} onClick={() => { setOther(''); setOutcome(''); }}
-          className="w-full h-11 rounded-lg border border-line bg-white text-sm font-medium text-emerald-700 hover:bg-bg">
-          Paid with another number
-        </button>
-      ) : (
-        <div className="flex gap-2">
-          <input type="tel" inputMode="numeric" className={inputCls} placeholder="Number they paid with (optional)" autoFocus
+      {other !== null && (
+        <div className="flex flex-wrap gap-2">
+          <input type="tel" inputMode="numeric" className={cx(inputCls, 'basis-full sm:basis-0 sm:flex-1 min-w-0')} placeholder="Number they paid with (optional)" autoFocus
             value={other} onChange={e => setOther(e.target.value.replace(/[^\d+ ]/g, ''))} maxLength={16} />
-          <Button type="button" disabled={busy || (other !== '' && other.replace(/\D/g, '').length < 10)} onClick={linkOther}>{busy ? 'Saving…' : 'Mark paid'}</Button>
-          <Button type="button" variant="secondary" disabled={busy} onClick={() => setOther(null)}>Cancel</Button>
+          <Button type="button" className="flex-1 sm:flex-none" disabled={busy || (other !== '' && other.replace(/\D/g, '').length < 10)} onClick={linkOther}>{busy ? 'Saving…' : 'Mark paid'}</Button>
+          <Button type="button" variant="secondary" className="flex-1 sm:flex-none" disabled={busy} onClick={() => setOther(null)}>Cancel</Button>
         </div>
       )}
       {needsDate && (

@@ -73,7 +73,6 @@ test('a logged call shows on the timeline and a promise blocks the queue row', a
   assert.equal(q1.rows.length, 2, 'whoever moved to the app is parked');
   assert.equal(q1.rows[0].amount, 149);
   assert.equal(q1.kpis.onApp, 1);
-  assert.deepEqual(await (await call('/person/9876543212/check', { cookie, method: 'POST', body: {} })).json(), { onApp: true, appState: 'member' });
   const dueAt = new Date(Date.now() + 2 * 86400e3).toISOString();
   const res = await call('/person/9876543210/interaction', { cookie, method: 'POST', body: { outcome: 'promise', note: 'pays Friday', dueAt, bot: 'bot-abhi' } });
   assert.equal(res.status, 200);

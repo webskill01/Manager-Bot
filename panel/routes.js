@@ -268,15 +268,6 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     res.json({ ok: true });
   });
 
-  // "They say they moved": ask the app right now. If it agrees they leave the queue by themselves.
-  r.post('/person/:phone/check', async (req, res) => {
-    const phone = phoneParam(req, res);
-    if (!phone) return;
-    const p = await sync.recheck(phone);
-    if (!p) return res.status(404).json({ error: 'Not found' });
-    res.json({ onApp: p.onApp, appState: p.appState });
-  });
-
   // "Paid on the app with another number": the person told the caller, we take their word. They
   // count as an app member from now on (leave the queue, count as moved).
   r.post('/person/:phone/link', async (req, res) => {
