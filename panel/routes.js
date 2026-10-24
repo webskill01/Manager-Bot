@@ -275,7 +275,8 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     if (!phone) return;
     const { appPhone = '', note = '', bot = '' } = req.body || {};
     const other = normalizePhone(String(appPhone));   // optional: not everyone knows which number
-    if (other && (other.length !== 10 || other === phone)) return res.status(400).json({ error: 'The other number must be 10 digits' });
+    // Their own number is allowed: they say they paid on it but the app has no payment (yet).
+    if (other && other.length !== 10) return res.status(400).json({ error: 'The other number must be 10 digits' });
     if (typeof note !== 'string' || note.length > 900) return res.status(400).json({ error: 'Note too long' });
     if (!sync.people().has(phone)) return res.status(404).json({ error: 'Not found' });
     // The call goes in first, so the move the recheck records is credited to this caller.
@@ -303,15 +304,17 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
 
   // The follow-up log: everyone called (since an admin last cleared them), one row each with
   // their latest call, how many calls, and the open promise / call back. The page filters it.
+  // ?cleared=1 is the other side: the calls an admin cleared away, up to each clear.
   r.get('/followups', (req, res) => {
     const people = sync.people();
     const allowed = botsOf(req.user);
     const mine = req.query.mine === '1' || req.user.role !== 'admin';
     const cleared = db.cleared();
+    const showCleared = req.query.cleared === '1';
     const open = new Map(db.openFollowups().map(f => [f.phone, f]));
     const calls = new Map();
     for (const i of db.interactionsSince(new Date(0))) {   // ponytail: whole table each load, page it past ~50k calls
-      if (i.at <= (cleared.get(i.phone) || '')) continue;
+      if ((i.at <= (cleared.get(i.phone) || '')) !== showCleared) continue;
       if (!calls.has(i.phone)) calls.set(i.phone, []);
       calls.get(i.phone).push(i);
     }
@@ -328,6 +331,7 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
         count: xs.length, at: xs.map(c => c.at),
         last: { outcome: last.outcome, note: last.note, at: last.at, user_id: last.user_id },
         followup: fu && !p?.onApp ? { kind: fu.kind, due_at: fu.due_at } : null,   // paid: the promise is kept
+        clearedAt: showCleared ? cleared.get(phone) : null,
       });
     }
     res.json({ rows, users: names() });

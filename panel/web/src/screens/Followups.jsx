@@ -7,7 +7,7 @@ import PersonDrawer from './Person.jsx';
 
 // Everyone called, one row each: latest call (chip + note + time), times called, open follow-up.
 // Paying on the app moves them out of the list into the "Moved to app" count by itself.
-// Other rows stay until an admin clears them.
+// Other rows stay until an admin clears them; the Cleared view lists those, up to each clear.
 const CALLED = { any: 'Called any time', today: 'Called today', yesterday: 'Called yesterday', week: 'Last 7 days', day: 'Called on…' };
 const TIMES = { any: 'Any no. of calls', 1: 'Called once', 2: 'Called twice', 3: '3+ calls', 5: '5+ calls' };
 const SORTS = {
@@ -26,19 +26,20 @@ export default function Followups() {
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(null);
   const [sel, setSel] = useState(new Set());
-  const load = useCallback(() => api('/followups').then(setData, e => toast(e.message, 'bad')), []);  // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { load(); }, [load]);
+  const showCleared = f.view === 'cleared';
+  const load = useCallback(() => api(`/followups${showCleared ? '?cleared=1' : ''}`).then(setData, e => toast(e.message, 'bad')), [showCleared]);  // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { setData(null); setSel(new Set()); load(); }, [load]);
 
   const rows = useMemo(() => {
     const [from, to] = { today: [isoDay(), isoDay()], yesterday: [isoDay(addDays(-1)), isoDay(addDays(-1))], week: [isoDay(addDays(-6)), isoDay()], day: [f.day, f.day] }[f.called] || [];
-    return (data?.rows || []).filter(r => !r.converted   // paid on the app: done, counted on the dashboard
+    return (data?.rows || []).filter(r => (showCleared || !r.converted)   // paid on the app: done, counted on the dashboard
       && (!from || r.at.some(t => { const d = isoDay(new Date(t)); return d >= from && d <= to; }))
       && (!f.outcome.length || f.outcome.includes(r.last.outcome))
       && (!f.bot.length || f.bot.includes(r.bot))
       && (f.times === 'any' || (Number(f.times) < 3 ? r.count === Number(f.times) : r.count >= Number(f.times)))
       && (!f.caller || String(r.last.user_id) === f.caller),
     ).sort(SORTS[f.sort][1]);
-  }, [data, f]);
+  }, [data, f, showCleared]);
   const allSel = rows.length > 0 && rows.every(r => sel.has(r.phone));
   const toggle = (phone) => setSel(s => { const n = new Set(s); n.has(phone) ? n.delete(phone) : n.add(phone); return n; });
 
@@ -51,10 +52,14 @@ export default function Followups() {
 
   return (
     <>
-      <PageHead title="Follow-ups" sub={data ? `${num(rows.length)} people · ${num(rows.reduce((s, r) => s + r.count, 0))} calls · paid ones leave by themselves` : 'Everyone you called'} />
+      <PageHead title={showCleared ? 'Cleared follow-ups' : 'Follow-ups'} sub={data ? `${num(rows.length)} people · ${num(rows.reduce((s, r) => s + r.count, 0))} calls${showCleared ? ' · cleared from the list' : ' · paid ones leave by themselves'}` : 'Everyone you called'} />
 
 
       <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-center gap-2 mb-4">
+        <Select value={f.view || 'open'} onChange={e => setF({ ...f, view: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="List">
+          <option value="open">Follow-up list</option>
+          <option value="cleared">Cleared</option>
+        </Select>
         <Select value={f.called} onChange={e => setF({ ...f, called: e.target.value })} className="h-9 w-full sm:w-auto min-w-0" aria-label="Called when">
           {Object.entries(CALLED).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </Select>
@@ -84,7 +89,7 @@ export default function Followups() {
             <option value="">Assign to…</option>
             {Object.entries(data.users).map(([id, n]) => <option key={id} value={id}>{n}</option>)}
           </Select>
-          <Button size="sm" variant="secondary" onClick={() => clear([...sel])}>Clear from list</Button>
+          {!showCleared && <Button size="sm" variant="secondary" onClick={() => clear([...sel])}>Clear from list</Button>}
           <Button size="sm" variant="ghost" className="text-white hover:bg-white/10 hover:text-white" onClick={() => setSel(new Set())}>Cancel</Button>
         </div>
       )}
@@ -114,9 +119,10 @@ export default function Followups() {
                   <div className="text-xs text-ink-40 mt-1">
                     {when(r.last.at)} · {data.users[r.last.user_id] || '—'}{r.bot && ` · ${botLabel(r.bot)}`}
                     {r.followup && <span className={late ? 'text-bad' : ''}> · {r.followup.kind === 'promise' ? 'promised by' : 'call back'} {when(r.followup.due_at)}</span>}
+                    {r.clearedAt && ` · cleared ${when(r.clearedAt)}`}
                   </div>
                 </button>
-                {isAdmin && <Button size="sm" variant="ghost" className="self-start" onClick={() => clear([r.phone])} aria-label={`Clear ${r.name}`}>Clear</Button>}
+                {isAdmin && !showCleared && <Button size="sm" variant="ghost" className="self-start" onClick={() => clear([r.phone])} aria-label={`Clear ${r.name}`}>Clear</Button>}
               </div>
             );
           })}

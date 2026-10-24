@@ -136,6 +136,9 @@ test('bot limits, stacked filters and no-answer follow-ups', async () => {
   await call('/followups/clear', { cookie: admin.cookie, method: 'POST', body: { phones: ['9876543211'] } });
   const gone = await (await call('/followups', { cookie: admin.cookie })).json();
   assert.equal(gone.rows.some(x => x.phone === '9876543211'), false, 'cleared');
+  const was = (await (await call('/followups?cleared=1', { cookie: admin.cookie })).json()).rows.find(x => x.phone === '9876543211');
+  assert.equal(was.last.outcome, 'no_answer', 'the cleared view keeps the cleared calls');
+  assert.ok(was.clearedAt);
   await new Promise(r => setTimeout(r, 5));
   await call('/person/9876543211/interaction', { cookie, method: 'POST', body: { outcome: 'callback', bot: 'bot-abhi', dueAt: new Date(Date.now() + 864e5).toISOString() } });
   const back = (await (await call('/followups', { cookie: admin.cookie })).json()).rows.find(x => x.phone === '9876543211');
