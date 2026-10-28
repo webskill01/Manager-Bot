@@ -15,6 +15,7 @@ const ACTIONS = {
   renewed: ['Marked renewed', 'green'],
   renew_verified: ['Verified renewal', 'green'],
   payment_seen: ['Payment detected', 'green'],
+  sheet_status: ['Changed sheet status', 'amber'],
 };
 
 function describe(a) {
@@ -22,6 +23,7 @@ function describe(a) {
   switch (a.action) {
     case 'renewed': return `${a.target} on ${botLabel(d.bot || '')}, was due ${shortDate(d.from)}`;
     case 'payment_seen': return `${a.target} paid ${inr(d.amount)} via ${d.source}${d.bot ? ` (${botLabel(d.bot)})` : ''}`;
+    case 'sheet_status': return `${a.target} on ${botLabel(d.bot || '')}: ${d.from} → ${d.to}`;
     case 'assigned': return `${d.count} members to ${a.target}`;
     case 'unassigned': return `${d.count} members back to the shared queue`;
     case 'user_updated': return `${a.target}${d.role ? ` → ${d.role}` : ''}${d.active !== undefined ? (d.active ? ' enabled' : ' disabled') : ''}`;

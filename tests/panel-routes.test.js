@@ -16,7 +16,10 @@ const people = buildPeople({
   ] },
   app: [{ phone: '9876543212', status: 'active', paidCount: 1, lastAmount: 149, expiresAt: '2099-01-01T00:00:00.000Z' }],
 });
-const sync = { people: () => people, recheck: async (p) => people.get(p), refresh: async () => {}, status: () => ({ lastSync: 'x', bots: ['bot-abhi'], members: people.size }) };
+const sheetWrites = [];
+const fakeClient = { getAll: async () => [{ rowIndex: 2, name: 'Gurpreet', phone: '9876543210', status: 'ACTIVE', billingDate: day(-2), carNo: 'PB01' }],
+  updateRow: async (rowIndex, m) => { sheetWrites.push({ rowIndex, ...m }); } };
+const sync = { client: (b) => (b === 'bot-abhi' ? fakeClient : undefined), people: () => people, recheck: async (p) => people.get(p), refresh: async () => {}, status: () => ({ lastSync: 'x', bots: ['bot-abhi'], members: people.size }) };
 const db = openDb(':memory:');
 let server, base;
 
@@ -166,4 +169,18 @@ test('summary: callers see only their own calls; admins pick callers', async () 
   const other = await (await call(`/summary?${range}&users=${db.userByName('Nitin').id}`, { cookie: admin.cookie })).json();
   assert.equal(other.total.calls, 0);
   assert.equal((await call('/summary?from=05-10-2026&to=01-10-2026', { cookie: admin.cookie })).status, 400);
+});
+
+test('kicked: sets only STATUS on that bot sheet row, audited; bad input refused', async () => {
+  const { cookie } = await login('Riya', '9999');
+  const post = (body, phone = '9876543210') => call(`/person/${phone}/status`, { cookie, method: 'POST', body });
+  assert.equal((await post({ bot: 'bot-abhi', status: 'SKIPPED' })).status, 400);
+  assert.equal((await post({ bot: 'bot-nope', status: 'REMOVED' })).status, 400);
+  assert.equal((await post({ bot: 'bot-abhi', status: 'REMOVED' }, '9876543299')).status, 404);
+  assert.equal((await post({ bot: 'bot-abhi', status: 'REMOVED' })).status, 200);
+  assert.equal(sheetWrites.length, 1);
+  assert.deepEqual([sheetWrites[0].rowIndex, sheetWrites[0].status, sheetWrites[0].carNo, sheetWrites[0].billingDate], [2, 'REMOVED', 'PB01', day(-2)]);
+  assert.ok(db.auditByAction('sheet_status', new Date(0), new Date(Date.now() + 1000)).some(a => a.target === '9876543210'));
+  assert.equal((await post({ bot: 'bot-abhi', status: 'ACTIVE' })).status, 200, 'same status as the sheet: no write');
+  assert.equal(sheetWrites.length, 1);
 });

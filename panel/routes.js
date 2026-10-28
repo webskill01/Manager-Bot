@@ -6,6 +6,8 @@ import { hashPw, checkPw, newToken, tokenHash, validPin, createRateLimit } from 
 import { normalizePhone, parseDate, formatDate, daysFromToday } from '../core/globalConfig.js';
 import crypto from 'node:crypto';
 
+const SHEET_STATUSES = ['ACTIVE', 'REMOVED'];
+
 const COOKIE = 'ecp_s';
 const SESSION_MS = 30 * 86400e3;
 const INVITE_MS = 7 * 86400e3;
@@ -286,6 +288,29 @@ export function createApp({ db, sync, botCfg, env, staticDir = null }) {
     db.audit(req.user.id, 'linked_number', phone, { appPhone: other });
     await sync.recheck(phone);
     res.json({ ok: true });
+  });
+
+  // Set one bot's sheet STATUS (kicked from the group → REMOVED, or back to ACTIVE). The panel's
+  // only sheet write: re-read that sheet right before, change STATUS alone, write the row back.
+  // ponytail: SKIPPED left out, the bot pairs it with a reason and a new billing date.
+  r.post('/person/:phone/status', async (req, res) => {
+    const phone = phoneParam(req, res);
+    if (!phone) return;
+    const { bot = '', status = '' } = req.body || {};
+    if (!SHEET_STATUSES.includes(status)) return res.status(400).json({ error: 'Pick ACTIVE or REMOVED' });
+    if (!botsOf(req.user).includes(bot) || !sync.client(bot)) return res.status(400).json({ error: 'Unknown bot' });
+    const client = sync.client(bot);
+    let member;
+    try { member = (await client.getAll()).find(m => m.phone === phone); }
+    catch (e) { return res.status(502).json({ error: `Could not read the sheet: ${e.message}` }); }
+    if (!member) return res.status(404).json({ error: 'Not on that bot\'s sheet' });
+    if (member.status !== status) {
+      try { await client.updateRow(member.rowIndex, { ...member, status }); }
+      catch (e) { return res.status(502).json({ error: `Could not write the sheet: ${e.message}` }); }
+      db.audit(req.user.id, 'sheet_status', phone, { bot, from: member.status, to: status });
+    }
+    await sync.recheck(phone);
+    res.json({ ok: true, status });
   });
 
   // Undo a wrong "paid with another number" (whoever marked it, or an admin): drop the mark and

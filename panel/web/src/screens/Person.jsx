@@ -19,14 +19,30 @@ export function ContactButtons({ phone, size = 'md' }) {
 // Log one call. Promise / call back need a date. Paying on the app is picked up by the sync on
 // its own (they leave the queue), so there is no "moved" button; only "paid with another number",
 // which the sync cannot see.
-export function CallForm({ phone, bot, onDone }) {
+// The sheet STATUS for one bot (REMOVED = kicked from that group). Shared by CallForm and the
+// membership list.
+export async function setSheetStatus(phone, bot, status, toast) {
+  await api(`/person/${phone}/status`, { method: 'POST', body: { bot, status } });
+  toast(`${botLabel(bot)}: ${status}`);
+}
+
+export function CallForm({ phone, bot, bots = [bot], onDone }) {
   const toast = useToast();
   const [outcome, setOutcome] = useState('');
   const [note, setNote] = useState('');
   const [dueAt, setDueAt] = useState(`${isoDay(addDays(1))}T11:00`);
   const [busy, setBusy] = useState(false);
   const [other, setOther] = useState(null);   // null = closed; else the number they paid with ('' = they don't know)
+  const [kick, setKick] = useState(false);
   const needsDate = outcome === 'promise' || outcome === 'callback';
+  const kicked = async (b) => {
+    setBusy(true);
+    try {
+      await setSheetStatus(phone, b, 'REMOVED', toast);
+      setKick(false);
+      onDone?.('kicked');
+    } catch (err) { toast(err.message, 'bad'); } finally { setBusy(false); }
+  };
   // Sheet has one number, they paid on the app with another (they told us on the call).
   const linkOther = async () => {
     setBusy(true);
@@ -50,19 +66,33 @@ export function CallForm({ phone, bot, onDone }) {
   return (
     <form onSubmit={save} className="space-y-3">
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-        <button type="button" disabled={busy} onClick={() => { setOther(other === null ? '' : null); setOutcome(''); }}
+        <button type="button" disabled={busy} onClick={() => { setOther(other === null ? '' : null); setOutcome(''); setKick(false); }}
           className={cx('min-h-[2.75rem] px-2 py-1.5 leading-tight break-words rounded-lg border text-sm font-medium transition text-emerald-700',
             other !== null ? 'border-brand bg-brand-sky' : 'border-line bg-white hover:bg-bg')}>
           Paid with another number
         </button>
         {Object.entries(OUTCOMES).filter(([k]) => k !== 'paid').map(([k, o]) => (
-          <button key={k} type="button" disabled={busy} onClick={() => { setOutcome(k); setOther(null); }}
+          <button key={k} type="button" disabled={busy} onClick={() => { setOutcome(k); setOther(null); setKick(false); }}
             className={cx('min-h-[2.75rem] px-2 py-1.5 leading-tight break-words rounded-lg border text-sm font-medium transition',
               outcome === k ? 'border-brand bg-brand-sky text-brand-deep' : 'border-line bg-white text-ink hover:bg-bg')}>
             {o.label}
           </button>
         ))}
+        <button type="button" disabled={busy} onClick={() => { setKick(!kick); setOutcome(''); setOther(null); }}
+          className={cx('min-h-[2.75rem] px-2 py-1.5 leading-tight break-words rounded-lg border text-sm font-medium transition text-bad',
+            kick ? 'border-brand bg-brand-sky' : 'border-line bg-white hover:bg-bg')}>
+          Kicked from group
+        </button>
       </div>
+      {kick && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="basis-full text-sm text-ink-60">Mark REMOVED on the sheet of:</span>
+          {bots.map(b => (
+            <Button key={b} type="button" className="flex-1 sm:flex-none" disabled={busy} onClick={() => kicked(b)}>{busy ? 'Saving…' : botLabel(b)}</Button>
+          ))}
+          <Button type="button" variant="secondary" className="flex-1 sm:flex-none" disabled={busy} onClick={() => setKick(false)}>Cancel</Button>
+        </div>
+      )}
       {other !== null && (
         <div className="flex flex-wrap gap-2">
           <input type="tel" inputMode="numeric" className={cx(inputCls, 'basis-full sm:basis-0 sm:flex-1 min-w-0')} placeholder="Number they paid with (optional)" autoFocus
@@ -161,7 +191,7 @@ export function PersonBody({ p, onDone, onChanged }) {
       {active.length > 0 && (
         <section className="pt-5 border-t border-line">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-40 mb-2">Log a call</h3>
-          <CallForm key={p.phone} phone={p.phone} bot={active[0].bot} onDone={onDone} />
+          <CallForm key={p.phone} phone={p.phone} bot={active[0].bot} bots={active.map(m => m.bot)} onDone={onDone} />
         </section>
       )}
 
@@ -172,7 +202,13 @@ export function PersonBody({ p, onDone, onChanged }) {
             <div key={m.bot} className="p-3 flex flex-wrap items-center gap-x-4 gap-y-2">
               <div className="min-w-[110px]">
                 <div className="text-sm font-medium">{botLabel(m.bot)}</div>
-                <Badge tone={m.status === 'ACTIVE' ? 'green' : 'gray'}>{m.status}</Badge>
+                {['ACTIVE', 'REMOVED'].includes(m.status) ? (
+                  <Select value={m.status} className={cx('h-8 text-xs mt-1', m.status === 'ACTIVE' ? 'text-emerald-700' : 'text-ink-60')}
+                    onChange={e => setSheetStatus(p.phone, m.bot, e.target.value, toast).then(() => onChanged?.(), err => toast(err.message, 'bad'))}>
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="REMOVED">REMOVED</option>
+                  </Select>
+                ) : <Badge tone="gray">{m.status}</Badge>}
               </div>
               <dl className="grid grid-cols-3 gap-x-4 text-xs flex-1 min-w-[200px]">
                 <div><dt className="text-ink-40">Billing</dt><dd className="font-medium">{shortDate(m.billingDate)}</dd></div>
