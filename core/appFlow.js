@@ -32,8 +32,8 @@ export function isAppFlow(member, config, today = todayStr()) {
 
 // Which pre-expiry reminder (if any) an app-flow member gets today. Exact days only, so
 // each fires once per cycle — the drip rebuilds the list many times a day.
-export function appCohort(member) {
-  const d = daysFromToday(member?.billingDate);
+export function appCohort(member, asOf = null) {
+  const d = daysFromToday(member?.billingDate, asOf);
   if (d === 5) return 'pre5';
   if (d === 2) return 'pre2';
   if (d === 0) return 'due';

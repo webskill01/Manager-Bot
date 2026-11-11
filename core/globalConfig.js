@@ -388,10 +388,12 @@ export function parseDate(str) {
   return new Date(year, month - 1, day);
 }
 
-export function daysFromToday(dateStr) {
+// `asOf` (DD-MM-YYYY) measures from another day instead — the drip catch-up asks "who was
+// due on the 12th" on the 13th.
+export function daysFromToday(dateStr, asOf = null) {
   const date = parseDate(dateStr);
   if (!date) return null;
-  const today = new Date();
+  const today = (asOf && parseDate(asOf)) || new Date();
   today.setHours(0, 0, 0, 0);
   date.setHours(0, 0, 0, 0);
   return Math.round((date - today) / (1000 * 60 * 60 * 24));

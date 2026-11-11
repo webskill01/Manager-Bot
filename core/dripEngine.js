@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { randomBetween, todayStr, friendlyDate, sleep, normalizePhone, pickVariant, resolveWhatsAppJid } from './globalConfig.js';
+import { randomBetween, todayStr, friendlyDate, sleep, normalizePhone, pickVariant, resolveWhatsAppJid, parseDate, formatDate, daysFromToday } from './globalConfig.js';
 import { buildDmList } from './dmList.js';
 import { usesCloudApi } from './cloudApiSender.js';
 
@@ -219,7 +219,54 @@ export function flexFirstDelayMs(remaining, now, settings, rand = Math.random) {
 // Queue order. App-flow 'pre2' sits right behind 'due' — two days out is the last reminder
 // before expiry-day, so it is pinned like the ladder. 'pre5' is early and can slip a day
 // without harm (pre2 still follows), so it goes with 'missed' at the back.
-export const COHORTS = ['due', 'pre2', 'nudge', 'final', 'pre5', 'missed'];
+export const COHORTS = ['due', 'pre2', 'nudge', 'final', 'catchup', 'pre5', 'missed'];
+
+// A planned pause, read from bots/<bot>/drip-catchup.json (gitignored — it holds phones):
+//   { "from": "11-11-2026", "resumeOn": "13-11-2026", "skip": { "11-11-2026": [phones] } }
+// Days in [from, resumeOn) start stopped. On resumeOn the 'catchup' cohort replays every
+// ladder slot those days would have had — the ladder is day-keyed, so without this a member
+// whose day-6 fell inside the pause is never given their final notice. `skip` lists who was
+// already messaged on a paused day before the pause began. After resumeOn it is inert.
+export function loadCatchup(botDir) {
+  try { return JSON.parse(fs.readFileSync(path.join(botDir, 'drip-catchup.json'), 'utf8')); }
+  catch { return null; }
+}
+
+export function pausedOn(catchup, now = todayStr()) {
+  const d = parseDate(now), from = parseDate(catchup?.from || ''), until = parseDate(catchup?.resumeOn || '');
+  return !!(d && from && until && d >= from && d < until);
+}
+
+export function catchupRows({ members, config, catchup = config.dripCatchup, now = todayStr() }) {
+  if (!catchup || catchup.resumeOn !== now) return [];
+  const from = parseDate(catchup.from);
+  const out = [];
+  const seen = new Set();
+  // Latest day first: a member with two missed slots (day-5 on the 11th, day-6 on the 12th)
+  // gets the later, stronger one.
+  for (let d = parseDate(now); (d.setDate(d.getDate() - 1), d >= from);) {
+    const day = formatDate(d);
+    const skip = new Set((catchup.skip?.[day] || []).map(String));
+    for (const cohort of ['due', 'pre2', 'nudge', 'final', 'pre5']) {
+      for (const r of buildDmList({ members, config, cohort, now: day, asOf: day }).rows) {
+        const phone = String(r.phone);
+        if (skip.has(phone) || seen.has(phone)) continue;
+        const real = daysFromToday(r.billingDate);
+        // An app plan that ended during the pause is cut off and auto-removed: no reminder.
+        if (r.stage.startsWith('app_') && real < 0) continue;
+        seen.add(phone);
+        out.push({ ...r, overdueDays: Math.max(0, -real), ...(r.stage.startsWith('app_') ? { daysLeft: real } : {}) });
+      }
+    }
+  }
+  return out;
+}
+
+function cohortRows({ members, config, cohort, contactLog, now }) {
+  return cohort === 'catchup'
+    ? catchupRows({ members, config, now })
+    : buildDmList({ members, config, cohort, contactLog, now }).rows;
+}
 
 export function buildDripBatch({
   members, config, pushed = [], contactLog = {}, now = todayStr(), max = 3,
@@ -249,7 +296,7 @@ export function buildDripBatch({
   // are the half that gets squeezed.
   for (const cohort of COHORTS) {
     if (batch.length >= max) break;
-    const { rows } = buildDmList({ members, config, cohort, contactLog, now });
+    const rows = cohortRows({ members, config, cohort, contactLog, now });
     const row = rows.find(r => !seen.has(String(r.phone)));
     if (row) { batch.push(row); seen.add(String(row.phone)); }
   }
@@ -265,7 +312,7 @@ export function countByCohort({ members, config, pushed = [], contactLog = {} })
   const seen = new Set(pushed.map(String));
   const out = Object.fromEntries(COHORTS.map(c => [c, 0]));
   for (const cohort of COHORTS) {
-    for (const r of buildDmList({ members, config, cohort, contactLog }).rows) {
+    for (const r of cohortRows({ members, config, cohort, contactLog })) {
       if (seen.has(String(r.phone))) continue;
       seen.add(String(r.phone));
       out[cohort]++;
@@ -288,6 +335,7 @@ export function describeQueue(split) {
     split.pre2 && `${split.pre2} app 2d`,
     split.nudge && `${split.nudge} nudge`,
     split.final && `${split.final} final`,
+    split.catchup && `${split.catchup} catch-up`,
     split.pre5 && `${split.pre5} app 5d`,
     split.missed && `${split.missed} missed`,
   ].filter(Boolean);
@@ -301,7 +349,7 @@ export function buildDripQueue({ members, config, pushed = [], contactLog = {}, 
   const seen = new Set(pushed.map(String));
   const queue = [];
   for (const cohort of COHORTS) {
-    for (const r of buildDmList({ members, config, cohort, contactLog, now }).rows) {
+    for (const r of cohortRows({ members, config, cohort, contactLog, now })) {
       if (seen.has(String(r.phone))) continue;
       seen.add(String(r.phone));
       queue.push(r);
@@ -417,6 +465,7 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   // and, unlike drip-state, is NOT reset daily: a cycle spans a week of messages.
   const qrFile = path.join(config.botDir, 'qr-sent.json');
   const settings = dripSettings(config);
+  config.dripCatchup = loadCatchup(config.botDir);
   let _timer = null;
   // Which chain of ticks is the live one, and whether a tick is running right now. See
   // clearTimer / later: ONE chain, ONE tick at a time, or the same member gets two messages.
@@ -596,7 +645,9 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
         if (s.date === todayStr()) return s;
       }
     } catch (err) { log.warn(`⚠️  Drip state read failed: ${err.message}`); }
-    return { date: todayStr(), pushed: [], stopped: false, done: false, armedAt: null };
+    // ponytail: re-read per new day so the file can be dropped in without a restart.
+    config.dripCatchup = loadCatchup(config.botDir);
+    return { date: todayStr(), pushed: [], stopped: pausedOn(config.dripCatchup), done: false, armedAt: null };
   }
 
   function saveState(s) {
@@ -1081,7 +1132,11 @@ ${detail || ''}
     saveState(state);
     if (reminderSender?.autoRenewDue) {
       try {
-        const renewed = await reminderSender.autoRenewDue(store, config.botDir);
+        // On a catch-up day, also the 2-ref members whose due day fell inside the pause.
+        const cu = config.dripCatchup;
+        const lookback = cu?.resumeOn === todayStr()
+          ? Math.round((parseDate(cu.resumeOn) - parseDate(cu.from)) / 86400000) : 0;
+        const renewed = await reminderSender.autoRenewDue(store, config.botDir, lookback);
         if (renewed.length) log.info(`💧 Auto-renewed ${renewed.length} member(s) before arming`);
       } catch (err) { log.warn(`⚠️  Auto-renew before drip failed: ${err.message}`); }
     }

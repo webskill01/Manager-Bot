@@ -48,8 +48,8 @@ test('after the cutover date everyone is on the app flow', () => {
   assert.deepStrictEqual(rows.map(r => r.stage), ['app_pre5']);
 });
 
-test('drip order: due, pre2, nudge, final, pre5, missed', () => {
-  assert.deepStrictEqual(COHORTS, ['due', 'pre2', 'nudge', 'final', 'pre5', 'missed']);
+test('drip order: due, pre2, nudge, final, catchup, pre5, missed', () => {
+  assert.deepStrictEqual(COHORTS, ['due', 'pre2', 'nudge', 'final', 'catchup', 'pre5', 'missed']);
   const members = [app('9000000001', 5), old('9000000002', -5), app('9000000003', 2), old('9000000004', 0)];
   const batch = buildDripBatch({ members, config, max: 4 });
   assert.deepStrictEqual(batch.map(r => r.stage), ['msg1', 'app_pre2', 'msg2', 'app_pre5']);

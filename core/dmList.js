@@ -100,7 +100,7 @@ export function dmRowFor(member, config, { stage = null, referral = false } = {}
 // final notice as their first ever contact — which is how you collect spam reports.
 export function buildDmList({
   members, config, cohort = 'due', billingDay = null, force = null,
-  contactLog = {}, now = todayStr(),
+  contactLog = {}, now = todayStr(), asOf = null,
 }) {
   const nudge = config.overdue?.autoReminderDays ?? 5;
   const final = config.overdue?.finalReminderDays ?? 6;
@@ -120,11 +120,11 @@ export function buildDmList({
 
   for (const m of all) {
     if (m.status !== 'ACTIVE') continue;
-    const d = daysFromToday(m.billingDate);
+    const d = daysFromToday(m.billingDate, asOf);
     if (d === null) continue;
 
     if (isAppFlow(m, config, now)) {
-      if (billingDay !== null || appCohort(m) !== cohort) continue;
+      if (billingDay !== null || appCohort(m, asOf) !== cohort) continue;
       if (isDelayActive(m) || renewedOn(m, now)) continue;
       const stage = appStages[cohort];
       const text = templateFor(stage, config, { phone: m.phone, seq: seq++ })

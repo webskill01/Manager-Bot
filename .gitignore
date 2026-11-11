@@ -41,6 +41,7 @@ bots/*/qr-sent.json
 # (including a member's phone) into the repo and it got committed once already.
 reminder-state.json
 drip-state.json
+bots/*/drip-catchup.json
 bots/*/overdue-state.json
 bots/*/removal-state.json
 # Invite links, written by the bot itself (refreshlinks/setlink). Committing them would put

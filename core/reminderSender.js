@@ -355,12 +355,14 @@ export function createReminderSender(config, log, { fetchImpl } = {}) {
   // Members who are due today AND have not been renewed/paid today. Refreshes the store
   // first so a member just renewed via the `renewed` command (or edited directly on the
   // sheet) is never targeted — this is the core guard against the double-reminder bug.
-  async function getDueToday(store) {
+  // `lookback` widens "today" to the last N days too — the drip catch-up after a pause.
+  async function getDueToday(store, lookback = 0) {
     await store.refresh();
     const today = todayStr();
-    return store.getActive().filter(m =>
-      daysFromToday(m.billingDate) === 0 && !renewedOn(m, today)
-    );
+    return store.getActive().filter(m => {
+      const d = daysFromToday(m.billingDate);
+      return d !== null && d <= 0 && d >= -lookback && !renewedOn(m, today);
+    });
   }
 
   // ── Group-digest mode ───────────────────────────────────────────────────────
@@ -390,9 +392,9 @@ export function createReminderSender(config, log, { fetchImpl } = {}) {
   // Split out of computeDigestSets so the manual `dmlist` path gets the same silent
   // auto-renew the cron used to do — otherwise a member who owes nothing would be
   // chased for money. Returns [] and touches nothing when nobody qualifies.
-  async function autoRenewDue(store, botDir) {
+  async function autoRenewDue(store, botDir, lookback = 0) {
     const state = loadState(botDir);
-    const dueRaw = await getDueToday(store);
+    const dueRaw = await getDueToday(store, lookback);
     const all = store.getAll();
     const renewed = [];
     for (const m of dueRaw) {
