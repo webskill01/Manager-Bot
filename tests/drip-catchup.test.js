@@ -48,3 +48,20 @@ test('queue dedupes catch-up against real cohorts', () => {
   const q = buildDripQueue({ members, config: { ...cfg, dripCatchup: catchup } });
   assert.deepEqual(q.map(r => r.phone), ['1000000006', '1000000007']);
 });
+
+test('two-day catch-up: finals on day 1, the rest plus day-1 leftovers on day 2', () => {
+  // Paused day -3 and -2, resumed day -1, spread over day -1 and today.
+  const cu = { from: day(-3), resumeOn: day(-1), days: 2 };
+  const members = [
+    m('1000000009', day(-9)),   // day-6 fell on day -3 → final, reached on day 1
+    m('1000000008', day(-8)),   // day-6 fell on day -2 → final, NOT reached on day 1
+    m('1000000002', day(-2)),   // due on day -2 → msg1, held back to day 2
+  ];
+  const day1 = catchupRows({ members, config: cfg, catchup: cu, now: day(-1) });
+  assert.deepEqual(day1.map(r => r.phone).sort(), ['1000000008', '1000000009']);
+
+  const contactLog = { '1000000009': { cycle: day(-9), at: day(-1) } };
+  const day2 = catchupRows({ members, config: cfg, catchup: cu, contactLog, now: day(0) });
+  assert.deepEqual(day2.map(r => r.phone).sort(), ['1000000002', '1000000008']);
+  assert.equal(catchupRows({ members, config: cfg, catchup: cu, now: day(1) }).length, 0);
+});

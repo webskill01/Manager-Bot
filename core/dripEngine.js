@@ -222,11 +222,16 @@ export function flexFirstDelayMs(remaining, now, settings, rand = Math.random) {
 export const COHORTS = ['due', 'pre2', 'nudge', 'final', 'catchup', 'pre5', 'missed'];
 
 // A planned pause, read from bots/<bot>/drip-catchup.json (gitignored — it holds phones):
-//   { "from": "11-11-2026", "resumeOn": "13-11-2026", "skip": { "11-11-2026": [phones] } }
+//   { "from": "11-11-2026", "resumeOn": "13-11-2026", "days": 2, "skip": { "11-11-2026": [phones] } }
 // Days in [from, resumeOn) start stopped. On resumeOn the 'catchup' cohort replays every
 // ladder slot those days would have had — the ladder is day-keyed, so without this a member
 // whose day-6 fell inside the pause is never given their final notice. `skip` lists who was
-// already messaged on a paused day before the pause began. After resumeOn it is inert.
+// already messaged on a paused day before the pause began.
+//
+// `days` (default 1) spreads the catch-up so resuming does not double one day's volume:
+// every day but the last carries only the final notices (one day from the removal list),
+// the last day carries the rest plus anything the earlier days did not reach. Anyone
+// contacted on or after resumeOn in the same cycle is skipped. Inert after the last day.
 export function loadCatchup(botDir) {
   try { return JSON.parse(fs.readFileSync(path.join(botDir, 'drip-catchup.json'), 'utf8')); }
   catch { return null; }
@@ -237,20 +242,33 @@ export function pausedOn(catchup, now = todayStr()) {
   return !!(d && from && until && d >= from && d < until);
 }
 
-export function catchupRows({ members, config, catchup = config.dripCatchup, now = todayStr() }) {
-  if (!catchup || catchup.resumeOn !== now) return [];
+export function catchupDay(catchup, now = todayStr()) {
+  const resume = parseDate(catchup?.resumeOn || ''), d = parseDate(now);
+  if (!resume || !d) return -1;
+  const i = Math.round((d - resume) / 86400000);
+  return i >= 0 && i < (catchup.days ?? 1) ? i : -1;
+}
+
+export function catchupRows({ members, config, catchup = config.dripCatchup, contactLog = {}, now = todayStr() }) {
+  const dayIdx = catchupDay(catchup, now);
+  if (dayIdx < 0) return [];
+  const lastDay = dayIdx === (catchup.days ?? 1) - 1;
   const from = parseDate(catchup.from);
+  const resume = parseDate(catchup.resumeOn);
   const out = [];
   const seen = new Set();
   // Latest day first: a member with two missed slots (day-5 on the 11th, day-6 on the 12th)
   // gets the later, stronger one.
-  for (let d = parseDate(now); (d.setDate(d.getDate() - 1), d >= from);) {
+  for (let d = parseDate(catchup.resumeOn); (d.setDate(d.getDate() - 1), d >= from);) {
     const day = formatDate(d);
     const skip = new Set((catchup.skip?.[day] || []).map(String));
     for (const cohort of ['due', 'pre2', 'nudge', 'final', 'pre5']) {
       for (const r of buildDmList({ members, config, cohort, now: day, asOf: day }).rows) {
         const phone = String(r.phone);
         if (skip.has(phone) || seen.has(phone)) continue;
+        if (!lastDay && r.stage !== 'msg3') continue;
+        const c = contactLog[phone];
+        if (c?.cycle === r.billingDate && parseDate(c.at || '') >= resume) continue;
         const real = daysFromToday(r.billingDate);
         // An app plan that ended during the pause is cut off and auto-removed: no reminder.
         if (r.stage.startsWith('app_') && real < 0) continue;
@@ -264,7 +282,7 @@ export function catchupRows({ members, config, catchup = config.dripCatchup, now
 
 function cohortRows({ members, config, cohort, contactLog, now }) {
   return cohort === 'catchup'
-    ? catchupRows({ members, config, now })
+    ? catchupRows({ members, config, contactLog, now })
     : buildDmList({ members, config, cohort, contactLog, now }).rows;
 }
 
@@ -715,6 +733,7 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
     log_[String(row.phone)] = {
       cycle: row.billingDate,
       qr: withQr ? row.billingDate : prev.qr,
+      at: todayStr(),   // read by catchupRows: "already reached since the pause ended"
     };
     saveQrLog(log_);
   }
@@ -1229,7 +1248,7 @@ ${detail || ''}
     const log_ = loadQrLog();
     for (const ph of fresh) {
       const m = byPhone.get(String(ph));
-      if (m) log_[String(ph)] = { cycle: m.billingDate, qr: log_[String(ph)]?.qr };
+      if (m) log_[String(ph)] = { cycle: m.billingDate, qr: log_[String(ph)]?.qr, at: todayStr() };
     }
     saveQrLog(log_);
     const rest = countRemaining({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() });
