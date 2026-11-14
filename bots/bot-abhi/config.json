@@ -90,7 +90,7 @@
     "5932459548"
   ],
   "drip": {
-    "mode": "manual",
+    "mode": "auto",
     "startHour": 9,
     "endHour": 21
   },
