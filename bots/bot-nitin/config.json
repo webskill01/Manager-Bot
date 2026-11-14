@@ -23,7 +23,7 @@
     "5332135237",
     "7985971941"
   ],
-  "warmupHours": 0,
+  "warmupHours": 24,
   "paidGroups": [
     "120363423482434246@g.us",
     "120363406216444790@g.us",
@@ -49,9 +49,10 @@
     "./qr-8.jpg"
   ],
   "renewal": {
-    "fullAmount": 90,
+    "fullAmount": 149,
     "referralAmount": 45,
-    "billingCycleDays": 30
+    "billingCycleDays": 30,
+    "referrals": false
   },
   "joining": {
     "fee": 90
@@ -142,16 +143,16 @@
     "groupOverdue": "🚨 Inna veera di renew di aaj last date aaji — jaldi to jaldi renew karke dss deyo ji 🙏🏻:",
     "groupAutoRenewed": "Inna members ne 2 bande add karaye ne — ehna da is mahine da renewal FREE aaji",
     "reminder": [
-      "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\niss mahine lyi iste 90 pay krdo ji 🙏🏻",
-      "{name} paaji Sat Sri Akal 🙏🏻\nTohada mahina {date} nu pura ho gya si ji\nIss mahine lyi 90 pay krdo ji 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya hai\nKirpa krke iss mahine de 90 pay kr deyo ji 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\nTohada group da mahina {date} nu pura ho gya si\nAgle mahine lyi 90 iste pay kr deyo ji 🙏🏻",
-      "{name} veerji Sat Sri Akal 🙏🏻\nTohadi renew di date aa gyi ji ({date})\nUpar dite QR te 90 pay krke dss deyo ji 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya\nIss mahine da 90 pay kr deyo 🙏🏻",
-      "{name} paaji 🙏🏻 Sat Sri Akal\nTohadi date {date} di si ji, mahina pura ho gya\niste 90 pay krke dss deyo ji 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\nIk mahina pura ho gya ji ({date})\nIste 90 pay kr deyo, main note kr lawanga ji 🙏🏻",
-      "{name} veerji Sat Sri Akal 🙏🏻\n{date} nu tohada mahina pura ho gya si ji\nRenew lyi 90 iste pay kr deyo 🙏🏻",
-      "Sat Sri Akal {name} paaji 🙏🏻\nRenew da time aa gya ji ({date})\nQR te 90 pay krke dss deyo ji 🙏🏻"
+      "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\niss mahine lyi iste {fee} pay krdo ji 🙏🏻",
+      "{name} paaji Sat Sri Akal 🙏🏻\nTohada mahina {date} nu pura ho gya si ji\nIss mahine lyi {fee} pay krdo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya hai\nKirpa krke iss mahine de {fee} pay kr deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nTohada group da mahina {date} nu pura ho gya si\nAgle mahine lyi {fee} iste pay kr deyo ji 🙏🏻",
+      "{name} veerji Sat Sri Akal 🙏🏻\nTohadi renew di date aa gyi ji ({date})\nUpar dite QR te {fee} pay krke dss deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada ik mahina pura ho gya\nIss mahine da {fee} pay kr deyo 🙏🏻",
+      "{name} paaji 🙏🏻 Sat Sri Akal\nTohadi date {date} di si ji, mahina pura ho gya\niste {fee} pay krke dss deyo ji 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nIk mahina pura ho gya ji ({date})\nIste {fee} pay kr deyo, main note kr lawanga ji 🙏🏻",
+      "{name} veerji Sat Sri Akal 🙏🏻\n{date} nu tohada mahina pura ho gya si ji\nRenew lyi {fee} iste pay kr deyo 🙏🏻",
+      "Sat Sri Akal {name} paaji 🙏🏻\nRenew da time aa gya ji ({date})\nQR te {fee} pay krke dss deyo ji 🙏🏻"
     ],
     "referralReminder": [
       "Sat Sri Akal {name} paaji 🙏🏻\nAaj {date} nu tohada ik mahina pura ho gya\nTusi ik banda add kraya si, iss lyi iste sirf ₹45/- pay krdo ji 🙏🏻",
@@ -199,23 +200,17 @@
       "App ton pay krke screenshot bhej deyo paaji 🙏🏻"
     ],
     "appReminder": {
-      "pre5": [
-        "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu tohada app te groups da ik mahina pura ho jana\nApp te renew krke dss deyo ji, payment sirf app te hi krni 🙏🏻",
-        "{name} paaji Sat Sri Akal 🙏🏻\nTohada app wala plan {date} nu khatam hona, groups vi ohde naal\nTime naal app te hi renew kr lena ji 🙏🏻",
-        "Sat Sri Akal {name} ji 🙏🏻\n5 din baad ({date}) app te groups da mahina pura ho reha\nRenew sirf app te krna ji 🙏🏻",
-        "{name} paaji 🙏🏻\n{date} nu app plan pura ho jana, groups chalde rehan lyi app te renew krdo ji\nPayment app te hi krni 🙏🏻"
-      ],
-      "pre2": [
-        "Sat Sri Akal {name} paaji 🙏🏻\n2 din reh gaye, {date} nu app te groups da mahina pura ho jana\nApp te renew krke dss deyo ji 🙏🏻",
-        "{name} paaji 🙏🏻\nParson {date} nu tohada app plan khatam ho reha, groups vi\nSirf app te renew krna ji 🙏🏻",
-        "Sat Sri Akal {name} ji 🙏🏻\nApp te groups da plan {date} nu pura hona\nKirpa krke app te hi pay krna ji 🙏🏻",
-        "{name} paaji Sat Sri Akal 🙏🏻\n{date} nu app plan pura, groups band na hon es lyi app te renew kr lena ji 🙏🏻"
-      ],
       "due": [
         "Sat Sri Akal {name} paaji 🙏🏻\nAaj tohada ik mahina pura hogya hai, app te renew krke dss deyo ji\nGroups lyi payment sirf app te 🙏🏻",
         "{name} paaji Sat Sri Akal 🙏🏻\nAaj app te groups da plan pura hogya\nApp te renew krke dss deyo ji 🙏🏻",
         "Sat Sri Akal {name} ji 🙏🏻\nTohada mahina aaj ({date}) pura hogya hai\nApp te hi renew krna ji, tan groups chalde rehnge 🙏🏻",
         "{name} paaji 🙏🏻\nAaj last din aa app plan da, app te renew krke dss deyo ji\nPayment app te hi krni, groups ohde naal hi chalde ne 🙏🏻"
+      ],
+      "after": [
+        "Sat Sri Akal {name} paaji 🙏🏻\nKal tohada app plan pura hogya si ji\nAj app te renew kr deyo, nhi ta kal ton groups band ho jaane 🙏🏻",
+        "{name} paaji Sat Sri Akal 🙏🏻\nTohada app plan {date} nu pura hogya si\nGroups chalde rakhne ne ta aj hi app te renew krdo ji 🙏🏻",
+        "Sat Sri Akal {name} ji 🙏🏻\nApp te tohada renew hje baki aa ji\nAj renew krdo, kal groups cho naam hat jana 🙏🏻",
+        "{name} paaji 🙏🏻\nKal app plan khatam hogya si, aj aakhri mauka aa ji\nApp te renew krke groups chalde rakho 🙏🏻"
       ]
     }
   },
@@ -247,5 +242,13 @@
     "playStoreUrl": "https://play.google.com/store/apps/details?id=com.easecab.app",
     "cutover": null,
     "price": 149
+  },
+  "appGroupId": "120363409676986143@g.us",
+  "freshStart": {
+    "perDay": 20
+  },
+  "dmSession": {
+    "authDir": "baileys_auth_dm",
+    "warmupHours": 0
   }
 }

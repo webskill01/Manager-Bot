@@ -27,7 +27,8 @@
   "renewal": {
     "fullAmount": 100,
     "referralAmount": 100,
-    "billingCycleDays": 30
+    "billingCycleDays": 30,
+    "referrals": false
   },
   "joining": {
     "fee": 100
@@ -154,23 +155,17 @@
       "Paaji app ton pay krke screenshot share krdo ji 🙏🏻"
     ],
     "appReminder": {
-      "pre5": [
-        "Sat Sri Akal {name} paaji 🙏🏻\n{date} nu Singh Travels groups te app da mahina pura ho jana\nApp te hi renew krna ji 🙏🏻",
-        "{name} paaji 🙏🏻\n5 din baad tohada app plan pura ho reha, groups vi naal\nRenew sirf app te kr lena ji 🙏🏻",
-        "Sat Sri Akal {name} ji 🙏🏻\nTohada app te groups wala plan {date} nu khatam hona\nPayment app te hi krni ji 🙏🏻",
-        "{name} paaji Sat Sri Akal 🙏🏻\n{date} nu app plan pura hona, groups chalde rakhne ne tan app te renew krdo ji 🙏🏻"
-      ],
-      "pre2": [
-        "Sat Sri Akal {name} paaji 🙏🏻\n2 din bache ne, {date} nu app te groups da mahina pura\nApp te renew krke dss deyo ji 🙏🏻",
-        "{name} paaji 🙏🏻\n{date} nu tohada app plan te groups khatam ho rahe ne\nSirf app te hi pay krna ji 🙏🏻",
-        "Sat Sri Akal {name} ji 🙏🏻\nParson app plan pura ho jana, Singh Travels groups vi\nApp te renew kr lena ji 🙏🏻",
-        "{name} paaji Sat Sri Akal 🙏🏻\nApp te groups da plan {date} tak aa\nRenew app te hi krna ji 🙏🏻"
-      ],
       "due": [
         "Sat Sri Akal {name} paaji 🙏🏻\nAaj tohada ik mahina pura hogya hai, app te renew krke dss deyo ji\nSingh Travels groups lyi payment sirf app te 🙏🏻",
         "{name} paaji 🙏🏻\nAaj app te groups da mahina pura hogya\nApp te hi renew krke dss deyo ji 🙏🏻",
         "Sat Sri Akal {name} ji 🙏🏻\nTohada app plan aaj ({date}) pura hogya\nGroups chalde rehan lyi app te renew krdo ji 🙏🏻",
         "{name} paaji Sat Sri Akal 🙏🏻\nAaj last din aa ji, app te renew krke dss deyo\nPayment app te hi krni, groups ohde naal 🙏🏻"
+      ],
+      "after": [
+        "Sat Sri Akal {name} paaji 🙏🏻\nKal tohada app plan pura hogya si\nAj app te renew krdo ji, nhi ta kal ton Singh Travels groups band 🙏🏻",
+        "{name} paaji 🙏🏻\nApp te renew hje baki aa ji ({date} nu plan pura hoya)\nAj hi app te krdo, groups ohde naal chalde ne 🙏🏻",
+        "Sat Sri Akal {name} ji 🙏🏻\nAj aakhri din aa ji app te renew krn da\nKal groups cho naam hat jana, app te renew krdo 🙏🏻",
+        "{name} paaji Sat Sri Akal 🙏🏻\nTohada app plan kal khatam hogya\nGroups lyi aj app te renew krke dss deyo ji 🙏🏻"
       ]
     }
   },
@@ -193,5 +188,7 @@
     "playStoreUrl": "https://play.google.com/store/apps/details?id=com.easecab.app",
     "cutover": null,
     "price": 149
-  }
+  },
+  "appGroupId": "120363409676986143@g.us",
+  "groupTrack": false
 }

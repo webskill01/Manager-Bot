@@ -72,6 +72,7 @@ function ddmmyyyy(offsetDays = 0) {
 test('every shipped variant substitutes cleanly — no {name} or {date} survives', () => {
   for (const bot of BOTS) {
     const cfg = JSON.parse(fs.readFileSync(`bots/${bot}/config.json`, 'utf8'));
+    if (cfg.groupTrack === false) continue;   // app-track-only bot: no group ladder
     for (const [cohort, days] of [['due', 0], ['nudge', cfg.overdue.autoReminderDays], ['final', cfg.overdue.finalReminderDays]]) {
       // 40 members spreads them across every variant of whichever stage this cohort maps to.
       const members = Array.from({ length: 40 }, (_, i) => ({
@@ -83,6 +84,7 @@ test('every shipped variant substitutes cleanly — no {name} or {date} survives
       for (const r of rows) {
         assert.ok(!r.text.includes('{name}'), `${bot}/${cohort}: unsubstituted {name} in:\n${r.text}`);
         assert.ok(!r.text.includes('{date}'), `${bot}/${cohort}: unsubstituted {date} in:\n${r.text}`);
+        assert.ok(!r.text.includes('{fee}'), `${bot}/${cohort}: unsubstituted {fee} in:\n${r.text}`);
         assert.ok(r.text.trim().length > 0, `${bot}/${cohort}: empty message`);
       }
     }
@@ -107,6 +109,7 @@ test('a template naming the member twice substitutes BOTH', () => {
 test('bots with variants actually produce more than one distinct message', () => {
   for (const bot of BOTS) {
     const cfg = JSON.parse(fs.readFileSync(`bots/${bot}/config.json`, 'utf8'));
+    if (cfg.groupTrack === false) continue;
     const members = Array.from({ length: 60 }, (_, i) => ({
       name: 'SameName', phone: `90000000${String(i).padStart(2, '0')}`,
       billingDate: ddmmyyyy(0), status: 'ACTIVE', renewals: 0,

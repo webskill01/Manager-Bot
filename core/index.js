@@ -44,6 +44,8 @@ import { createDripEngine } from './dripEngine.js';
 import { createLedger } from './ledger.js';
 import { createTrialRemovalEngine } from './trialRemovalEngine.js';
 import { createRemovalEngine } from './removalEngine.js';
+import { createAppMoveEngine } from './appMoveEngine.js';
+import { createDmSocket, dmAuthExists } from './dmSocket.js';
 import { createAppClient } from './appClient.js';
 import { createAppSync } from './appSync.js';
 import { createFleetView, paidPing } from './fleetView.js';
@@ -72,6 +74,7 @@ export async function startBot(config, log, authDir) {
   let qrTimestamp = null;
   let commandParser = null;
   let dripEngine = null;
+  let dmSocket = null;
   let schedulerStarted = false;
   // Second command channel, on `transport: "dual"` only (bot-nitin). It drives the SAME
   // commandParser and the SAME live socket, so `kick` typed in Telegram really removes the
@@ -144,10 +147,17 @@ export async function startBot(config, log, authDir) {
   // The fourth argument is what unlocks "mode": "auto". core/telegram.js passes nothing in
   // its place, which is why a Telegram-only bot cannot auto-send however its config reads.
   if (!isTracker(config)) {
+    // config.dmSession: member DMs go out on their own number (see dmSocket.js); the main
+    // socket keeps group ops and commands.
+    // Only once the auth folder exists: the cutover is "move the aged number's auth there
+    // and restart", with no config edit on the box.
+    if (config.dmSession && dmAuthExists(config)) { dmSocket = createDmSocket({ config, log }); dmSocket.connect(); }
+    else if (config.dmSession) log.info('ℹ️  dmSession configured but no auth folder yet — DMs use the main socket');
     dripEngine = createDripEngine(
       config, log, store, reminderSender,
       (text) => notifyTelegram(text, config.dripIds),
-      { getSock, warmingUp, tracker: deliveryTracker },
+      dmSocket ? { getSock: dmSocket.getSock, warmingUp: dmSocket.warmingUp, tracker: dmSocket.tracker }
+        : { getSock, warmingUp, tracker: deliveryTracker },
       (text) => notifyTelegram(text, config.reportIds),
     );
   }
@@ -187,6 +197,9 @@ export async function startBot(config, log, authDir) {
   });
   appSync?.start();
   groupScan?.start();
+  // App users seen in config.appGroupId leave the paid groups, paced. Off until `appmove on`.
+  const appMove = groupScan && appSync && config.appGroupId
+    ? createAppMoveEngine({ config, log, getSock, groupScan, appSync, removal: removalEngine, warmingUp }) : null;
 
   function destroySocket(reason) {
     if (!sock) return;
@@ -445,7 +458,7 @@ export async function startBot(config, log, authDir) {
       sock.ev.on('groups.update', (updates) => { for (const u of updates || []) groupMetaCache.delete(u?.id); });
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine, ledger, deliveryTracker, appSync, appClient, fleet, groupScan);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine, ledger, deliveryTracker, appSync, appClient, fleet, groupScan, appMove);
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {
@@ -527,6 +540,7 @@ export async function startBot(config, log, authDir) {
               trialEngine.resume();
               removalEngine.resume();
               ghostEngine.resume();
+              appMove?.resume();
               // Same gate as the crons: resume() replays a missed reminder window, so
               // leaving it ungated would send Baileys reminders on every reconnect and
               // walk straight past the scheduler guard.
@@ -544,6 +558,7 @@ export async function startBot(config, log, authDir) {
             trialEngine.resume();
             removalEngine.resume();
             ghostEngine.resume();
+            appMove?.resume();
             // Gated exactly like the crons — resume() replays a missed reminder window,
             // and an ungated replay would send Baileys reminders on every reconnect.
             if (!isTracker(config) && usesCloudApi(config)) {
@@ -766,6 +781,12 @@ export async function startBot(config, log, authDir) {
       if (!text) return res.status(400).json({ error: 'text required' });
       await broadcast(text);
       res.json({ sent: true });
+    });
+
+    app.get('/qr-dm', async (req, res) => {
+      const q = dmSocket?.qr();
+      if (!q || Date.now() - q.at > 60000) return res.status(404).send('No DM-session QR (connected, or wait for a new one).');
+      res.type('png').send(await QRCode.toBuffer(q.qr, { type: 'png', width: 400, margin: 2 }));
     });
 
     app.get('/qr', async (req, res) => {

@@ -14,17 +14,16 @@ test('a member is on the app flow once they paid on the app, or after the cutove
   assert.strictEqual(isAppFlow({ appPaidUntil: '' }, cut, '01-11-2026'), true);
 });
 
-test('app reminders fire exactly 5 days before, 2 days before and on the day', () => {
-  assert.strictEqual(appCohort({ billingDate: inDays(5) }), 'pre5');
-  assert.strictEqual(appCohort({ billingDate: inDays(2) }), 'pre2');
+test('app reminders fire on the expiry day and the day after, nothing before', () => {
   assert.strictEqual(appCohort({ billingDate: inDays(0) }), 'due');
-  for (const n of [6, 4, 3, 1, -1, -5]) assert.strictEqual(appCohort({ billingDate: inDays(n) }), null, `day ${n}`);
+  assert.strictEqual(appCohort({ billingDate: inDays(-1) }), 'after');
+  for (const n of [5, 2, 1, -2, -5]) assert.strictEqual(appCohort({ billingDate: inDays(n) }), null, `day ${n}`);
 });
 
-test('app-flow members are removed the day after expiry; old flow waits for the removal list', () => {
-  const app = { status: 'ACTIVE', appPaidUntil: inDays(-1), billingDate: inDays(-1) };
+test('app-flow members are removed two days after expiry; old flow waits for the removal list', () => {
+  const app = { status: 'ACTIVE', appPaidUntil: inDays(-2), billingDate: inDays(-2) };
   assert.strictEqual(removalDue(app, config), true);
-  assert.strictEqual(removalDue({ ...app, billingDate: inDays(0) }, config), false, 'not on the day itself');
+  assert.strictEqual(removalDue({ ...app, billingDate: inDays(-1) }, config), false, 'not the day after');
   assert.strictEqual(removalDue({ ...app, status: 'REMOVED' }, config), false);
   const old = { status: 'ACTIVE', appPaidUntil: '', billingDate: inDays(-6) };
   assert.strictEqual(removalDue(old, config), false);

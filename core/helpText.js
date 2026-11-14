@@ -226,6 +226,7 @@ Example: R1 R2 S3
 
 🚫 BULK REMOVAL (7+ days overdue)
 • removal  /  warnall  /  kickall  /  stop kickall
+• appmove [on|off] — app users in the app group leave the paid groups, paced
 
 🔁 TRIAL GROUP
 • start removal  /  stop removal`,

@@ -142,23 +142,16 @@
       "App ton pay karke screenshot share kar deo ji 🙏"
     ],
     "appReminder": {
-      "pre5": [
-        "SSA {name} Paaji 🙏\n{date} nu tuhada Malwa Travels groups te app da mahina pura ho jana\nApp te hi renew karna ji 🙏🏻",
-        "SSA {name} paaji, 5 din baad ({date}) tuhada app plan te groups khatam ho rahe ne\nRenew sirf app te kar lena ji 🙏",
-        "Hanji {name} paaji 🙏🏻\nTuhada app wala plan {date} nu pura hona, groups vi naal\nPayment app te hi karni ji 🙏",
-        "SSA {name} Paaji, {date} nu app plan pura ho jana\nGroups chalde rakhne ne ta app te renew kardo ji 🙏🏻"
-      ],
-      "pre2": [
-        "SSA {name} Paaji 🙏\n2 din reh gaye, {date} nu app te groups da mahina pura\nApp te renew karke das deo ji 🙏🏻",
-        "Hanji {name} paaji, parson ({date}) tuhada app plan te groups khatam\nSirf app te pay karna ji 🙏",
-        "SSA {name} paaji 🙏🏻\nMalwa Travels groups te app da plan {date} tak aa\nApp te hi renew karna ji 🙏",
-        "SSA {name} Paaji, app plan {date} nu pura ho reha\nGroups band na hon, app te renew kar lo ji 🙏🏻"
-      ],
       "due": [
         "SSA {name} Paaji ajj tuhada ik mahina pura hogya hai, app te renew karke das deo ji\nGroups layi payment sirf app te 🙏",
         "Hanji {name} paaji, ajj tuhada app te groups da mahina pura hogya\nApp te renew karke das deo ji 🙏🏻",
         "SSA {name} paaji 🙏\nAjj ({date}) app plan pura hogya\nMalwa Travels groups chalde rehan layi app te hi renew karna ji 🙏🏻",
         "SSA {name} Paaji, ajj last din aa app plan da\nApp te renew karke das deo ji, groups layi payment app te hi 🙏"
+      ],
+      "after": [
+        "SSA {name} Paaji, kal tuhada app plan pura hogya si\nAjj app te renew kar deo ji, nahi ta kal ton groups band 🙏",
+        "Hanji {name} paaji, app te renew hje baki aa ji\nMalwa Travels groups chalde rakhne ne ta ajj app te renew karo 🙏🏻",
+        "SSA {name} paaji 🙏\nAjj aakhri din aa app te renew karan da\nKal groups cho naam hat jaana ji 🙏🏻"
       ]
     }
   },

@@ -393,6 +393,7 @@ export function createReminderSender(config, log, { fetchImpl } = {}) {
   // auto-renew the cron used to do — otherwise a member who owes nothing would be
   // chased for money. Returns [] and touches nothing when nobody qualifies.
   async function autoRenewDue(store, botDir, lookback = 0) {
+    if (config.renewal?.referrals === false) return [];
     const state = loadState(botDir);
     const dueRaw = await getDueToday(store, lookback);
     const all = store.getAll();

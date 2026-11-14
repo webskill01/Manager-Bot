@@ -2,7 +2,7 @@ import {
   daysFromToday, todayStr, friendlyDate, isDelayActive, renewedOn, parseDate,
   getReferralsInBillingPeriod, chunkByChars, MAX_CHARS_PER_MSG, pickVariant,
 } from './globalConfig.js';
-import { isAppFlow, appCohort } from './appFlow.js';
+import { isAppFlow, appCohort, isBacklog, ladderDate } from './appFlow.js';
 
 // Re-exported for tests and for callers that already import them from here.
 export { chunkByChars, MAX_CHARS_PER_MSG };
@@ -14,6 +14,7 @@ export { chunkByChars, MAX_CHARS_PER_MSG };
 // renewal config, not the joining one.
 function renewalFee(config, referral) {
   const r = config.renewal || {};
+  if (r.referrals === false) referral = false;
   const full = Number(r.fullAmount) || config.joining?.fee || 90;
   if (!referral) return full;
   const ref = Number(r.referralAmount);
@@ -29,6 +30,13 @@ export function pickStage(overdueDays, config) {
   if (overdueDays >= nudge) return 'msg2';
   return 'msg1';
 }
+
+// Templates write the price as {fee}, so a price change is a config number, not ten edits.
+// Global replace: a template naming the member twice must not send a literal "{name}".
+const fill = (text, m, fee) => text
+  .replace(/\{name\}/g, m.name)
+  .replace(/\{date\}/g, friendlyDate(m.billingDate))
+  .replace(/\{fee\}/g, String(fee));
 
 // Each message may be a string or an array of variants — see pickVariant. The pick is keyed
 // keyed on the row's position in the list, so the wordings rotate 1-2-3-1-2-3 instead of
@@ -59,16 +67,15 @@ export function dmRowFor(member, config, { stage = null, referral = false } = {}
   const overdueDays = d === null ? 0 : Math.max(0, -d);
   const app = isAppFlow(member, config);
   const chosen = stage || (app ? `app_${appCohort(member) || 'due'}` : pickStage(overdueDays, config));
-  const text = templateFor(chosen, config, { referral, phone: member.phone })
-    .replace(/\{name\}/g, member.name)
-    .replace(/\{date\}/g, friendlyDate(member.billingDate));
+  const fee = app ? (config.app?.price ?? renewalFee(config, false)) : renewalFee(config, referral);
+  const text = fill(templateFor(chosen, config, { referral, phone: member.phone }), member, fee);
   return {
     name: member.name,
     phone: member.phone,
     billingDate: member.billingDate,
     overdueDays,
     stage: chosen,
-    fee: app ? (config.app?.price ?? renewalFee(config, false)) : renewalFee(config, referral),
+    fee,
     text,
     link: `https://wa.me/91${member.phone}?text=${encodeURIComponent(text)}`,
   };
@@ -112,34 +119,36 @@ export function buildDmList({
   const rows = [];
   let seq = 0;   // rotation counter, advanced only for members who actually make the list
 
-  // App-flow cohorts. The app cuts access ON the expiry date, so these members are reminded
-  // before it (5 days, 2 days, the day) and never chased after — the morning after, they
-  // are removed. 'due' carries both flows: old-flow day-0 members and app-flow expiry-day
-  // members are the same "today is the day" list for the operator.
-  const appStages = { pre5: 'app_pre5', pre2: 'app_pre2', due: 'app_due' };
+  // App-flow cohorts: the expiry day ('due', shared with old-flow day-0 members — the same
+  // "today is the day" list for the operator) and the day after ('after'). The day after
+  // that they are removed (appFlow.removalDue).
+  const appStages = { due: 'app_due', after: 'app_after' };
+  const referralsOn = config.renewal?.referrals !== false;
 
   for (const m of all) {
     if (m.status !== 'ACTIVE') continue;
-    const d = daysFromToday(m.billingDate, asOf);
+    // A fresh-start backlog member counts from their restart day; not yet restarted = only
+    // the 'fresh' cohort (freshRows) can reach them.
+    const lad = ladderDate(m, config, contactLog);
+    if (lad === null) continue;
+    const d = daysFromToday(lad, asOf);
     if (d === null) continue;
 
     if (isAppFlow(m, config, now)) {
       if (billingDay !== null || appCohort(m, asOf) !== cohort) continue;
       if (isDelayActive(m) || renewedOn(m, now)) continue;
       const stage = appStages[cohort];
-      const text = templateFor(stage, config, { phone: m.phone, seq: seq++ })
-        .replace(/\{name\}/g, m.name)
-        .replace(/\{date\}/g, friendlyDate(m.billingDate));
+      const fee = config.app?.price ?? renewalFee(config, false);
+      const text = fill(templateFor(stage, config, { phone: m.phone, seq: seq++ }), m, fee);
       rows.push({
         name: m.name, phone: m.phone, billingDate: m.billingDate,
-        overdueDays: 0, daysLeft: d, stage,
-        fee: config.app?.price ?? renewalFee(config, false),
-        text,
+        overdueDays: Math.max(0, -d), daysLeft: d, stage, fee, text,
         link: `https://wa.me/91${m.phone}?text=${encodeURIComponent(text)}`,
       });
       continue;
     }
-    if (cohort === 'pre5' || cohort === 'pre2') continue;   // old flow: never chase early
+    // groupTrack:false — this bot runs the app track only; its non-app members get nothing.
+    if (config.groupTrack === false || cohort === 'after') continue;
     if (d > 0) continue;                            // future billing — never chase early
     const overdueDays = -d;
 
@@ -172,18 +181,13 @@ export function buildDmList({
     if (renewedOn(m, now)) continue;
 
     // 2+ refs are auto-renewed before the list is built, so anyone still here has 0 or 1.
-    const refs = getReferralsInBillingPeriod(m.phone, m.billingDate, all);
-    const referral = refs.length === 1;
+    const referral = referralsOn && getReferralsInBillingPeriod(m.phone, m.billingDate, all).length === 1;
     const stage = force || pickStage(overdueDays, config);
     // {date} is the member's OWN billing date, not today. On a backlog run today's date is
     // simply wrong — telling someone billed on the 20th that their date is the 28th reads
     // as a mistake and invites an argument about what they actually owe.
-    const text = templateFor(stage, config, { referral, phone: m.phone, seq: seq++ })
-      // Global, not first-occurrence. A plain-string .replace() swaps only the first match,
-      // so a template mentioning the member twice would send the second one as the literal
-      // text "{name}". Cheap to get wrong now that operators write several variants each.
-      .replace(/\{name\}/g, m.name)
-      .replace(/\{date\}/g, friendlyDate(m.billingDate));
+    const fee = renewalFee(config, referral);
+    const text = fill(templateFor(stage, config, { referral, phone: m.phone, seq: seq++ }), m, fee);
 
     rows.push({
       name: m.name,
@@ -193,7 +197,7 @@ export function buildDmList({
       billingDate: m.billingDate,
       overdueDays,
       stage,
-      fee: renewalFee(config, referral),
+      fee,
       text,
       link: `https://wa.me/91${m.phone}?text=${encodeURIComponent(text)}`,
     });
@@ -201,6 +205,23 @@ export function buildDmList({
 
   rows.sort((a, b) => b.overdueDays - a.overdueDays);
   return { rows, stageForced: !!force, cohort, billingDay };
+}
+
+// Fresh-start backlog not yet restarted, least overdue first, capped at freshStart.perDay
+// restarts per day (counted from the contact log, so each send shrinks the room left).
+// Each gets msg1 (with QR); that send stamps `start` and their ladder runs from it.
+export function freshRows({ members, config, contactLog = {}, now = todayStr() }) {
+  const fs_ = config.freshStart;
+  if (!fs_?.from || config.groupTrack === false) return [];
+  if (parseDate(now) < parseDate(fs_.from)) return [];
+  const room = (fs_.perDay ?? 20) - Object.values(contactLog).filter(c => c?.start === now).length;
+  if (room <= 0) return [];
+  return members
+    .filter(m => m.status === 'ACTIVE' && isBacklog(m, config) && ladderDate(m, config, contactLog) === null
+      && !isDelayActive(m) && !renewedOn(m, now))
+    .map(m => ({ ...dmRowFor(m, config, { stage: 'msg1' }), fresh: true }))
+    .sort((a, b) => a.overdueDays - b.overdueDays)
+    .slice(0, room);
 }
 
 // Which slice this list is, in the two places the operator reads: the header suffix and
@@ -232,8 +253,7 @@ function describe({ cohort, billingDay, config }) {
     const label = stop - n <= 1 ? `${n} days overdue` : `${n}-${stop - 1} days overdue`;
     return { label, empty: `✅ Nobody is ${label} — final notice.` };
   }
-  if (cohort === 'pre5') return { label: 'app plan ends in 5 days', empty: '✅ No app plan ends in 5 days.' };
-  if (cohort === 'pre2') return { label: 'app plan ends in 2 days', empty: '✅ No app plan ends in 2 days.' };
+  if (cohort === 'after') return { label: 'app plan ended yesterday', empty: '✅ No app plan ended yesterday.' };
   return { label: 'due today', empty: '✅ Nobody is due today.' };
 }
 

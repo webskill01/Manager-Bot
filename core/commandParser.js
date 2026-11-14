@@ -74,7 +74,7 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null, deliveryTracker = null, appSync = null, appClient = null, fleet = null, groupScan = null) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null, deliveryTracker = null, appSync = null, appClient = null, fleet = null, groupScan = null, appMove = null) {
   const memberH = createMemberHandlers(store, groupManager, config, log, appSync);
   // EaseCab app era. Absent (no APP_SYNC_URL) → every command below behaves as before.
   const appH = appSync ? createAppHandlers({ config, appSync, client: appClient, fleet, log, groupScan }) : null;
@@ -972,6 +972,11 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         case 'removal':    return removalEngine.handleRemoval();
         case 'warnall':    return removalEngine.warnall();
         case 'kickall':    return removalEngine.kickall();
+        case 'appmove': {
+          if (!appMove) return 'ℹ️ App move needs appGroupId, the app sync and the group scan on this bot.';
+          const a = args[0]?.toLowerCase();
+          return a === 'on' ? appMove.start() : a === 'off' ? appMove.stop() : appMove.status();
+        }
 
         // Verify the official API end-to-end before flipping reminderChannel on the
         // whole bot — a template rejection or a bad token should surface here, not at

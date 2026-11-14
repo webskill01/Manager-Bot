@@ -1,7 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { randomBetween, todayStr, friendlyDate, sleep, normalizePhone, pickVariant, resolveWhatsAppJid, parseDate, formatDate, daysFromToday } from './globalConfig.js';
-import { buildDmList } from './dmList.js';
+import { buildDmList, freshRows } from './dmList.js';
+import { isBacklog } from './appFlow.js';
 import { usesCloudApi } from './cloudApiSender.js';
 
 // Paces one day's renewal reminders, in one of two delivery modes.
@@ -216,10 +217,10 @@ export function flexFirstDelayMs(remaining, now, settings, rand = Math.random) {
 // mid-day payment drop someone automatically, with no reconciliation step and no stale queue
 // to corrupt across a restart. `seen` also spans cohorts, so a member who straddles two
 // windows on a tight ladder still gets exactly one link.
-// Queue order. App-flow 'pre2' sits right behind 'due' — two days out is the last reminder
-// before expiry-day, so it is pinned like the ladder. 'pre5' is early and can slip a day
-// without harm (pre2 still follows), so it goes with 'missed' at the back.
-export const COHORTS = ['due', 'pre2', 'nudge', 'final', 'catchup', 'pre5', 'missed'];
+// Queue order. App-flow 'after' (day after expiry, last word before removal) is pinned right
+// behind 'due'. 'fresh' is the capped backlog of a fresh start (see freshRows); it can slip
+// a day, so it sits with 'missed' at the back.
+export const COHORTS = ['due', 'after', 'nudge', 'final', 'catchup', 'fresh', 'missed'];
 
 // A planned pause, read from bots/<bot>/drip-catchup.json (gitignored — it holds phones):
 //   { "from": "11-11-2026", "resumeOn": "13-11-2026", "days": 2, "skip": { "11-11-2026": [phones] } }
@@ -262,7 +263,7 @@ export function catchupRows({ members, config, catchup = config.dripCatchup, con
   for (let d = parseDate(catchup.resumeOn); (d.setDate(d.getDate() - 1), d >= from);) {
     const day = formatDate(d);
     const skip = new Set((catchup.skip?.[day] || []).map(String));
-    for (const cohort of ['due', 'pre2', 'nudge', 'final', 'pre5']) {
+    for (const cohort of ['due', 'after', 'nudge', 'final']) {
       for (const r of buildDmList({ members, config, cohort, now: day, asOf: day }).rows) {
         const phone = String(r.phone);
         if (skip.has(phone) || seen.has(phone)) continue;
@@ -271,7 +272,7 @@ export function catchupRows({ members, config, catchup = config.dripCatchup, con
         if (c?.cycle === r.billingDate && parseDate(c.at || '') >= resume) continue;
         const real = daysFromToday(r.billingDate);
         // An app plan that ended during the pause is cut off and auto-removed: no reminder.
-        if (r.stage.startsWith('app_') && real < 0) continue;
+        if (r.stage.startsWith('app_') && real < -1) continue;
         seen.add(phone);
         out.push({ ...r, overdueDays: Math.max(0, -real), ...(r.stage.startsWith('app_') ? { daysLeft: real } : {}) });
       }
@@ -281,9 +282,9 @@ export function catchupRows({ members, config, catchup = config.dripCatchup, con
 }
 
 function cohortRows({ members, config, cohort, contactLog, now }) {
-  return cohort === 'catchup'
-    ? catchupRows({ members, config, contactLog, now })
-    : buildDmList({ members, config, cohort, contactLog, now }).rows;
+  if (cohort === 'catchup') return catchupRows({ members, config, contactLog, now });
+  if (cohort === 'fresh') return freshRows({ members, config, contactLog, now });
+  return buildDmList({ members, config, cohort, contactLog, now }).rows;
 }
 
 export function buildDripBatch({
@@ -350,11 +351,11 @@ export function describeQueue(split) {
   const total = Object.values(split).reduce((a, b) => a + b, 0);
   const parts = [
     split.due && `${split.due} due`,
-    split.pre2 && `${split.pre2} app 2d`,
+    split.after && `${split.after} app ended`,
     split.nudge && `${split.nudge} nudge`,
     split.final && `${split.final} final`,
     split.catchup && `${split.catchup} catch-up`,
-    split.pre5 && `${split.pre5} app 5d`,
+    split.fresh && `${split.fresh} fresh start`,
     split.missed && `${split.missed} missed`,
   ].filter(Boolean);
   return parts.length > 1 ? `${total} (${parts.join(', ')})` : String(total);
@@ -434,7 +435,7 @@ export function planTimes(queue, settings, { from = new Date(), endHour } = {}) 
 
 const STAGE_LABEL = {
   msg1: 'due today', msg2: 'overdue', msg3: 'FINAL notice',
-  app_pre5: 'app · 5d left', app_pre2: 'app · 2d left', app_due: 'app · ends today',
+  app_due: 'app · ends today', app_after: 'app · ended yesterday', fresh: 'fresh start',
 };
 
 // "3d left" for an app-flow reminder, "due today" / "4d overdue" for the old ladder.
@@ -444,7 +445,8 @@ const ageOf = (r, over = 'overdue') =>
 // A missed member carries msg1 — it IS their first message — but they are not due today, and
 // `due today · Vikram · 3d overdue` on one line is how the queue stopped making sense from the
 // log. The cohort is recoverable from the row: msg1 plus any overdue days at all.
-const labelFor = (r) => (r.stage === 'msg1' && r.overdueDays > 0 ? 'missed' : STAGE_LABEL[r.stage]);
+const labelFor = (r) => (r.fresh ? STAGE_LABEL.fresh
+  : r.stage === 'msg1' && r.overdueDays > 0 ? 'missed' : STAGE_LABEL[r.stage]);
 
 export function renderDripBatch(batch, remaining) {
   const lines = [`📤 *Send these now* — ${friendlyDate()}`, ''];
@@ -483,7 +485,16 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
   // and, unlike drip-state, is NOT reset daily: a cycle spans a week of messages.
   const qrFile = path.join(config.botDir, 'qr-sent.json');
   const settings = dripSettings(config);
-  config.dripCatchup = loadCatchup(config.botDir);
+  reloadPlanFiles();
+  // drip-catchup.json and fresh-start.json (written by scripts/fresh-start.js) are per-bot,
+  // gitignored files, so a pause or a fresh start is never a config edit on the box.
+  function reloadPlanFiles() {
+    config.dripCatchup = loadCatchup(config.botDir);
+    try {
+      const fsj = JSON.parse(fs.readFileSync(path.join(config.botDir, 'fresh-start.json'), 'utf8'));
+      config.freshStart = { ...config.freshStart, ...fsj };
+    } catch { /* none */ }
+  }
   let _timer = null;
   // Which chain of ticks is the live one, and whether a tick is running right now. See
   // clearTimer / later: ONE chain, ONE tick at a time, or the same member gets two messages.
@@ -664,7 +675,7 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
       }
     } catch (err) { log.warn(`⚠️  Drip state read failed: ${err.message}`); }
     // ponytail: re-read per new day so the file can be dropped in without a restart.
-    config.dripCatchup = loadCatchup(config.botDir);
+    reloadPlanFiles();
     return { date: todayStr(), pushed: [], stopped: pausedOn(config.dripCatchup), done: false, armedAt: null };
   }
 
@@ -734,6 +745,8 @@ export function createDripEngine(config, log, store, reminderSender, notify, sen
       cycle: row.billingDate,
       qr: withQr ? row.billingDate : prev.qr,
       at: todayStr(),   // read by catchupRows: "already reached since the pause ended"
+      // Fresh-start restart day (appFlow.ladderDate), kept for the rest of the cycle.
+      start: row.fresh ? todayStr() : (prev.cycle === row.billingDate ? prev.start : undefined),
     };
     saveQrLog(log_);
   }
@@ -1248,7 +1261,9 @@ ${detail || ''}
     const log_ = loadQrLog();
     for (const ph of fresh) {
       const m = byPhone.get(String(ph));
-      if (m) log_[String(ph)] = { cycle: m.billingDate, qr: log_[String(ph)]?.qr, at: todayStr() };
+      const prev = log_[String(ph)];
+      const start = (prev?.cycle === m?.billingDate && prev?.start) || (m && isBacklog(m, config) ? todayStr() : undefined);
+      if (m) log_[String(ph)] = { cycle: m.billingDate, qr: prev?.qr, at: todayStr(), start };
     }
     saveQrLog(log_);
     const rest = countRemaining({ members: store.getAll(), config, pushed: state.pushed, contactLog: loadQrLog() });

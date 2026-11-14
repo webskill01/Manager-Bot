@@ -12,6 +12,8 @@ scripts/*
 # QR variant maker — must run ON the VPS, because the QR images it reads are gitignored and
 # so never arrive by deploy.
 !scripts/make-qr-variants.js
+# Fresh-start reset (backs up + clears per-bot reminder state). Runs on the VPS.
+!scripts/fresh-start.js
 
 # Raw member data exports (contain real phone numbers — keep local only)
 *.xlsx
@@ -23,6 +25,7 @@ migrate.js
 
 # Bot secrets & auth (per-instance — never commit these)
 bots/*/baileys_auth/
+bots/*/baileys_auth_dm/
 bots/*/.env
 bots/*/service-account.json
 bots/*/qr-payment.jpg
@@ -94,3 +97,8 @@ panel/*.db
 panel/*.db-*
 panel/web/dist/
 panel/web/node_modules/
+
+# Two-track rebuild: migration progress, fresh-start date, state backups (phone numbers)
+bots/*/app-move.json
+bots/*/fresh-start.json
+bots/*/fresh-backup-*/

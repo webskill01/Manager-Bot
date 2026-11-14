@@ -10,6 +10,11 @@ import { normalizePhone, randomBetween, sleep, formatDateTime } from './globalCo
 //
 // The result goes to bots/<bot>/group-scan.json (survives restarts) and to a GROUPS tab in
 // this bot's own sheet, which is how bot-nitin's fleet view sees the other bots' groups.
+//
+// Also kept: which paid groups each phone is in (`groups`, so a removal only touches groups
+// the member is actually in), the group admins (never removed), and who is in
+// config.appGroupId (`appGroup`, read by appMoveEngine). The app group is scanned but does
+// not count towards `phones`, so the GROUPS tab means what it always did.
 export const TAB = 'GROUPS';
 export const SCAN_EVERY_MS = 6 * 60 * 60 * 1000;
 const BOOT_DELAY_MS = 10 * 60 * 1000;   // let the socket settle after a restart first
@@ -33,10 +38,13 @@ export function fromTab(rows) {
 
 export function createGroupScan({ config, log, getSock, sheet, warmingUp = () => false }) {
   const file = path.join(config.botDir || '.', 'group-scan.json');
-  let cache = { phones: new Map(), at: '', atMs: 0, hidden: 0 };
+  let cache = { phones: new Map(), at: '', atMs: 0, hidden: 0, groups: new Map(), admins: new Set(), appGroup: new Set() };
   try {
     const j = JSON.parse(fs.readFileSync(file, 'utf8'));
-    cache = { phones: new Map(Object.entries(j.phones || {})), at: j.at || '', atMs: j.atMs || 0, hidden: j.hidden || 0 };
+    cache = {
+      phones: new Map(Object.entries(j.phones || {})), at: j.at || '', atMs: j.atMs || 0, hidden: j.hidden || 0,
+      groups: new Map(Object.entries(j.groups || {})), admins: new Set(j.admins || []), appGroup: new Set(j.appGroup || []),
+    };
   } catch { /* first run */ }
   let running = false;
 
@@ -47,26 +55,37 @@ export function createGroupScan({ config, log, getSock, sheet, warmingUp = () =>
     if (warmingUp()) { log.info('🐣 Warm-up — skipped group scan'); return null; }
     running = true;
     try {
-      const phones = new Map();
+      const phones = new Map(), groups = new Map(), admins = new Set(), appGroup = new Set();
+      const all = [...config.paidGroups, ...(config.appGroupId ? [config.appGroupId] : [])];
       let hidden = 0, ok = 0;
-      for (let i = 0; i < config.paidGroups.length; i++) {
+      for (let i = 0; i < all.length; i++) {
+        const gid = all[i];
+        const isApp = gid === config.appGroupId;
         try {
-          const meta = await sock.groupMetadata(config.paidGroups[i]);
+          const meta = await sock.groupMetadata(gid);
           ok++;
           for (const p of meta.participants || []) {
             const ph = participantPhone(p);
-            if (ph) phones.set(ph, (phones.get(ph) || 0) + 1); else hidden++;
+            if (!ph) { if (!isApp) hidden++; continue; }
+            if (p.admin) admins.add(ph);
+            if (isApp) { appGroup.add(ph); continue; }
+            phones.set(ph, (phones.get(ph) || 0) + 1);
+            groups.set(ph, [...(groups.get(ph) || []), gid]);
           }
         } catch (err) { log.warn(`⚠️  Group scan: group ${i + 1} failed — ${err.message}`); }
-        if (i < config.paidGroups.length - 1) await sleep(randomBetween(4000, 8000));
+        if (i < all.length - 1) await sleep(randomBetween(4000, 8000));
       }
       // ponytail: any group failing keeps the old cache whole rather than writing a half list.
-      if (ok < config.paidGroups.length) { log.warn(`👥 Group scan incomplete (${ok}/${config.paidGroups.length}) — kept the previous scan`); return null; }
-      cache = { phones, at: formatDateTime(new Date()), atMs: Date.now(), hidden };
-      fs.writeFileSync(file, JSON.stringify({ ...cache, phones: Object.fromEntries(phones) }));
+      if (ok < all.length) { log.warn(`👥 Group scan incomplete (${ok}/${all.length}) — kept the previous scan`); return null; }
+      cache = { phones, at: formatDateTime(new Date()), atMs: Date.now(), hidden, groups, admins, appGroup };
+      fs.writeFileSync(file, JSON.stringify({
+        ...cache, phones: Object.fromEntries(phones), groups: Object.fromEntries(groups),
+        admins: [...admins], appGroup: [...appGroup],
+      }));
       try { await sheet.writeTab(TAB, toTab(phones, cache.at)); }
       catch (err) { log.warn(`⚠️  Group scan: ${TAB} tab write failed — ${err.message}`); }
-      log.info(`👥 Group scan — ${phones.size} phones in ${ok} group(s)${hidden ? `, ${hidden} hidden (LID)` : ''}`);
+      log.info(`👥 Group scan — ${phones.size} phones in ${config.paidGroups.length} group(s)` +
+        `${config.appGroupId ? `, ${appGroup.size} in the app group` : ''}${hidden ? `, ${hidden} hidden (LID)` : ''}`);
       return cache;
     } finally { running = false; }
   }
@@ -77,5 +96,8 @@ export function createGroupScan({ config, log, getSock, sheet, warmingUp = () =>
     setTimeout(() => { if (Date.now() - cache.atMs >= SCAN_EVERY_MS) scan().catch(err => log.warn(`⚠️  Group scan: ${err.message}`)); }, BOOT_DELAY_MS).unref?.();
   }
 
-  return { scan, start, phones: () => cache.phones, at: () => cache.at, atMs: () => cache.atMs, hidden: () => cache.hidden };
+  return {
+    scan, start, phones: () => cache.phones, at: () => cache.at, atMs: () => cache.atMs, hidden: () => cache.hidden,
+    groupsOf: (phone) => cache.groups.get(phone) || [], admins: () => cache.admins, appGroup: () => cache.appGroup,
+  };
 }

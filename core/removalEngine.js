@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { daysFromToday, sleep, randomBetween, normalizePhone, resolveWhatsAppJid, isDelayActive } from './globalConfig.js';
-import { removalDue, isAppFlow } from './appFlow.js';
+import { removalDue, isAppFlow, loadContactLog } from './appFlow.js';
 
 const MIN_GAP_MS = 15 * 60 * 1000;
 const MAX_GAP_MS = 30 * 60 * 1000;
@@ -40,10 +40,11 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
   // the old flow stays the operator's call through `overdue` / `kickall`.
   function getRemovalList({ appOnly = false } = {}) {
     const all = store.getAll();
+    const log_ = loadContactLog(config.botDir);   // fresh-start restart days
     return all
       .filter(m => {
         // Delayed members (paid-promise snooze) stay overdue but are hidden from the removal list.
-        if (!removalDue(m, config) || isDelayActive(m)) return false;
+        if (!removalDue(m, config, undefined, log_) || isDelayActive(m)) return false;
         return !appOnly || isAppFlow(m, config);
       })
       .map(m => ({ ...m, daysOverdue: Math.abs(daysFromToday(m.billingDate)) }))
@@ -69,21 +70,26 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
     }
   }
 
-  async function removeMemberFromAllGroups(phone) {
+  // App-track members also leave config.appGroupId. appMoveEngine reuses this with just the
+  // groups the scan saw someone in.
+  const groupsFor = (member) =>
+    (config.appGroupId && member && isAppFlow(member, config) ? [...config.paidGroups, config.appGroupId] : config.paidGroups);
+
+  async function removeMemberFromAllGroups(phone, groups = config.paidGroups) {
     const jid = `91${normalizePhone(phone)}@s.whatsapp.net`;
     let removedCount = 0;
     let interrupted = false;
-    for (let i = 0; i < config.paidGroups.length; i++) {
+    for (let i = 0; i < groups.length; i++) {
       const currentSock = getSock();
       if (!currentSock?.user) { log.warn('⚠️  Kickall: socket lost mid-removal'); interrupted = true; break; }
       try {
-        await currentSock.groupParticipantsUpdate(config.paidGroups[i], [jid], 'remove');
+        await currentSock.groupParticipantsUpdate(groups[i], [jid], 'remove');
         removedCount++;
-        log.info(`🚫 Kickall removed ${phone} from group ${i + 1}/${config.paidGroups.length}`);
+        log.info(`🚫 Removed ${phone} from group ${i + 1}/${groups.length}`);
       } catch (err) {
         log.warn(`⚠️  Kickall remove failed group ${i + 1}: ${err.message}`);
       }
-      if (i < config.paidGroups.length - 1) {
+      if (i < groups.length - 1) {
         await sleep(randomBetween(config.rateLimits.groupOpGapMinMs, config.rateLimits.groupOpGapMaxMs));
       }
     }
@@ -131,7 +137,7 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
         if (isDelayActive(fresh)) return false; // delayed mid-run — skip until the delay expires
         // Same rule that put them on the list: an app payment since then moved their billing
         // date forward, so they drop out here without anything else to check.
-        return removalDue(fresh, config);
+        return removalDue(fresh, config, undefined, loadContactLog(config.botDir));
       })();
 
       if (!isStillOverdue) {
@@ -153,7 +159,7 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
 
       log.info(`🚫 Kickall [${index + 1}/${state.members.length}]: ${member.name} (${member.phone})`);
 
-      const { removedCount, interrupted } = await removeMemberFromAllGroups(member.phone);
+      const { removedCount, interrupted } = await removeMemberFromAllGroups(member.phone, groupsFor(fresh));
 
       // Socket dropped partway through this member's group loop — they were only partially
       // processed. Do NOT mark them done/REMOVED: leave index where it is so resume() retries the
@@ -177,7 +183,7 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
       saveState(state);
 
       await notify(
-        `🚫 Kickall [${index + 1}/${state.members.length}]: ${member.name} (${member.phone}) — removed from ${removedCount}/${config.paidGroups.length} groups`
+        `🚫 Kickall [${index + 1}/${state.members.length}]: ${member.name} (${member.phone}) — removed from ${removedCount}/${groupsFor(fresh).length} groups`
       );
 
       if (index + 1 < state.members.length) {
@@ -372,5 +378,6 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
     scheduleNext(state.currentIndex, delayMs);
   }
 
-  return { handleRemoval, warnall, kickall, stopKickall, resume };
+  const kickallActive = () => !!loadState()?.active;
+  return { handleRemoval, warnall, kickall, stopKickall, resume, kickallActive, removeFromGroups: removeMemberFromAllGroups };
 }
