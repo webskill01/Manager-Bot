@@ -63,7 +63,7 @@ export function createGroupScan({ config, log, getSock, sheet, warmingUp = () =>
         const isApp = gid === config.appGroupId;
         try {
           const meta = await sock.groupMetadata(gid);
-          ok++;
+          if (!isApp) ok++;
           for (const p of meta.participants || []) {
             const ph = participantPhone(p);
             if (!ph) { if (!isApp) hidden++; continue; }
@@ -72,11 +72,12 @@ export function createGroupScan({ config, log, getSock, sheet, warmingUp = () =>
             phones.set(ph, (phones.get(ph) || 0) + 1);
             groups.set(ph, [...(groups.get(ph) || []), gid]);
           }
-        } catch (err) { log.warn(`⚠️  Group scan: group ${i + 1} failed — ${err.message}`); }
+        } catch (err) { log.warn(`⚠️  Group scan: ${isApp ? 'app group' : `group ${i + 1}`} failed — ${err.message}`); }
         if (i < all.length - 1) await sleep(randomBetween(4000, 8000));
       }
       // ponytail: any group failing keeps the old cache whole rather than writing a half list.
-      if (ok < all.length) { log.warn(`👥 Group scan incomplete (${ok}/${all.length}) — kept the previous scan`); return null; }
+      // The app group is optional: a number not yet added there must not freeze the paid scan.
+      if (ok < config.paidGroups.length) { log.warn(`👥 Group scan incomplete (${ok}/${config.paidGroups.length}) — kept the previous scan`); return null; }
       cache = { phones, at: formatDateTime(new Date()), atMs: Date.now(), hidden, groups, admins, appGroup };
       fs.writeFileSync(file, JSON.stringify({
         ...cache, phones: Object.fromEntries(phones), groups: Object.fromEntries(groups),
