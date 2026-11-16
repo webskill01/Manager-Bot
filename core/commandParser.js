@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { createGroupManager } from './groupManager.js';
 import path from 'path';
 import { daysFromToday, normalizePhone as normPhone, getReferralsInBillingPeriod, todayStr, friendlyDate, sleep, isTracker, pickVariant, resolveWhatsAppJid, lidFor } from './globalConfig.js';
 import { createMemberHandlers } from './handlers/memberHandlers.js';
@@ -74,7 +75,7 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null, deliveryTracker = null, appSync = null, appClient = null, fleet = null, groupScan = null, appMove = null, appGate = null, appIntake = null, warmingUp = () => false) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null, deliveryTracker = null, appSync = null, appClient = null, fleet = null, groupScan = null, appMove = null, appGate = null, appIntake = null, addSide = null) {
   const memberH = createMemberHandlers(store, groupManager, config, log, appSync);
   // EaseCab app era. Absent (no APP_SYNC_URL) → every command below behaves as before.
   const appH = appSync ? createAppHandlers({ config, appSync, client: appClient, fleet, log, groupScan }) : null;
@@ -986,8 +987,11 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         // Baileys 6 (it crashed the session); back on Baileys 7 — the loop stops if the
         // session drops (markAborted). Several people: one per line or space-separated.
         case 'groupadd': {
-          if (groupManager.manual) return 'ℹ️ This bot has no WhatsApp groups connection.';
-          if (warmingUp()) return '🐣 Warm-up — no group adds on a fresh link. Try after it ends.';
+          // Runs on the DM number (saved contacts → no adds of unknown numbers from the new one).
+          const addSock = addSide?.getSock();
+          if (groupManager.manual || !addSock?.user) return '⚠️ DM number not connected — no group add.';
+          if (addSide.warmingUp()) return '🐣 Warm-up — no group adds on a fresh link. Try after it ends.';
+          const adder = createGroupManager(addSock, config, log);
           const phones = [...new Set((trimmed.slice(cmd.length).match(/\+?\d[\d -]{8,}\d/g) || [])
             .map(x => normPhone(x.replace(/\D/g, ''))).filter(x => x.length === 10))];
           if (!phones.length) return 'Format: groupadd 9876543210 (several: one per line)';
@@ -995,10 +999,10 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           for (let i = 0; i < phones.length; i++) {
             const ph = phones[i];
             const name = store.findByPhone(ph)?.name || ph;
-            const { added, failed } = await groupManager.rejoinAdd(ph, name);
+            const { added, failed } = await adder.rejoinAdd(ph, name);
             const why = [...new Set(failed.map(f => f.reason))].join(', ');
             out.push(`${added.length ? '✅' : '❌'} ${name} (${ph}) — added to ${added.length}/${config.paidGroups.length}${why ? ` · ${why}` : ''}`);
-            if (failed.some(f => /session|aborted/i.test(f.reason)) || !getSock?.()?.user) { out.push('⚠️ Session dropped — stopped here.'); break; }
+            if (failed.some(f => /session|aborted/i.test(f.reason)) || !addSide.getSock()?.user) { out.push('⚠️ Session dropped — stopped here.'); break; }
             if (i < phones.length - 1) await sleep(7000 + Math.random() * 3000);
           }
           return `👥 *Group add*\n${out.join('\n')}\n\nprivacy_restricted = their settings block adds, WhatsApp sends them an invite · left_recently = left in the last days, send a link`;

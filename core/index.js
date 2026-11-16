@@ -476,7 +476,9 @@ export async function startBot(config, log, authDir) {
       if (appIntake && !dmSocket) sock.ev.on('messages.upsert', appIntake.onUpsert);
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine, ledger, deliveryTracker, appSync, appClient, fleet, groupScan, appMove, appGate, appIntake, warmingUp);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine, ledger, deliveryTracker, appSync, appClient, fleet, groupScan, appMove, appGate, appIntake,
+        // groupadd runs on the DM number: it has the saved contacts, the new ops number doesn't.
+        dmSocket ? { getSock: dmSocket.getSock, warmingUp: dmSocket.warmingUp } : { getSock, warmingUp });
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {
