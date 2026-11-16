@@ -18,7 +18,8 @@ import { createDeliveryTracker } from './deliveryTracker.js';
 // where the operator reads them. Same 401/403 rule as the main socket: halt, never loop a
 // re-link. QR (only if it ever needs re-linking) is served at /qr-dm by index.js.
 const dmAuthDir = (config) => path.join(config.botDir, config.dmSession.authDir || 'baileys_auth_dm');
-export const dmAuthExists = (config) => fs.existsSync(path.join(dmAuthDir(config), 'creds.json'));
+// The folder, not creds.json: an empty folder = relink the DM number (QR at /qr-dm), never fall back to the main number.
+export const dmAuthExists = (config) => fs.existsSync(dmAuthDir(config));
 
 export function createDmSocket({ config, log }) {
   const authDir = dmAuthDir(config);

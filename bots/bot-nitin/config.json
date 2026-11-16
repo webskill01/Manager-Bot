@@ -250,6 +250,6 @@
   },
   "dmSession": {
     "authDir": "baileys_auth_dm",
-    "warmupHours": 0
+    "warmupHours": 24
   }
 }
