@@ -55,7 +55,6 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     if (!tpl) return;
     const sender = phoneOfJid(msg.key.remoteJid) || phoneOfJid(msg.key.remoteJidAlt) || phoneOfJid(msg.key.senderPn);
     const st = load();
-    const lines = [];
 
     // Reply first (in their chat, whatever the app says), at most once a day per person.
     const replyKey = sender || msg.key.remoteJid;
@@ -69,19 +68,25 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
       }, randomBetween(60_000, 300_000)).unref?.();
     }
 
+    const name = tpl.name || msg.pushName || '';
+    const head = await intakeOne({ appPhone: tpl.phone, sender, name });
+    await notify(head);
+  }
+
+  // The intake steps for one person, after the template (or by hand: `intake`). sender = the
+  // WhatsApp number whose chat it is (contact saved there). Returns the Telegram text.
+  async function intakeOne({ appPhone, sender, name }) {
+    const lines = [];
     let row = null;
-    try { row = await appSync.lookup(tpl.phone); }
-    catch (err) { await notify(`📥 Template from ${tpl.phone} — app lookup failed (${err.message}), check by hand.`); return; }
+    try { row = await appSync.lookup(appPhone); }
+    catch (err) { return `📥 ${appPhone} — app lookup failed (${err.message}), check by hand.`; }
     if (!sender) lines.push('⚠️ sender number hidden (LID) — contact not saved');
-    else if (sender !== tpl.phone) lines.push(`⚠️ wrote from ${sender}, template says ${tpl.phone} — reminders go to the sheet number`);
+    else if (sender !== appPhone) lines.push(`⚠️ wrote from ${sender}, template says ${appPhone} — reminders go to the sheet number`);
 
-    const name = tpl.name || msg.pushName || tpl.phone;
-    if (!liveOnApp(row)) {
-      await notify(`📥 ${name} (${tpl.phone}) sent the join template — *not paid on the app* yet.\n${lines.join('\n')}`.trim());
-      return;
-    }
+    const where = fleet ? await fleet.whereIs(appPhone) : [];
+    name = name || where.find(w => w.member.name)?.member.name || appPhone;
+    if (!liveOnApp(row)) return `📥 ${name} (${appPhone}) — *not paid on the app* yet.\n${lines.join('\n')}`.trim();
 
-    const where = fleet ? await fleet.whereIs(tpl.phone) : [];
     const tag = where.map(w => tags[w.bot]).find(Boolean) || '';
     // Tagged bots' users (bot-abhi → ST) move here: reminders and removals from this bot's
     // numbers from now on; their old row goes MOVED so that bot leaves them alone.
@@ -89,11 +94,11 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     const movable = where.filter(w => tags[w.bot] && w.member.status !== 'MOVED');
     if (!own && (!where.length || movable.length)) {
       const until = appDate(row.expiresAt);
-      await store.add({ name, phone: tpl.phone, joinDate: todayStr(), billingDate: until, appPaidUntil: until, paidLast: row.lastAmount ?? 0 });
+      await store.add({ name, phone: appPhone, joinDate: todayStr(), billingDate: until, appPaidUntil: until, paidLast: row.lastAmount ?? 0 });
       lines.push(`➕ added to ${config.botName} sheet (app till ${until})`);
     }
     for (const w of movable) {
-      try { await fleet.setStatus(w.bot, tpl.phone, 'MOVED'); lines.push(`↪️ ${w.bot} row → MOVED`); }
+      try { await fleet.setStatus(w.bot, appPhone, 'MOVED'); lines.push(`↪️ ${w.bot} row → MOVED`); }
       catch (err) { lines.push(`⚠️ ${w.bot} row not marked MOVED: ${err.message} — it may remind them too`); }
     }
     if (own || (where.length && !movable.length)) {
@@ -107,12 +112,29 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
         if (!sock) throw new Error('DM socket down');
         await saveContact(sock, sender, full);
         const now = load();
-        now.contacts[sender] = { name, tag, appPhone: tpl.phone, saved: full, at: formatDateTime(new Date()) };
+        now.contacts[sender] = { name, tag, appPhone, saved: full, at: formatDateTime(new Date()) };
         save(now);
         lines.push(`📇 saved as "${full}"`);
       } catch (err) { lines.push(`⚠️ contact not saved: ${err.message}`); }
     }
-    await notify(`📥 ${name} (${tpl.phone}) opened chat · live on app\n${lines.join('\n')}`);
+    return `📥 ${name} (${appPhone}) · live on app\n${lines.join('\n')}`;
+  }
+
+  // `intake` — people whose template came before the listener: one per line, "phone [name]".
+  // Same steps as a template, minus the reply (you already answered them). 3–8 s apart.
+  async function manual(text) {
+    const people = String(text || '').split('\n')
+      .map(l => l.trim().match(/^(\+?[\d][\d\s-]{8,}?\d)(?:\s+(.+))?$/))
+      .filter(Boolean)
+      .map(m => ({ phone: normalizePhone(m[1].replace(/\D/g, '')), name: (m[2] || '').trim() }))
+      .filter(p => p.phone.length === 10);
+    if (!people.length) return 'Format (one per line): intake 9876543210 Name\nName is optional — the sheet name or the number is used.';
+    const out = [];
+    for (let i = 0; i < people.length; i++) {
+      out.push(await intakeOne({ appPhone: people[i].phone, sender: people[i].phone, name: people[i].name }));
+      if (i < people.length - 1) await new Promise(r => setTimeout(r, randomBetween(3000, 8000)));
+    }
+    return out.join('\n\n');
   }
 
   // App payment rows (appSync onAppPaid): rename saved contacts to the new expiry day.
@@ -139,5 +161,5 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     for (const m of messages || []) handle(m).catch(err => log.warn(`⚠️  Intake: ${err.message}`));
   };
 
-  return { handle, onUpsert, onPaid };
+  return { handle, onUpsert, onPaid, manual };
 }

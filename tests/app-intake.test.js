@@ -17,3 +17,16 @@ test('contact name: app expiry day + EC, ST tag for bot-abhi users', () => {
   assert.equal(contactName('Yatin Sadana', '2026-12-16T10:00:00+05:30'), 'Yatin Sadana - 16 EC');
   assert.equal(contactName('Suba singh', '2026-12-05T10:00:00+05:30', 'ST'), 'Suba singh - 05 EC ST');
 });
+
+test('intake command: one per line, name optional, spaced numbers ok, junk skipped', async () => {
+  const { createAppIntake } = await import('../core/appIntake.js');
+  const seen = [];
+  const intake = createAppIntake({
+    config: { botDir: '.', botName: 'bot-nitin' }, log: { warn() {}, info() {} }, getSock: () => null,
+    appSync: { lookup: async (p) => { seen.push(p); return null; } }, fleet: null, store: null, notify: async () => {},
+  });
+  const out = await intake.manual(' 9876543210 Gurpreet Singh\n98765 43211\nhello\n+91 9876543212 Raj');
+  assert.deepEqual(seen, ['9876543210', '9876543211', '9876543212']);
+  assert.match(out, /Gurpreet Singh \(9876543210\) — \*not paid/);
+  assert.match(await intake.manual(''), /^Format/);
+});

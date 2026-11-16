@@ -97,7 +97,9 @@ export function createAppGate({ config, log, getSock, groupScan, appSync, fleet,
       do {
         again = false;
         const sock = getSock();
-        if (!sock?.user || warmingUp()) return;
+        // Not gated on warm-up: answering join requests is routine admin work on a fresh
+        // link (operator's call, 16-11-2026). Removals below still wait the warm-up out.
+        if (!sock?.user) return;
         const pending = await sock.groupRequestParticipantsList(gid);
         const done = { approve: [], reject: [] }, hidden = [];
         for (const p of pending || []) {
