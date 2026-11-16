@@ -433,7 +433,9 @@ export async function startBot(config, log, authDir) {
         const { state, saveCreds: sc } = await useMultiFileAuthState(authDir);
         authState = state;
         saveCreds = sc;
-        registeredAtLoad = !!state.creds?.registered;
+        // creds.me, not creds.registered: a QR link in Baileys 7 never sets `registered`
+        // (only the pairing-code flow does), so the warm-up clock never started (16-11-2026).
+        registeredAtLoad = !!state.creds?.me;
       }
 
       const { version } = await fetchLatestBaileysVersion();
@@ -493,7 +495,7 @@ export async function startBot(config, log, authDir) {
       sock.ev.on('creds.update', async () => {
         // Registration completed during THIS run → start the warm-up clock. Bots that
         // loaded already-registered creds never get marked (no warm-up for old links).
-        if (registeredAtLoad === false && authState?.creds?.registered) markLinkedAt(authDir);
+        if (registeredAtLoad === false && authState?.creds?.me) markLinkedAt(authDir);
         if (saveCreds) await saveCreds();
       });
 

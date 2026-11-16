@@ -32,7 +32,7 @@ export function createDmSocket({ config, log }) {
     connecting = true;
     try {
       const { state, saveCreds } = await useMultiFileAuthState(authDir);
-      const fresh = !state.creds?.registered;
+      const fresh = !state.creds?.me;   // QR links never set `registered` in Baileys 7
       const { version } = await fetchLatestBaileysVersion();
       const logger = pino({ level: 'silent' });
       sock = makeWASocket({
@@ -45,7 +45,7 @@ export function createDmSocket({ config, log }) {
       tracker.attach(sock);
       sock.ev.on('messages.upsert', (u) => onUpsert?.(u));
       sock.ev.on('creds.update', async () => {
-        if (fresh && state.creds?.registered) markLinkedAt(authDir);
+        if (fresh && state.creds?.me) markLinkedAt(authDir);
         await saveCreds();
       });
       sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
