@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTemplate, contactName, tagFor } from '../core/appIntake.js';
+import { parseTemplate, contactName, tagFor, firstName } from '../core/appIntake.js';
 
 test('template: Hinglish, Punjabi, Hindi, no name; normal chat ignored', () => {
   assert.deepEqual(parseTemplate('Hi, maine PUNJAB TAXI & EASECAB WhatsApp group mein join request bhej di hai. Kindly meri request approve kar do.\nName: Yatin Sadana\nNumber: 7354000013'),
@@ -27,7 +27,7 @@ test('intake command: one per line, name optional, spaced numbers ok, junk skipp
   });
   const out = await intake.manual(' 9876543210 Gurpreet Singh\n98765 43211\nhello\n+91 9876543212 Raj');
   assert.deepEqual(seen, ['9876543210', '9876543211', '9876543212']);
-  assert.match(out, /Gurpreet Singh \(9876543210\) — \*not paid/);
+  assert.match(out, /Gurpreet \(9876543210\) — \*not paid/);
   assert.match(await intake.manual(''), /^Format/);
 });
 
@@ -39,4 +39,12 @@ test('tag: only when unique to abhi (ST) / sachin (MT); a row added by intake is
   assert.equal(tagFor(on('bot-nitin', 'bot-abhi'), 'bot-nitin', tags), '');
   assert.equal(tagFor(on('bot-nitin', 'bot-abhi'), 'bot-nitin', tags, true), 'ST');
   assert.equal(tagFor(on('bot-aayush2'), 'bot-nitin', tags), '');
+});
+
+test('first name: first word, letters only, capitalised; emoji-only → empty', () => {
+  assert.equal(firstName('gursewak singh'), 'Gursewak');
+  assert.equal(firstName('Waheguruji 🙏'), 'Waheguruji');
+  assert.equal(firstName('batrasaab898'), 'Batrasaab');
+  assert.equal(firstName('🙏🙏'), '');
+  assert.equal(firstName('ਗੁਰਸੇਵਕ ਸਿੰਘ'), 'ਗੁਰਸੇਵਕ');
 });

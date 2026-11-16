@@ -41,6 +41,13 @@ export function tagFor(where, ownBot, tags, addedHere = false) {
   return where.map(w => tags[w.bot]).find(Boolean) || '';
 }
 
+// First word, letters only, capitalised: "gursewak singh" → "Gursewak", "Waheguruji 🙏" →
+// "Waheguruji", "🙏🙏" → "". Contacts and new sheet rows use this.
+export function firstName(raw) {
+  const w = String(raw || '').replace(/[^\p{L}\p{M}\s]/gu, ' ').trim().split(/\s+/)[0] || '';
+  return w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : '';
+}
+
 const REPLIES = ['Okk veerji 🙏', 'Ok paaji', 'Ok ji', 'Ji done 👍', 'Okk ji 🙏', 'Theek aa veerji'];
 const textOf = (m) => m?.message?.conversation || m?.message?.extendedTextMessage?.text || '';
 const phoneOfJid = (jid) => String(jid || '').endsWith('@s.whatsapp.net')
@@ -57,6 +64,8 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     // WhatsApp-only contact: never written to the phone's own address book (operator's choice).
     await sock.addOrEditContact(`91${senderPhone}@s.whatsapp.net`, { fullName, firstName: fullName, saveOnPrimaryAddressbook: false });
   }
+
+  const lastNote = new Map();   // app phone → "date|note" last sent to Telegram
 
   async function handle(msg) {
     if (msg?.key?.fromMe || !String(msg?.key?.remoteJid || '').match(/@(s\.whatsapp\.net|lid)$/)) return;
@@ -81,9 +90,9 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
       }, randomBetween(60_000, 300_000)).unref?.();
     }
 
-    const name = tpl.name || msg.pushName || '';
-    const head = await intakeOne({ appPhone: tpl.phone, sender, name });
-    await notify(head);
+    const head = await intakeOne({ appPhone: tpl.phone, sender, name: tpl.name, profile: msg.pushName });
+    // Same person resending the template: one Telegram note a day unless the result changed.
+    if (lastNote.get(tpl.phone) !== `${todayStr()}|${head}`) { lastNote.set(tpl.phone, `${todayStr()}|${head}`); await notify(head); }
     afterTemplate();
   }
 
@@ -95,7 +104,7 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
 
   // The intake steps for one person, after the template (or by hand: `intake`). sender = the
   // WhatsApp number whose chat it is (contact saved there). Returns the Telegram text.
-  async function intakeOne({ appPhone, sender, name }) {
+  async function intakeOne({ appPhone, sender, name, profile }) {
     const lines = [];
     let row = null;
     try { row = await appSync.lookup(appPhone); }
@@ -104,7 +113,8 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     else if (sender !== appPhone) lines.push(`⚠️ wrote from ${sender}, template says ${appPhone} — reminders go to the sheet number`);
 
     const where = fleet ? await fleet.whereIs(appPhone) : [];
-    name = name || where.find(w => w.member.name)?.member.name || appPhone;
+    // Template name → app name (if the app ever sends one) → a sheet name → WhatsApp profile name.
+    name = [name, row?.name, ...where.map(w => w.member.name), profile].map(firstName).find(Boolean) || appPhone;
     if (!liveOnApp(row)) return `📥 ${name} (${appPhone}) — *not paid on the app* yet.\n${lines.join('\n')}`.trim();
 
     // bot-abhi users move here: reminders and removals from this bot's
@@ -174,9 +184,12 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
       const added = c.added ?? (!!ownRow && ownRow.joinDate === String(c.at).slice(0, 10));
       const tag = tagFor(where, config.botName, tags, added);
       c.added = added;
-      if (tag === c.tag) continue;
-      const full = c.saved.replace(/ EC( [A-Z]{2})?$/, ` EC${tag ? ` ${tag}` : ''}`);
-      try { await saveContact(sock, sender, full); changed.push(`${c.saved} → ${full}`); c.saved = full; c.tag = tag; }
+      // The sheet is where names get corrected by hand: its name wins.
+      const name = firstName(ownRow?.name) || firstName(c.name) || c.name;
+      const day = (c.saved.match(/ - (\d{2}) EC/) || [])[1];
+      const full = day ? `${name} - ${day} EC${tag ? ` ${tag}` : ''}` : c.saved;
+      if (full === c.saved) { c.tag = tag; continue; }
+      try { await saveContact(sock, sender, full); changed.push(`${c.saved} → ${full}`); c.saved = full; c.tag = tag; c.name = name; }
       catch (err) { changed.push(`⚠️ ${c.saved}: ${err.message}`); }
       await new Promise(res => setTimeout(res, randomBetween(3000, 8000)));
     }
