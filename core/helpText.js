@@ -231,6 +231,7 @@ Example: R1 R2 S3
 • appclean [go] — list app-group members not on the app; go removes them, paced
 • intake [phone] [name] — one per line: people who sent the join template earlier → sheet + EC contact
 • intake retag — re-apply contact tags (ST = only on abhi, MT = only on sachin) and show the intake count
+• groupadd [phone] — add straight into all paid groups (one per line for several), paced like kick; not during warm-up
 
 🔁 TRIAL GROUP
 • start removal  /  stop removal`,

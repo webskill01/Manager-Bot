@@ -26,7 +26,7 @@ const SLOW_COMMANDS = new Set([
   'kick', 'remove', 'rejoin', 'sendlinks', 'links', 'refreshlinks', 'groupcheck', 'remind', 'renewed', 'advance',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
   'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip', 'ledger', 'checknum', 'checksend',
-  'platform', 'today', 'applist', 'appstats', 'groupscan', 'allnumbers', 'appclean', 'intake',
+  'platform', 'today', 'applist', 'appstats', 'groupscan', 'allnumbers', 'appclean', 'intake', 'groupadd',
 ]);
 
 // A Sheets 403 is a Google-side problem, not a bot problem, but its raw message ("The
@@ -74,7 +74,7 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null, deliveryTracker = null, appSync = null, appClient = null, fleet = null, groupScan = null, appMove = null, appGate = null, appIntake = null) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null, deliveryTracker = null, appSync = null, appClient = null, fleet = null, groupScan = null, appMove = null, appGate = null, appIntake = null, warmingUp = () => false) {
   const memberH = createMemberHandlers(store, groupManager, config, log, appSync);
   // EaseCab app era. Absent (no APP_SYNC_URL) → every command below behaves as before.
   const appH = appSync ? createAppHandlers({ config, appSync, client: appClient, fleet, log, groupScan }) : null;
@@ -981,6 +981,27 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           if (!appGate) return 'ℹ️ App gate needs appGroupId, the app sync and the group scan on this bot.';
           const a = args[0]?.toLowerCase();
           return a === 'on' ? appGate.start() : a === 'off' ? appGate.stop() : appGate.status();
+        }
+        // Direct add into every paid group, kick-style pacing. Was removed in May 2026 on
+        // Baileys 6 (it crashed the session); back on Baileys 7 — the loop stops if the
+        // session drops (markAborted). Several people: one per line or space-separated.
+        case 'groupadd': {
+          if (groupManager.manual) return 'ℹ️ This bot has no WhatsApp groups connection.';
+          if (warmingUp()) return '🐣 Warm-up — no group adds on a fresh link. Try after it ends.';
+          const phones = [...new Set((trimmed.slice(cmd.length).match(/\+?\d[\d -]{8,}\d/g) || [])
+            .map(x => normPhone(x.replace(/\D/g, ''))).filter(x => x.length === 10))];
+          if (!phones.length) return 'Format: groupadd 9876543210 (several: one per line)';
+          const out = [];
+          for (let i = 0; i < phones.length; i++) {
+            const ph = phones[i];
+            const name = store.findByPhone(ph)?.name || ph;
+            const { added, failed } = await groupManager.rejoinAdd(ph, name);
+            const why = [...new Set(failed.map(f => f.reason))].join(', ');
+            out.push(`${added.length ? '✅' : '❌'} ${name} (${ph}) — added to ${added.length}/${config.paidGroups.length}${why ? ` · ${why}` : ''}`);
+            if (failed.some(f => /session|aborted/i.test(f.reason)) || !getSock?.()?.user) { out.push('⚠️ Session dropped — stopped here.'); break; }
+            if (i < phones.length - 1) await sleep(7000 + Math.random() * 3000);
+          }
+          return `👥 *Group add*\n${out.join('\n')}\n\nprivacy_restricted = their settings block adds, WhatsApp sends them an invite · left_recently = left in the last days, send a link`;
         }
         case 'intake': {
           if (!appIntake) return 'ℹ️ Intake runs on bot-nitin only.';

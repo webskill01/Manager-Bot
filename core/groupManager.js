@@ -63,9 +63,16 @@ export function createGroupManager(sock, config, log) {
       }
       const groupId = paidGroups[i];
       try {
-        await sock.groupParticipantsUpdate(groupId, [jid], 'add');
-        added.push(groupId);
-        log.info(`✅ Added to ${groupId}`);
+        // Baileys reports per-person failures in the result, not by throwing:
+        // 200 added · 409 already in · 403 privacy (they get an invite instead) · 408 left recently
+        const [res] = await sock.groupParticipantsUpdate(groupId, [jid], 'add');
+        const status = String(res?.status || '200');
+        if (status === '200') { added.push(groupId); log.info(`✅ Added to ${groupId}`); }
+        else {
+          const reason = { '409': 'already_member', '403': 'privacy_restricted', '408': 'left_recently', '401': 'not_admin' }[status] || `error_${status}`;
+          failed.push({ groupId, groupName: groupId, reason, inviteLink: null });
+          log.warn(`❌ Add ${phone} → ${groupId} [${reason}]`);
+        }
       } catch (err) {
         if (_aborted) { log.warn('⚠️  Session lost — stopping'); break; }
         const reason = classifyAddError(err);
