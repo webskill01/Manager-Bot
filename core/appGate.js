@@ -51,13 +51,13 @@ export function requestPhone(p) {
   return null;
 }
 
-export function createAppGate({ config, log, getSock, groupScan, appSync, fleet, store, removal, notify, warmingUp = () => false }) {
+export function createAppGate({ config, log, getSock, groupScan, appSync, fleet, store, removal, notify, warmingUp = () => false, hasDm = () => true }) {
   const gid = config.appGroupId;
   const file = path.join(config.botDir, 'app-gate.json');
   const s = config.appGate || {};
   const gapMin = s.gapMinMs ?? 12 * 60 * 1000, gapMax = s.gapMaxMs ?? 20 * 60 * 1000;
   const startHour = s.startHour ?? 8, endHour = s.endHour ?? 22;
-  const reported = new Set();   // hidden requests already reported this process
+  const reported = new Set();   // hidden / waiting requests already reported this process
   let timer = null, gating = false, again = false;
 
   const load = () => { try { return { active: false, queue: [], pendingNone: [], ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch { return { active: false, queue: [], pendingNone: [] }; } };
@@ -101,7 +101,7 @@ export function createAppGate({ config, log, getSock, groupScan, appSync, fleet,
         // link (operator's call, 16-11-2026). Removals below still wait the warm-up out.
         if (!sock?.user) return;
         const pending = await sock.groupRequestParticipantsList(gid);
-        const done = { approve: [], reject: [] }, hidden = [];
+        const done = { approve: [], reject: [] }, hidden = [], waiting = [];
         for (const p of pending || []) {
           const ph = await resolvePhone(sock, p);
           if (!ph) { if (!reported.has(p.jid)) { reported.add(p.jid); hidden.push(p.jid); } continue; }
@@ -109,6 +109,8 @@ export function createAppGate({ config, log, getSock, groupScan, appSync, fleet,
           try { row = await lookup(ph); }
           catch (err) { log.warn(`⚠️  App gate: lookup ${ph} failed — left pending (${err.message})`); continue; }
           const action = liveOnApp(row) ? 'approve' : 'reject';
+          // Paid but hasn't DMed the template yet → wait; their template triggers another pass.
+          if (action === 'approve' && !hasDm(ph)) { if (!reported.has(ph)) { reported.add(ph); waiting.push(ph); } continue; }
           try {
             await sock.groupRequestParticipantsUpdate(gid, [p.jid], action);
             done[action].push(ph);
@@ -119,6 +121,7 @@ export function createAppGate({ config, log, getSock, groupScan, appSync, fleet,
         const lines = [
           done.approve.length && `✅ Approved (live on app): ${done.approve.join(', ')}`,
           done.reject.length && `❌ Rejected (not on app): ${done.reject.join(', ')}`,
+          waiting.length && `⏳ Paid on app, waiting for their DM (template) before approving: ${waiting.join(', ')}`,
           hidden.length && `❔ ${hidden.length} request(s) with a hidden number — left pending, decide by hand`,
         ].filter(Boolean);
         if (lines.length) await notify(`🚪 *App group requests*\n${lines.join('\n')}`);

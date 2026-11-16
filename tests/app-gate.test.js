@@ -31,3 +31,25 @@ test('request phone: phone JID, else phone_number attr; bare LID → null', () =
   assert.equal(requestPhone({ jid: '123@lid', phone_number: '919876543210@s.whatsapp.net' }), '9876543210');
   assert.equal(requestPhone({ jid: '123@lid' }), null);
 });
+
+test('gate: paid but no DM yet → left pending and reported; with DM → approved; unpaid → rejected', async () => {
+  const { createAppGate } = await import('../core/appGate.js');
+  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-'));
+  fs.writeFileSync(path.join(dir, 'app-gate.json'), JSON.stringify({ active: true, queue: [], pendingNone: [] }));
+  const acted = [], notes = [];
+  const sock = {
+    user: { id: '1' },
+    groupRequestParticipantsList: async () => ['9000000001', '9000000002', '9000000003'].map(p => ({ jid: `91${p}@s.whatsapp.net` })),
+    groupRequestParticipantsUpdate: async (g, [jid], action) => acted.push(`${action} ${jid.slice(2, 12)}`),
+  };
+  const gate = createAppGate({
+    config: { botDir: dir, appGroupId: 'g', appGate: {} }, log: { info() {}, warn() {} }, getSock: () => sock,
+    appSync: { lookup: async (p) => (p === '9000000003' ? null : row(10)) },
+    notify: async (t) => notes.push(t), hasDm: (p) => p === '9000000001',
+  });
+  const orig = global.setTimeout; global.setTimeout = (fn) => orig(fn, 0);   // skip the 4–8 s gaps
+  try { await gate.gateRequests(); } finally { global.setTimeout = orig; }
+  assert.deepEqual(acted, ['approve 9000000001', 'reject 9000000003']);
+  assert.match(notes[0], /waiting for their DM.*9000000002/);
+});

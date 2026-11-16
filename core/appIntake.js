@@ -46,11 +46,11 @@ const textOf = (m) => m?.message?.conversation || m?.message?.extendedTextMessag
 const phoneOfJid = (jid) => String(jid || '').endsWith('@s.whatsapp.net')
   ? normalizePhone(jid.split('@')[0].split(':')[0]) : null;
 
-export function createAppIntake({ config, log, getSock, appSync, fleet, store, notify }) {
+export function createAppIntake({ config, log, getSock, appSync, fleet, store, notify, afterTemplate = () => {} }) {
   const file = path.join(config.botDir, 'app-intake.json');
   const tags = config.contactTags || { 'bot-abhi': 'ST', 'bot-sachin2': 'MT' };
   const moveFrom = new Set(config.contactMoveFrom || ['bot-abhi']);   // users who move here; MT users stay on sachin
-  const load = () => { try { return { contacts: {}, replied: {}, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch { return { contacts: {}, replied: {} }; } };
+  const load = () => { try { return { contacts: {}, replied: {}, dms: {}, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch { return { contacts: {}, replied: {}, dms: {} }; } };
   const save = (st) => fs.writeFileSync(file, JSON.stringify(st, null, 2));
 
   async function saveContact(sock, senderPhone, fullName) {
@@ -64,6 +64,10 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     if (!tpl) return;
     const sender = phoneOfJid(msg.key.remoteJid) || phoneOfJid(msg.key.remoteJidAlt) || phoneOfJid(msg.key.senderPn);
     const st = load();
+    // Who has DMed the template (app number + sender): the app gate approves only these.
+    st.dms[tpl.phone] = todayStr();
+    if (sender) st.dms[sender] = todayStr();
+    save(st);
 
     // Reply first (in their chat, whatever the app says), at most once a day per person.
     const replyKey = sender || msg.key.remoteJid;
@@ -80,6 +84,13 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     const name = tpl.name || msg.pushName || '';
     const head = await intakeOne({ appPhone: tpl.phone, sender, name });
     await notify(head);
+    afterTemplate();
+  }
+
+  // Has this number DMed the template (or been put through `intake` by the operator)?
+  function hasDm(phone) {
+    const st = load();
+    return !!st.dms[phone] || !!st.contacts[phone] || Object.values(st.contacts).some(c => c.appPhone === phone);
   }
 
   // The intake steps for one person, after the template (or by hand: `intake`). sender = the
@@ -146,6 +157,7 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
       out.push(await intakeOne({ appPhone: people[i].phone, sender: people[i].phone, name: people[i].name }));
       if (i < people.length - 1) await new Promise(r => setTimeout(r, randomBetween(3000, 8000)));
     }
+    afterTemplate();   // operator vouched for them → a waiting join request can go through
     return out.join('\n\n');
   }
 
@@ -198,5 +210,5 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     for (const m of messages || []) handle(m).catch(err => log.warn(`⚠️  Intake: ${err.message}`));
   };
 
-  return { handle, onUpsert, onPaid, manual };
+  return { handle, onUpsert, onPaid, manual, hasDm };
 }
