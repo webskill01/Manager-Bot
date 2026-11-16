@@ -98,9 +98,10 @@ export function createAppHandlers({ config, appSync, client, fleet, log, groupSc
     catch (err) { return `❌ Could not reach the app: ${err.message}`; }
     const p = buildPeople(fleet ? await fleet.sheets() : [], row ? [row] : []).get(phone)
       || { phone, rows: [], bots: [], app: null, kind: null, groups: [] };
-    const app = !row ? '📱 App: never signed up'
+    const app = !row ? '📱 App: not downloaded / never signed in'
       : liveOnApp(row) ? `📱 App: ACTIVE till ${friendlyDate(appDate(row.expiresAt))} · paid ${row.paidCount}×`
-      : `📱 App: ${row.status}${row.expiresAt ? ` (ended ${friendlyDate(appDate(row.expiresAt))})` : ''}${row.paidCount ? ` · paid ${row.paidCount}×` : ''}`;
+      : !row.paidCount ? '📱 App: signed in, never paid'
+      : `📱 App: plan expired${row.expiresAt ? ` (ended ${friendlyDate(appDate(row.expiresAt))})` : ''} · paid ${row.paidCount}× before`;
     const sheets = p.rows.length
       ? p.rows.map(({ bot, member: m }) => `   ${shortName(bot)}: ${m.name} · ${m.status} · billing ${m.billingDate || '—'}`).join('\n')
       : '   not in any bot sheet';

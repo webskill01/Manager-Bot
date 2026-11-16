@@ -26,7 +26,7 @@ const SLOW_COMMANDS = new Set([
   'kick', 'remove', 'rejoin', 'sendlinks', 'links', 'refreshlinks', 'groupcheck', 'remind', 'renewed', 'advance',
   'warnall', 'kickall', 'notinsheet', 'leftmembers', 'stillin', 'kickghosts', 'diag',
   'dmlist', 'dmlist2', 'dmlist3', 'delayall', 'cloudapi', 'drip', 'ledger', 'checknum', 'checksend',
-  'platform', 'today', 'applist', 'appstats', 'groupscan', 'allnumbers',
+  'platform', 'today', 'applist', 'appstats', 'groupscan', 'allnumbers', 'appclean',
 ]);
 
 // A Sheets 403 is a Google-side problem, not a bot problem, but its raw message ("The
@@ -74,7 +74,7 @@ function mergePhoneFromStart(args) {
   return [phoneParts.join(''), ...args.slice(i)];
 }
 
-export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null, deliveryTracker = null, appSync = null, appClient = null, fleet = null, groupScan = null, appMove = null) {
+export function createCommandParser(store, groupManager, config, log, sock, botStartTime, trialEngine, removalEngine, ghostEngine, adminLids = new Set(), reminderSender = null, getSock = null, dripEngine = null, ledger = null, deliveryTracker = null, appSync = null, appClient = null, fleet = null, groupScan = null, appMove = null, appGate = null) {
   const memberH = createMemberHandlers(store, groupManager, config, log, appSync);
   // EaseCab app era. Absent (no APP_SYNC_URL) → every command below behaves as before.
   const appH = appSync ? createAppHandlers({ config, appSync, client: appClient, fleet, log, groupScan }) : null;
@@ -976,6 +976,15 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           if (!appMove) return 'ℹ️ App move needs appGroupId, the app sync and the group scan on this bot.';
           const a = args[0]?.toLowerCase();
           return a === 'on' ? appMove.start() : a === 'off' ? appMove.stop() : appMove.status();
+        }
+        case 'appgate': {
+          if (!appGate) return 'ℹ️ App gate needs appGroupId, the app sync and the group scan on this bot.';
+          const a = args[0]?.toLowerCase();
+          return a === 'on' ? appGate.start() : a === 'off' ? appGate.stop() : appGate.status();
+        }
+        case 'appclean': {
+          if (!appGate) return 'ℹ️ App gate needs appGroupId, the app sync and the group scan on this bot.';
+          return appGate.clean(args[0]?.toLowerCase());
         }
 
         // Verify the official API end-to-end before flipping reminderChannel on the

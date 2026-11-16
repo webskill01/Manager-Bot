@@ -75,5 +75,18 @@ export function createFleetView({ config, store, log, groupScan = null, sheet = 
     return out;
   }
 
-  return { sheets, whereIs, isFleet: others.length > 0, ownSheet: sheet };
+  // Set one member's STATUS on another bot's sheet (bot-nitin taking over a bot-abhi app user).
+  // Reads that sheet fresh, not the cache: the whole row is rewritten.
+  async function setStatus(bot, phone, status) {
+    const id = Object.fromEntries(others)[bot];
+    if (!id) throw new Error(`${bot} is not in fleetSheets`);
+    if (!clients.has(bot)) clients.set(bot, await makeClient(config.serviceAccountPath, id, log));
+    const c = clients.get(bot);
+    const m = (await c.getAll()).find(x => x.phone === normalizePhone(phone));
+    if (!m) throw new Error(`${phone} not on ${bot}`);
+    await c.updateRow(m.rowIndex, { ...m, status, lastUpdated: new Date().toISOString() });
+    cache.delete(bot);
+  }
+
+  return { sheets, whereIs, setStatus, isFleet: others.length > 0, ownSheet: sheet };
 }

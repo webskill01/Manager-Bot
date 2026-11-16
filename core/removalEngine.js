@@ -73,7 +73,8 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
   // App-track members also leave config.appGroupId. appMoveEngine reuses this with just the
   // groups the scan saw someone in.
   const groupsFor = (member) =>
-    (config.appGroupId && member && isAppFlow(member, config) ? [...config.paidGroups, config.appGroupId] : config.paidGroups);
+    (config.appGroupId && member && isAppFlow(member, config)
+      ? [...config.paidGroups, config.appGroupId, ...(config.appExtraGroups || [])] : config.paidGroups);
 
   async function removeMemberFromAllGroups(phone, groups = config.paidGroups) {
     const jid = `91${normalizePhone(phone)}@s.whatsapp.net`;

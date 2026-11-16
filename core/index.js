@@ -45,6 +45,8 @@ import { createLedger } from './ledger.js';
 import { createTrialRemovalEngine } from './trialRemovalEngine.js';
 import { createRemovalEngine } from './removalEngine.js';
 import { createAppMoveEngine } from './appMoveEngine.js';
+import { createAppGate } from './appGate.js';
+import { createAppIntake } from './appIntake.js';
 import { createDmSocket, dmAuthExists } from './dmSocket.js';
 import { createAppClient } from './appClient.js';
 import { createAppSync } from './appSync.js';
@@ -192,14 +194,26 @@ export async function startBot(config, log, authDir) {
     // bot-nitin: one ping per app payment naming every sheet the phone is on (or none).
     onAppPaid: fleet?.isFleet ? async (rows) => {
       for (const r of rows) await notifyTelegram(paidPing(r, await fleet.whereIs(r.phone), config.botName), config.dripIds);
+      await appIntake?.onPaid(rows);
     } : null,
     linksFor: (phone) => commandParser?.linksReply(phone) ?? `Send the group links: sendlinks ${phone}`,
   });
+  // bot-nitin: join templates on the DM number → reply, contact "Name - DD EC", sheet row.
+  // Reads the DM session; before the split the aged number is the main socket, so read that.
+  const appIntake = appSync && fleet?.isFleet ? createAppIntake({
+    config, log, appSync, fleet, store, getSock: () => (dmSocket ? dmSocket.getSock() : getSock()),
+    notify: (t) => notifyTelegram(t, config.dripIds),
+  }) : null;
+  if (appIntake && dmSocket) dmSocket.onMessages(appIntake.onUpsert);
   appSync?.start();
   groupScan?.start();
   // App users seen in config.appGroupId leave the paid groups, paced. Off until `appmove on`.
   const appMove = groupScan && appSync && config.appGroupId
     ? createAppMoveEngine({ config, log, getSock, groupScan, appSync, removal: removalEngine, warmingUp }) : null;
+  // Join requests + day-3 expiry removals for the app group. Off until `appgate on`.
+  const appGate = appMove
+    ? createAppGate({ config, log, getSock, groupScan, appSync, fleet, store, removal: removalEngine,
+      notify: (text) => notifyTelegram(text, config.dripIds), warmingUp }) : null;
 
   function destroySocket(reason) {
     if (!sock) return;
@@ -456,9 +470,11 @@ export async function startBot(config, log, authDir) {
       deliveryTracker.attach(sock);
       sock.ev.on('group-participants.update', (u) => groupMetaCache.delete(u?.id));
       sock.ev.on('groups.update', (updates) => { for (const u of updates || []) groupMetaCache.delete(u?.id); });
+      if (appGate) sock.ev.on('group.join-request', appGate.onJoinRequest);
+      if (appIntake && !dmSocket) sock.ev.on('messages.upsert', appIntake.onUpsert);
 
       const groupManager = createGroupManager(sock, config, log);
-      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine, ledger, deliveryTracker, appSync, appClient, fleet, groupScan, appMove);
+      commandParser = createCommandParser(store, groupManager, config, log, sock, BOT_START_TIME, trialEngine, removalEngine, ghostEngine, adminLids, reminderSender, getSock, dripEngine, ledger, deliveryTracker, appSync, appClient, fleet, groupScan, appMove, appGate);
 
       const syncContacts = (contacts) => {
         for (const c of contacts) {
@@ -541,6 +557,7 @@ export async function startBot(config, log, authDir) {
               removalEngine.resume();
               ghostEngine.resume();
               appMove?.resume();
+              appGate?.resume();
               // Same gate as the crons: resume() replays a missed reminder window, so
               // leaving it ungated would send Baileys reminders on every reconnect and
               // walk straight past the scheduler guard.
@@ -559,6 +576,7 @@ export async function startBot(config, log, authDir) {
             removalEngine.resume();
             ghostEngine.resume();
             appMove?.resume();
+            appGate?.resume();
             // Gated exactly like the crons — resume() replays a missed reminder window,
             // and an ungated replay would send Baileys reminders on every reconnect.
             if (!isTracker(config) && usesCloudApi(config)) {
@@ -658,6 +676,7 @@ export async function startBot(config, log, authDir) {
                   await appSync.tick();
                   const reply = removalEngine.kickall({ appOnly: true });
                   if (!reply.startsWith('✅')) await notifyTelegram(reply, config.dripIds);
+                  await appGate?.sweepExpired();
                 },
               } : {}),
               ...(groupScan ? { groupScan: () => groupScan.scan() } : {}),

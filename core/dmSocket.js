@@ -25,6 +25,7 @@ export function createDmSocket({ config, log }) {
   const warmupHours = config.dmSession.warmupHours ?? 72;
   const tracker = createDeliveryTracker(log);
   let sock = null, latestQR = null, attempts = 0, halted = false, connecting = false;
+  let onUpsert = null;   // appIntake: the only reader of incoming DMs here
 
   async function connect() {
     if (connecting || halted) return;
@@ -42,6 +43,7 @@ export function createDmSocket({ config, log }) {
         defaultQueryTimeoutMs: 60000, connectTimeoutMs: 60000, keepAliveIntervalMs: 30000,
       });
       tracker.attach(sock);
+      sock.ev.on('messages.upsert', (u) => onUpsert?.(u));
       sock.ev.on('creds.update', async () => {
         if (fresh && state.creds?.registered) markLinkedAt(authDir);
         await saveCreds();
@@ -73,6 +75,7 @@ export function createDmSocket({ config, log }) {
     getSock: () => (sock?.user ? sock : null),
     warmingUp: () => inWarmup(authDir, warmupHours),
     tracker,
+    onMessages: (fn) => { onUpsert = fn; },
     qr: () => latestQR,
     close: () => { halted = true; try { sock?.end?.(); } catch { /* closing anyway */ } },
   };

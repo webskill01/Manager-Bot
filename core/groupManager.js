@@ -257,7 +257,8 @@ export function createGroupManager(sock, config, log) {
           result.push({
             groupId,
             groupName,
-            pending: pendingList.map(p => ({ jid: p.jid, id: p.id, phoneNumber: p.phoneNumber })),
+            // groupRequestParticipantsList returns raw node attrs: the phone rides on phone_number
+            pending: pendingList.map(p => ({ jid: p.jid, id: p.id, phoneNumber: p.phone_number || p.phoneNumber })),
           });
         }
       } catch (err) {
