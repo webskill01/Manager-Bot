@@ -987,6 +987,10 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
         // Baileys 6 (it crashed the session); back on Baileys 7 — the loop stops if the
         // session drops (markAborted). Several people: one per line or space-separated.
         case 'groupadd': {
+          // Disabled 16-11-2026: the first live test hit rate-overlimit on the 2nd group and
+          // WhatsApp logged the DM number out (401) seconds later — same as May on Baileys 6.
+          // Direct adds are not safe on these numbers. Use invite links.
+          if (!config.allowGroupAdd) return '⛔ groupadd is disabled — the first test got the DM number logged out by WhatsApp. Send invite links instead.';
           // Runs on the DM number (saved contacts → no adds of unknown numbers from the new one).
           const addSock = addSide?.getSock();
           if (groupManager.manual || !addSock?.user) return '⚠️ DM number not connected — no group add.';
