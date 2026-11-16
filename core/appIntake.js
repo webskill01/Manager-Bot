@@ -33,6 +33,14 @@ export function contactName(name, expiresAt, tag = '') {
   return `${String(name).trim()} - ${day} EC${tag ? ` ${tag}` : ''}`;
 }
 
+// Contact tag: only for people who are on a tagged bot's sheet and NOT on this bot's own
+// (bot-abhi → ST, bot-sachin2 Malwa Travels → MT). A row this bot added during intake
+// doesn't count as "own" — that's the moved user, still unique to the other bot.
+export function tagFor(where, ownBot, tags, addedHere = false) {
+  if (!addedHere && where.some(w => w.bot === ownBot)) return '';
+  return where.map(w => tags[w.bot]).find(Boolean) || '';
+}
+
 const REPLIES = ['Okk veerji 🙏', 'Ok paaji', 'Ok ji', 'Ji done 👍', 'Okk ji 🙏', 'Theek aa veerji'];
 const textOf = (m) => m?.message?.conversation || m?.message?.extendedTextMessage?.text || '';
 const phoneOfJid = (jid) => String(jid || '').endsWith('@s.whatsapp.net')
@@ -40,7 +48,8 @@ const phoneOfJid = (jid) => String(jid || '').endsWith('@s.whatsapp.net')
 
 export function createAppIntake({ config, log, getSock, appSync, fleet, store, notify }) {
   const file = path.join(config.botDir, 'app-intake.json');
-  const tags = config.contactTags || { 'bot-abhi': 'ST' };
+  const tags = config.contactTags || { 'bot-abhi': 'ST', 'bot-sachin2': 'MT' };
+  const moveFrom = new Set(config.contactMoveFrom || ['bot-abhi']);   // users who move here; MT users stay on sachin
   const load = () => { try { return { contacts: {}, replied: {}, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch { return { contacts: {}, replied: {} }; } };
   const save = (st) => fs.writeFileSync(file, JSON.stringify(st, null, 2));
 
@@ -87,12 +96,13 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     name = name || where.find(w => w.member.name)?.member.name || appPhone;
     if (!liveOnApp(row)) return `📥 ${name} (${appPhone}) — *not paid on the app* yet.\n${lines.join('\n')}`.trim();
 
-    const tag = where.map(w => tags[w.bot]).find(Boolean) || '';
-    // Tagged bots' users (bot-abhi → ST) move here: reminders and removals from this bot's
+    // bot-abhi users move here: reminders and removals from this bot's
     // numbers from now on; their old row goes MOVED so that bot leaves them alone.
     const own = where.some(w => w.bot === config.botName);
-    const movable = where.filter(w => tags[w.bot] && w.member.status !== 'MOVED');
+    const movable = where.filter(w => moveFrom.has(w.bot) && w.member.status !== 'MOVED');
+    let added = !!load().contacts[sender || '']?.added;
     if (!own && (!where.length || movable.length)) {
+      added = true;
       const until = appDate(row.expiresAt);
       await store.add({ name, phone: appPhone, joinDate: todayStr(), billingDate: until, appPaidUntil: until, paidLast: row.lastAmount ?? 0 });
       lines.push(`➕ added to ${config.botName} sheet (app till ${until})`);
@@ -105,6 +115,7 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
       lines.push(`on ${where.map(w => `${w.bot.replace(/^bot-/, '')} (${w.member.status})`).join(', ')}`);
     }
 
+    const tag = tagFor(where, config.botName, tags, added);
     if (sender) {
       const full = contactName(name, row.expiresAt, tag);
       try {
@@ -112,7 +123,7 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
         if (!sock) throw new Error('DM socket down');
         await saveContact(sock, sender, full);
         const now = load();
-        now.contacts[sender] = { name, tag, appPhone, saved: full, at: formatDateTime(new Date()) };
+        now.contacts[sender] = { name, tag, appPhone, saved: full, added, at: formatDateTime(new Date()) };
         save(now);
         lines.push(`📇 saved as "${full}"`);
       } catch (err) { lines.push(`⚠️ contact not saved: ${err.message}`); }
@@ -123,6 +134,7 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
   // `intake` — people whose template came before the listener: one per line, "phone [name]".
   // Same steps as a template, minus the reply (you already answered them). 3–8 s apart.
   async function manual(text) {
+    if (/^\s*retag\s*$/i.test(text)) return retag();
     const people = String(text || '').split('\n')
       .map(l => l.trim().match(/^(\+?[\d][\d\s-]{8,}?\d)(?:\s+(.+))?$/))
       .filter(Boolean)
@@ -135,6 +147,31 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
       if (i < people.length - 1) await new Promise(r => setTimeout(r, randomBetween(3000, 8000)));
     }
     return out.join('\n\n');
+  }
+
+  // `intake retag` — re-apply the tag rule to every saved contact, rename the ones that change.
+  // Old records have no `added`: an own row joined the day of intake = added by intake.
+  async function retag() {
+    const st = load();
+    const sock = getSock();
+    if (!sock) return '⚠️ DM socket down — try again later.';
+    const changed = [];
+    for (const [sender, c] of Object.entries(st.contacts)) {
+      const where = fleet ? await fleet.whereIs(c.appPhone) : [];
+      const ownRow = where.find(w => w.bot === config.botName)?.member;
+      const added = c.added ?? (!!ownRow && ownRow.joinDate === String(c.at).slice(0, 10));
+      const tag = tagFor(where, config.botName, tags, added);
+      c.added = added;
+      if (tag === c.tag) continue;
+      const full = c.saved.replace(/ EC( [A-Z]{2})?$/, ` EC${tag ? ` ${tag}` : ''}`);
+      try { await saveContact(sock, sender, full); changed.push(`${c.saved} → ${full}`); c.saved = full; c.tag = tag; }
+      catch (err) { changed.push(`⚠️ ${c.saved}: ${err.message}`); }
+      await new Promise(res => setTimeout(res, randomBetween(3000, 8000)));
+    }
+    save(st);
+    const n = Object.keys(st.contacts).length;
+    const count = (t) => Object.values(st.contacts).filter(c => c.tag === t).length;
+    return `📇 ${n} intaken · ST ${count('ST')} · MT ${count('MT')}\n${changed.length ? changed.join('\n') : 'No tag changes.'}`;
   }
 
   // App payment rows (appSync onAppPaid): rename saved contacts to the new expiry day.

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseTemplate, contactName } from '../core/appIntake.js';
+import { parseTemplate, contactName, tagFor } from '../core/appIntake.js';
 
 test('template: Hinglish, Punjabi, Hindi, no name; normal chat ignored', () => {
   assert.deepEqual(parseTemplate('Hi, maine PUNJAB TAXI & EASECAB WhatsApp group mein join request bhej di hai. Kindly meri request approve kar do.\nName: Yatin Sadana\nNumber: 7354000013'),
@@ -29,4 +29,14 @@ test('intake command: one per line, name optional, spaced numbers ok, junk skipp
   assert.deepEqual(seen, ['9876543210', '9876543211', '9876543212']);
   assert.match(out, /Gurpreet Singh \(9876543210\) — \*not paid/);
   assert.match(await intake.manual(''), /^Format/);
+});
+
+test('tag: only when unique to abhi (ST) / sachin (MT); a row added by intake is not "own"', () => {
+  const tags = { 'bot-abhi': 'ST', 'bot-sachin2': 'MT' };
+  const on = (...bots) => bots.map(bot => ({ bot, member: {} }));
+  assert.equal(tagFor(on('bot-abhi'), 'bot-nitin', tags), 'ST');
+  assert.equal(tagFor(on('bot-sachin2'), 'bot-nitin', tags), 'MT');
+  assert.equal(tagFor(on('bot-nitin', 'bot-abhi'), 'bot-nitin', tags), '');
+  assert.equal(tagFor(on('bot-nitin', 'bot-abhi'), 'bot-nitin', tags, true), 'ST');
+  assert.equal(tagFor(on('bot-aayush2'), 'bot-nitin', tags), '');
 });
