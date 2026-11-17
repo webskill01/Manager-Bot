@@ -113,8 +113,8 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     else if (sender !== appPhone) lines.push(`⚠️ wrote from ${sender}, template says ${appPhone} — reminders go to the sheet number`);
 
     const where = fleet ? await fleet.whereIs(appPhone) : [];
-    // Template name → app name (if the app ever sends one) → a sheet name → WhatsApp profile name.
-    name = [name, row?.name, ...where.map(w => w.member.name), profile].map(firstName).find(Boolean) || appPhone;
+    // App name (required at sign-up) → template name → a sheet name → WhatsApp profile name.
+    name = [row?.name, name, ...where.map(w => w.member.name), profile].map(firstName).find(Boolean) || appPhone;
     if (!liveOnApp(row)) return `📥 ${name} (${appPhone}) — *not paid on the app* yet.\n${lines.join('\n')}`.trim();
 
     // bot-abhi users move here: reminders and removals from this bot's

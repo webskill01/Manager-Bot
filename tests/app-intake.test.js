@@ -48,3 +48,12 @@ test('first name: first word, letters only, capitalised; emoji-only → empty', 
   assert.equal(firstName('🙏🙏'), '');
   assert.equal(firstName('ਗੁਰਸੇਵਕ ਸਿੰਘ'), 'ਗੁਰਸੇਵਕ');
 });
+
+test('intake name: app name beats the template name', async () => {
+  const { createAppIntake } = await import('../core/appIntake.js');
+  const intake = createAppIntake({
+    config: { botDir: '.', botName: 'bot-nitin' }, log: { warn() {}, info() {} }, getSock: () => null,
+    appSync: { lookup: async () => ({ name: 'harpreet kaur' }) }, fleet: null, store: null, notify: async () => {},
+  });
+  assert.match(await intake.manual('9876543210 Sweety'), /^📥 Harpreet \(9876543210\)/);
+});
