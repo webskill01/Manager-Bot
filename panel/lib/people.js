@@ -56,7 +56,8 @@ export function buildPeople({ sheets = {}, app = [], allNumbers = [], links = ne
     p.paidOnApp = liveOnApp(p.app, now);
     // Payments before the app's public launch were tests/beta: they don't count (matches the app's own panel).
     const paid = (p.app?.paidCount || 0) > 0 && (p.app.lastPaidAt || '') >= launch;
-    p.appState = !p.app ? 'none' : !paid ? 'signed_up' : (p.app.expiresAt || '') > now ? 'member' : 'lapsed';
+    // A running plan is a member however it was paid (hand-given = paid the operator directly).
+    p.appState = !p.app ? 'none' : p.paidOnApp ? 'member' : !paid ? 'signed_up' : 'lapsed';
     // ponytail: a link is member for good, even if that plan lapses; unlink if renewals must be chased
     if (links.has(p.phone)) p.appState = 'member';
     p.onApp = p.appState === 'member';

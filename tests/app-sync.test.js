@@ -145,3 +145,12 @@ test('engine: onAppPaid gets every new app payment after the seed poll and takes
   assert.ok(!pings.some(p => /App payment/.test(p)), 'no duplicate own-sheet ping');
   assert.strictEqual(store.getAll()[0].billingDate, ddmm(60), 'the sheet is still renewed');
 });
+
+test('plan: a plan given by hand (paidCount 0) activates a pending row like an app payment', async () => {
+  const { planSync } = await import('../core/appSync.js');
+  const m = { phone: '9000000001', status: 'PENDING_APP', appPaidUntil: '' };
+  const r = { phone: '9000000001', status: 'active', expiresAt: new Date(Date.now() + 20 * 864e5).toISOString(), paidCount: 0, lastPaidAt: null };
+  const out = planSync([m], [r]);
+  assert.equal(out.activate.length, 1);
+  assert.equal(out.activate[0].amount, 0);
+});

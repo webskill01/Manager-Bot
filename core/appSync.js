@@ -32,7 +32,7 @@ export function planSync(members, appRows, nowIso = new Date().toISOString()) {
   const renew = [], activate = [], quiet = [];
   for (const m of members) {
     const r = byPhone.get(m.phone);
-    if (!liveOnApp(r, nowIso)) continue;   // free/manual or pre-launch plans never activate a row
+    if (!liveOnApp(r, nowIso)) continue;   // no running plan → nothing to activate
     const until = appDate(r.expiresAt);
     const known = parseDate(m.appPaidUntil);
     if (known && parseDate(until) <= known) continue;

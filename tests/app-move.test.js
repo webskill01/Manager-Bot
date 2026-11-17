@@ -13,13 +13,22 @@ test('candidates: in app group AND a paid group AND live on app, minus admins/ex
     appGroup: new Set(['9000000001', '9000000002', '9000000004', '9000000005', '9000000006']),
     admins: new Set(['9000000005']),
     snapshot: new Map(['9000000001', '9000000002', '9000000003', '9000000005', '9000000006'].map(p => [p, live(p)])
-      .concat([['9000000004', { ...live('9000000004'), paidCount: 0 }]])),
+      .concat([['9000000004', { ...live('9000000004'), status: 'expired' }]])),
     exclude: new Set(['9000000006']),
     done: { '9000000002': 200 },
     scanAt: 100,
   };
-  // 3 not in app group, 4 not paying, 5 admin, 6 excluded, 2 already moved since this scan
+  // 3 not in app group, 4 plan not running, 5 admin, 6 excluded, 2 already moved since this scan
   assert.deepEqual(moveCandidates(args), ['9000000001']);
   // a newer scan still showing 2 in a paid group makes them a candidate again
   assert.deepEqual(moveCandidates({ ...args, scanAt: 300 }), ['9000000001', '9000000002']);
+});
+
+test('candidates: a plan given by hand (paidCount 0) moves like an app payer', () => {
+  const args = {
+    phonesInPaid: ['9000000001'], groupsOf: () => ['g1'], appGroup: new Set(['9000000001']), admins: new Set(),
+    snapshot: new Map([['9000000001', { ...live('9000000001'), paidCount: 0, lastPaidAt: null }]]),
+    exclude: new Set(), done: {}, scanAt: 100,
+  };
+  assert.deepEqual(moveCandidates(args), ['9000000001']);
 });

@@ -54,11 +54,11 @@ test('app state comes from payments, not the app status', () => {
   const live = '2099-01-01T00:00:00.000Z', gone = '2020-01-01T00:00:00.000Z';
   const cases = [
     ['9000000011', { status: 'active', paidCount: 1, expiresAt: live }, 'member'],
-    ['9000000012', { status: 'active', paidCount: 0, expiresAt: live }, 'signed_up'],   // free/manual plan
+    ['9000000012', { status: 'active', paidCount: 0, expiresAt: live }, 'member'],   // plan given by hand
     ['9000000013', { status: 'active', paidCount: 2, expiresAt: gone }, 'lapsed'],
     ['9000000014', { status: 'expired', paidCount: 0 }, 'signed_up'],
     ['9000000015', null, 'none'],
-    ['9000000016', { status: 'active', paidCount: 3, expiresAt: live, lastPaidAt: '2026-09-21T18:10:49Z' }, 'signed_up'],   // paid only before launch
+    ['9000000016', { status: 'active', paidCount: 3, expiresAt: live, lastPaidAt: '2026-09-21T18:10:49Z' }, 'member'],   // beta payer, plan still running
   ];
   const people = buildPeople({
     sheets: { 'bot-abhi': cases.map(([ph]) => m(ph, 'ACTIVE')) },

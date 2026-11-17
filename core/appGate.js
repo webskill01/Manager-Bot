@@ -4,8 +4,8 @@ import { normalizePhone, randomBetween, daysFromToday, isDelayActive } from './g
 import { liveOnApp } from './appFlow.js';
 import { appDate } from './appSync.js';
 
-// Gatekeeper for config.appGroupId (bot-nitin). "On the app" = liveOnApp: paid and running
-// right now. A sign-up that never paid is NOT on the app.
+// Gatekeeper for config.appGroupId (bot-nitin). "On the app" = liveOnApp: an active
+// membership running right now, paid on the app or given by hand. A bare sign-up is NOT.
 //
 // 1. Join requests: approved if live on the app, rejected otherwise. A request whose phone
 //    WhatsApp hides (LID only, no mapping) or whose app lookup fails is left pending and
@@ -20,10 +20,10 @@ import { appDate } from './appSync.js';
 // Removals: one person at a time, 12–20 min apart, daytime only, never during a kickall.
 // Each person is looked up live on the app right before removal — paid since → skipped.
 
-// 'live' | 'grace' (paid plan ended today or yesterday) | 'expired' (ended 2+ days ago) | 'none'
+// 'live' | 'grace' (membership ended today or yesterday) | 'expired' (ended 2+ days ago) | 'none'
 export function appVerdict(row, nowIso = new Date().toISOString()) {
   if (liveOnApp(row, nowIso)) return 'live';
-  if (!row || !(row.paidCount > 0) || !row.expiresAt) return 'none';
+  if (!row?.expiresAt || row.expiresAt > nowIso) return 'none';
   const d = daysFromToday(appDate(row.expiresAt));
   return d !== null && d >= -1 ? 'grace' : 'expired';
 }
@@ -109,7 +109,7 @@ export function createAppGate({ config, log, getSock, groupScan, appSync, fleet,
           try { row = await lookup(ph); }
           catch (err) { log.warn(`⚠️  App gate: lookup ${ph} failed — left pending (${err.message})`); continue; }
           const action = liveOnApp(row) ? 'approve' : 'reject';
-          // Paid but hasn't DMed the template yet → wait; their template triggers another pass.
+          // Active but hasn't DMed the template yet → wait; their template triggers another pass.
           if (action === 'approve' && !hasDm(ph)) { if (!reported.has(ph)) { reported.add(ph); waiting.push(ph); } continue; }
           try {
             await sock.groupRequestParticipantsUpdate(gid, [p.jid], action);
@@ -125,10 +125,10 @@ export function createAppGate({ config, log, getSock, groupScan, appSync, fleet,
           catch (err) { log.warn(`⚠️  App gate: intake ${ph} failed — ${err.message}`); }
         }
         const lines = [
-          done.approve.length && `✅ Approved (live on app): ${done.approve.join(', ')}`,
+          done.approve.length && `✅ Approved (active on app): ${done.approve.join(', ')}`,
           intaken.length && intaken.join('\n'),
-          done.reject.length && `❌ Rejected (not on app): ${done.reject.join(', ')}`,
-          waiting.length && `⏳ Paid on app, waiting for their DM (template) before approving: ${waiting.join(', ')}`,
+          done.reject.length && `❌ Rejected (no active membership): ${done.reject.join(', ')}`,
+          waiting.length && `⏳ Active on app, waiting for their DM (template) before approving: ${waiting.join(', ')}`,
           hidden.length && `❔ ${hidden.length} request(s) with a hidden number — left pending, decide by hand`,
         ].filter(Boolean);
         if (lines.length) await notify(`🚪 *App group requests*\n${lines.join('\n')}`);
@@ -206,7 +206,7 @@ export function createAppGate({ config, log, getSock, groupScan, appSync, fleet,
     st.pendingNone = none;
     save(st);
     const rows = rowsByPhone();
-    const tag = (ph) => (rows.get(ph)?.paidCount ? 'paid before' : rows.has(ph) ? 'signed up, never paid' : 'not on app');
+    const tag = (ph) => (rows.get(ph)?.expiresAt ? 'membership ended' : rows.has(ph) ? 'signed up, no membership' : 'not on app');
     return [
       `🧹 *App group — not on the app* (scan ${groupScan.at() || 'never'})`,
       none.length ? none.map((ph, i) => `${i + 1}. ${ph} · ${tag(ph)}`).join('\n') : 'Nobody.',
