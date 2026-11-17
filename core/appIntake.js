@@ -153,11 +153,14 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
   }
 
   // Paid on the app, no template, but on some bot's sheet: we already know them — intake
-  // straight from the sheet (contact named app name → sheet name). Totally new people still
-  // come in through the template. null = nothing to do (already intaken / on no sheet).
+  // straight from the sheet (contact named app name → sheet name). On no sheet but with an app
+  // name → same, plus a bot-nitin row. null = already intaken, or no sheet and no app name.
   async function auto(phone) {
     if (Object.values(load().contacts).some(c => c.appPhone === phone)) return null;
-    if (!fleet || !(await fleet.whereIs(phone)).length) return null;
+    // On no sheet: still known if the app has their name (required at sign-up).
+    if (!fleet || !(await fleet.whereIs(phone)).length) {
+      if (!firstName((await appSync.lookup(phone))?.name)) return null;
+    }
     return intakeOne({ appPhone: phone, sender: phone });
   }
 
@@ -183,7 +186,7 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
         } catch (err) { n.failed.push(`${ph}: ${err.message}`); }
       }
       backfilling = false;
-      await notify(`📇 *App group intake done* — ${phones.length} checked\n✅ saved ${n.saved} · not paid ${n.unpaid} · on no sheet ${n.nosheet} (left for the template)` +
+      await notify(`📇 *App group intake done* — ${phones.length} checked\n✅ saved ${n.saved} · not paid ${n.unpaid} · no sheet + no app name ${n.nosheet} (left for the template)` +
         (n.failed.length ? `\n⚠️ ${n.failed.length} problem(s):\n${n.failed.slice(0, 30).join('\n')}` : ''));
     })().catch(err => { backfilling = false; log.warn(`⚠️  Intake backfill: ${err.message}`); });
     return `▶️ Intake for ${phones.length} app-group member(s) started, 3–8 s apart (~${Math.ceil(phones.length * 6 / 60)} min). Summary on Telegram at the end.`;

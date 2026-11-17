@@ -66,3 +66,16 @@ test('auto intake: on no sheet → null (left for the template)', async () => {
   });
   assert.equal(await intake.auto('9876543210'), null);
 });
+
+test('auto intake: on no sheet but app has a name → intaken', async () => {
+  const { createAppIntake } = await import('../core/appIntake.js');
+  const row = { name: 'jaswant singh', paidCount: 1, status: 'active', lastPaidAt: '2026-11-10T00:00:00Z', expiresAt: new Date(Date.now() + 9 * 864e5).toISOString() };
+  const added = [];
+  const intake = createAppIntake({
+    config: { botDir: '.', botName: 'bot-nitin' }, log: { warn() {}, info() {} }, getSock: () => null,
+    appSync: { lookup: async () => row }, fleet: { whereIs: async () => [] },
+    store: { add: async (m) => added.push(m.name) }, notify: async () => {},
+  });
+  assert.match(await intake.auto('9876543210'), /Jaswant \(9876543210\) · live on app/);
+  assert.deepEqual(added, ['Jaswant']);
+});
