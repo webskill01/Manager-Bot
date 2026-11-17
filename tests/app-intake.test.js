@@ -57,3 +57,12 @@ test('intake name: app name beats the template name', async () => {
   });
   assert.match(await intake.manual('9876543210 Sweety'), /^📥 Harpreet \(9876543210\)/);
 });
+
+test('auto intake: on no sheet → null (left for the template)', async () => {
+  const { createAppIntake } = await import('../core/appIntake.js');
+  const intake = createAppIntake({
+    config: { botDir: '.', botName: 'bot-nitin' }, log: { warn() {}, info() {} }, getSock: () => null,
+    appSync: { lookup: async () => null }, fleet: { whereIs: async () => [] }, store: null, notify: async () => {},
+  });
+  assert.equal(await intake.auto('9876543210'), null);
+});

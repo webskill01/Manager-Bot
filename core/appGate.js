@@ -51,7 +51,7 @@ export function requestPhone(p) {
   return null;
 }
 
-export function createAppGate({ config, log, getSock, groupScan, appSync, fleet, store, removal, notify, warmingUp = () => false, hasDm = () => true }) {
+export function createAppGate({ config, log, getSock, groupScan, appSync, fleet, store, removal, notify, warmingUp = () => false, hasDm = () => true, onApproved = async () => null }) {
   const gid = config.appGroupId;
   const file = path.join(config.botDir, 'app-gate.json');
   const s = config.appGate || {};
@@ -118,8 +118,15 @@ export function createAppGate({ config, log, getSock, groupScan, appSync, fleet,
           } catch (err) { log.warn(`⚠️  App gate: ${action} ${ph} failed — ${err.message}`); }
           await new Promise(r => setTimeout(r, randomBetween(4000, 8000)));
         }
+        // Approved and already on a sheet → contact + sheet row now (appIntake.auto).
+        const intaken = [];
+        for (const ph of done.approve) {
+          try { const t = await onApproved(ph); if (t) intaken.push(t); }
+          catch (err) { log.warn(`⚠️  App gate: intake ${ph} failed — ${err.message}`); }
+        }
         const lines = [
           done.approve.length && `✅ Approved (live on app): ${done.approve.join(', ')}`,
+          intaken.length && intaken.join('\n'),
           done.reject.length && `❌ Rejected (not on app): ${done.reject.join(', ')}`,
           waiting.length && `⏳ Paid on app, waiting for their DM (template) before approving: ${waiting.join(', ')}`,
           hidden.length && `❔ ${hidden.length} request(s) with a hidden number — left pending, decide by hand`,

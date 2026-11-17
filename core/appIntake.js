@@ -53,7 +53,7 @@ const textOf = (m) => m?.message?.conversation || m?.message?.extendedTextMessag
 const phoneOfJid = (jid) => String(jid || '').endsWith('@s.whatsapp.net')
   ? normalizePhone(jid.split('@')[0].split(':')[0]) : null;
 
-export function createAppIntake({ config, log, getSock, appSync, fleet, store, notify, afterTemplate = () => {} }) {
+export function createAppIntake({ config, log, getSock, appSync, fleet, store, notify, afterTemplate = () => {}, appGroupPhones = () => [] }) {
   const file = path.join(config.botDir, 'app-intake.json');
   const tags = config.contactTags || { 'bot-abhi': 'ST', 'bot-sachin2': 'MT' };
   const moveFrom = new Set(config.contactMoveFrom || ['bot-abhi']);   // users who move here; MT users stay on sachin
@@ -152,10 +152,48 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     return `📥 ${name} (${appPhone}) · live on app\n${lines.join('\n')}`;
   }
 
+  // Paid on the app, no template, but on some bot's sheet: we already know them — intake
+  // straight from the sheet (contact named app name → sheet name). Totally new people still
+  // come in through the template. null = nothing to do (already intaken / on no sheet).
+  async function auto(phone) {
+    if (Object.values(load().contacts).some(c => c.appPhone === phone)) return null;
+    if (!fleet || !(await fleet.whereIs(phone)).length) return null;
+    return intakeOne({ appPhone: phone, sender: phone });
+  }
+
+  // `intake appgroup` — one-off: auto() for everyone in the app group (last scan), 3–8 s apart.
+  // Runs in the background, one Telegram summary at the end.
+  let backfilling = false;
+  function backfill() {
+    if (backfilling) return 'ℹ️ Already running — the summary comes on Telegram when it ends.';
+    const done = new Set(Object.values(load().contacts).map(c => c.appPhone));
+    const phones = [...appGroupPhones()].filter(p => !done.has(p));
+    if (!phones.length) return 'ℹ️ Everyone in the app group is already intaken (or no group scan yet).';
+    backfilling = true;
+    (async () => {
+      const n = { saved: 0, unpaid: 0, nosheet: 0, failed: [] };
+      for (const ph of phones) {
+        try {
+          const out = await auto(ph);
+          if (out === null) n.nosheet++;
+          else if (out.includes('📇 saved')) n.saved++;
+          else if (out.includes('not paid')) n.unpaid++;
+          else n.failed.push(`${ph}: ${out.split('\n').slice(-1)[0]}`);
+          if (out !== null) await new Promise(r => setTimeout(r, randomBetween(3000, 8000)));
+        } catch (err) { n.failed.push(`${ph}: ${err.message}`); }
+      }
+      backfilling = false;
+      await notify(`📇 *App group intake done* — ${phones.length} checked\n✅ saved ${n.saved} · not paid ${n.unpaid} · on no sheet ${n.nosheet} (left for the template)` +
+        (n.failed.length ? `\n⚠️ ${n.failed.length} problem(s):\n${n.failed.slice(0, 30).join('\n')}` : ''));
+    })().catch(err => { backfilling = false; log.warn(`⚠️  Intake backfill: ${err.message}`); });
+    return `▶️ Intake for ${phones.length} app-group member(s) started, 3–8 s apart (~${Math.ceil(phones.length * 6 / 60)} min). Summary on Telegram at the end.`;
+  }
+
   // `intake` — people whose template came before the listener: one per line, "phone [name]".
   // Same steps as a template, minus the reply (you already answered them). 3–8 s apart.
   async function manual(text) {
     if (/^\s*retag\s*$/i.test(text)) return retag();
+    if (/^\s*appgroup\s*$/i.test(text)) return backfill();
     const people = String(text || '').split('\n')
       .map(l => l.trim().match(/^(\+?[\d][\d\s-]{8,}?\d)(?:\s+(.+))?$/))
       .filter(Boolean)
@@ -225,5 +263,5 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     for (const m of messages || []) handle(m).catch(err => log.warn(`⚠️  Intake: ${err.message}`));
   };
 
-  return { handle, onUpsert, onPaid, manual, hasDm };
+  return { handle, onUpsert, onPaid, manual, hasDm, auto };
 }

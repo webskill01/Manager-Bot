@@ -230,6 +230,7 @@ Example: R1 R2 S3
 • appgate [on|off] — app group: approve/reject join requests by app status, remove day-3 expiries
 • appclean [go] — list app-group members not on the app; go removes them, paced
 • intake [phone] [name] — one per line: people who sent the join template earlier → sheet + EC contact
+• intake appgroup — one-off: everyone in the app group who is on a sheet → contact + sheet row (background)
 • intake retag — rename saved contacts from the sheet names + tags (ST = only on abhi, MT = only on sachin), shows the count
 
 🔁 TRIAL GROUP
