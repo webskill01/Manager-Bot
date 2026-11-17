@@ -203,7 +203,6 @@ export async function startBot(config, log, authDir) {
   const appIntake = appSync && fleet?.isFleet ? createAppIntake({
     config, log, appSync, fleet, store, getSock: () => (dmSocket ? dmSocket.getSock() : getSock()),
     notify: (t) => notifyTelegram(t, config.dripIds),
-    afterTemplate: () => appGate?.gateRequests(),   // their DM arrived → a waiting request can go through
   }) : null;
   if (appIntake && dmSocket) dmSocket.onMessages(appIntake.onUpsert);
   appSync?.start();
@@ -214,8 +213,7 @@ export async function startBot(config, log, authDir) {
   // Join requests + day-3 expiry removals for the app group. Off until `appgate on`.
   const appGate = appMove
     ? createAppGate({ config, log, getSock, groupScan, appSync, fleet, store, removal: removalEngine,
-      notify: (text) => notifyTelegram(text, config.dripIds), warmingUp,
-      hasDm: appIntake ? appIntake.hasDm : () => true }) : null;
+      notify: (text) => notifyTelegram(text, config.dripIds), warmingUp }) : null;
 
   function destroySocket(reason) {
     if (!sock) return;
