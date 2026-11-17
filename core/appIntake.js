@@ -184,8 +184,10 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
       const added = c.added ?? (!!ownRow && ownRow.joinDate === String(c.at).slice(0, 10));
       const tag = tagFor(where, config.botName, tags, added);
       c.added = added;
-      // The sheet is where names get corrected by hand: its name wins.
-      const name = firstName(ownRow?.name) || firstName(c.name) || c.name;
+      // App name (required at sign-up) first, then the sheet name, then what was saved.
+      let appName = '';
+      try { appName = firstName((await appSync.lookup(c.appPhone))?.name); } catch { /* app down: keep the rest */ }
+      const name = appName || firstName(ownRow?.name) || firstName(c.name) || c.name;
       const day = (c.saved.match(/ - (\d{2}) EC/) || [])[1];
       const full = day ? `${name} - ${day} EC${tag ? ` ${tag}` : ''}` : c.saved;
       if (full === c.saved) { c.tag = tag; continue; }

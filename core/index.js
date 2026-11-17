@@ -545,6 +545,8 @@ export async function startBot(config, log, authDir) {
             }
           };
 
+          // Join requests aren't warm-up work (removals inside still wait): check on every connect.
+          appGate?.resume();
           if (warmingUp()) {
             const until = new Date(getLinkedAt(authDir) + warmupHours * 3600e3);
             log.warn(`🐣 WARM-UP MODE — fresh link. Engines & scheduled sends paused until ${until.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}. Admin commands still work (auth via remoteJidAlt).`);
@@ -580,7 +582,6 @@ export async function startBot(config, log, authDir) {
             removalEngine.resume();
             ghostEngine.resume();
             appMove?.resume();
-            appGate?.resume();
             // Gated exactly like the crons — resume() replays a missed reminder window,
             // and an ungated replay would send Baileys reminders on every reconnect.
             if (!isTracker(config) && usesCloudApi(config)) {

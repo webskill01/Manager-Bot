@@ -215,7 +215,14 @@ export function createAppGate({ config, log, getSock, groupScan, appSync, fleet,
     return `🚪 App gate ${st.active ? 'ON' : 'off'} — ${st.queue.length} queued for removal, ${st.pendingNone.length} awaiting \`appclean go\`.`;
   }
   // Boot / reconnect: catch requests made while offline, resume the queue.
-  function resume() { if (!load().active) return; later(10 * 60 * 1000); setTimeout(() => gateRequests(), 60_000).unref?.(); }
+  // Plus a pass every 30 min: the join-request event can be missed (reconnects, old requests).
+  let sweep = null;
+  function resume() {
+    if (!load().active) return;
+    later(10 * 60 * 1000);
+    setTimeout(() => gateRequests(), 60_000).unref?.();
+    if (!sweep) { sweep = setInterval(() => gateRequests(), 30 * 60 * 1000); sweep.unref?.(); }
+  }
 
   return { onJoinRequest, gateRequests, sweepExpired, clean, start, stop, status, resume };
 }
