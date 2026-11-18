@@ -228,6 +228,7 @@ Example: R1 R2 S3
 • removal  /  warnall  /  kickall  /  stop kickall
 • appmove [on|off] — app users in the app group leave the paid groups, paced
 • appgate [on|off] — app group: approve/reject join requests by app status, remove day-3 expiries
+• applink <whatsapp> <app> — that WhatsApp number counts as that app number (gate, sweep) · applink <wa> off · applink = list
 • appclean [go] — list app-group members not on the app; go removes them, paced
 • intake [phone] [name] — one per line: people who sent the join template earlier → sheet + EC contact
 • intake appgroup — one-off: everyone in the app group who is on a sheet → contact + sheet row (background)

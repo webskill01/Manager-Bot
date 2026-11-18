@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appVerdict, sweepLists, requestPhone } from '../core/appGate.js';
+import { appVerdict, sweepLists, requestPhone, requestAction } from '../core/appGate.js';
 
 const day = 864e5;
 const row = (daysToExpiry, paidCount = 1) => ({
@@ -34,7 +34,7 @@ test('request phone: phone JID, else phone_number attr; bare LID → null', () =
   assert.equal(requestPhone({ jid: '123@lid' }), null);
 });
 
-test('gate: paid but no DM yet → left pending and reported; with DM → approved; unpaid → rejected', async () => {
+test('gate: paid but no DM yet → left pending; with DM → approved; unknown → held', async () => {
   const { createAppGate } = await import('../core/appGate.js');
   const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-'));
@@ -52,6 +52,50 @@ test('gate: paid but no DM yet → left pending and reported; with DM → approv
   });
   const orig = global.setTimeout; global.setTimeout = (fn) => orig(fn, 0);   // skip the 4–8 s gaps
   try { await gate.gateRequests(); } finally { global.setTimeout = orig; }
-  assert.deepEqual(acted, ['approve 9000000001', 'reject 9000000003']);
+  assert.deepEqual(acted, ['approve 9000000001']);
   assert.match(notes[0], /waiting for their DM.*9000000002/);
+  assert.match(notes[0], /held 3 days.*9000000003/);
+  assert.ok(JSON.parse(fs.readFileSync(path.join(dir, 'app-gate.json'), 'utf8')).held['9000000003']);
+});
+
+test('sweep: joined from another WhatsApp number → judged by the app number from their template', () => {
+  const rows = new Map([['7000000001', row(10)]]);
+  const base = { appGroup: new Set(['8000000001']), rows, admins: new Set(), exclude: new Set(), delayed: new Set(), ownActive: new Set() };
+  assert.deepEqual(sweepLists(base).none, ['8000000001']);   // looked up by WhatsApp number alone
+  assert.deepEqual(sweepLists({ ...base, appPhoneOf: (p) => (p === '8000000001' ? '7000000001' : p) }), { expired: [], none: [] });
+});
+
+test('request action: live → approve, shared app account → held, known non-member → reject, stranger held 3 days', () => {
+  const now = Date.now();
+  assert.equal(requestAction({ row: row(10), known: false }), 'approve');
+  assert.equal(requestAction({ row: row(10), known: true, sharedWith: '8000000001' }), 'shared');
+  assert.equal(requestAction({ row: row(-5), known: false }), 'reject');            // plan ended
+  assert.equal(requestAction({ row: { status: 'pending' }, known: false }), 'reject'); // signed up, no plan
+  assert.equal(requestAction({ row: null, known: true }), 'reject');                // template sent, not a member
+  assert.equal(requestAction({ row: null, known: false, nowMs: now }), 'hold');
+  assert.equal(requestAction({ row: null, known: false, heldSince: now - 2 * day, nowMs: now }), 'hold');
+  assert.equal(requestAction({ row: null, known: false, heldSince: now - 3 * day, nowMs: now }), 'reject');
+});
+
+test('gate: second WhatsApp number on an app account already in the group → not approved', async () => {
+  const { createAppGate } = await import('../core/appGate.js');
+  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gate-'));
+  fs.writeFileSync(path.join(dir, 'app-gate.json'), JSON.stringify({ active: true, queue: [], pendingNone: [] }));
+  const acted = [], notes = [];
+  const sock = {
+    user: { id: '1' },
+    groupRequestParticipantsList: async () => [{ jid: '919000000005@s.whatsapp.net' }],
+    groupRequestParticipantsUpdate: async (g, [jid], action) => acted.push(action),
+  };
+  const gate = createAppGate({
+    config: { botDir: dir, appGroupId: 'g', appGate: {} }, log: { info() {}, warn() {} }, getSock: () => sock,
+    groupScan: { appGroup: () => new Set(['8000000001']) },
+    appSync: { lookup: async (p) => (p === '7000000001' ? row(10) : null) },
+    appPhoneOf: (p) => (['8000000001', '9000000005'].includes(p) ? '7000000001' : p),
+    notify: async (t) => notes.push(t),
+  });
+  await gate.gateRequests();
+  assert.deepEqual(acted, []);
+  assert.match(notes[0], /one app account, one member.*9000000005.*8000000001/);
 });

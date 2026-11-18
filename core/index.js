@@ -204,6 +204,7 @@ export async function startBot(config, log, authDir) {
     config, log, appSync, fleet, store, getSock: () => (dmSocket ? dmSocket.getSock() : getSock()),
     notify: (t) => notifyTelegram(t, config.dripIds),
     appGroupPhones: () => groupScan?.appGroup() || [],
+    afterTemplate: () => appGate?.gateRequests(),   // template / applink → decide a held request now
   }) : null;
   if (appIntake && dmSocket) dmSocket.onMessages(appIntake.onUpsert);
   appSync?.start();
@@ -215,7 +216,9 @@ export async function startBot(config, log, authDir) {
   const appGate = appMove
     ? createAppGate({ config, log, getSock, groupScan, appSync, fleet, store, removal: removalEngine,
       notify: (text) => notifyTelegram(text, config.dripIds), warmingUp,
-      onApproved: (ph) => appIntake?.auto(ph) ?? null }) : null;
+      onApproved: (ph) => appIntake?.auto(ph) ?? null,
+      appPhoneOf: (ph) => appIntake?.appPhoneOf(ph) ?? ph,
+      knows: (ph) => appIntake?.knows(ph) ?? false }) : null;
 
   function destroySocket(reason) {
     if (!sock) return;

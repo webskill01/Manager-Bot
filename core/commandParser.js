@@ -1015,6 +1015,17 @@ export function createCommandParser(store, groupManager, config, log, sock, botS
           if (!appIntake) return 'ℹ️ Intake runs on bot-nitin only.';
           return appIntake.manual(trimmed.slice(cmd.length));
         }
+        case 'applink': {
+          if (!appIntake) return 'ℹ️ Intake runs on bot-nitin only.';
+          if (!args[0]) {
+            const all = appIntake.link();
+            return all.length ? `🔗 *App links* (WhatsApp → app)\n${all.map(([w, a]) => `${w} → ${a}`).join('\n')}` : '🔗 No app links yet. applink <whatsapp> <app number>';
+          }
+          const wa = normPhone(args[0]), off = args[1]?.toLowerCase() === 'off', app = off ? 'off' : normPhone(args[1] || '');
+          if (!wa || !app) return '❌ Use: applink <whatsapp number> <app number>  ·  applink <whatsapp number> off';
+          appIntake.link(wa, app);
+          return off ? `🔗 Unlinked ${wa}.` : `🔗 ${wa} now counts as app number ${app}. Held join request re-checked.`;
+        }
         case 'appclean': {
           if (!appGate) return 'ℹ️ App gate needs appGroupId, the app sync and the group scan on this bot.';
           return appGate.clean(args[0]?.toLowerCase());

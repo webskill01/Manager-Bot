@@ -57,7 +57,7 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
   const file = path.join(config.botDir, 'app-intake.json');
   const tags = config.contactTags || { 'bot-abhi': 'ST', 'bot-sachin2': 'MT' };
   const moveFrom = new Set(config.contactMoveFrom || ['bot-abhi']);   // users who move here; MT users stay on sachin
-  const load = () => { try { return { contacts: {}, replied: {}, dms: {}, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch { return { contacts: {}, replied: {}, dms: {} }; } };
+  const load = () => { try { return { contacts: {}, replied: {}, dms: {}, links: {}, ...JSON.parse(fs.readFileSync(file, 'utf8')) }; } catch { return { contacts: {}, replied: {}, dms: {}, links: {} }; } };
   const save = (st) => fs.writeFileSync(file, JSON.stringify(st, null, 2));
 
   async function saveContact(sock, senderPhone, fullName) {
@@ -94,6 +94,21 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     // Same person resending the template: one Telegram note a day unless the result changed.
     if (lastNote.get(tpl.phone) !== `${todayStr()}|${head}`) { lastNote.set(tpl.phone, `${todayStr()}|${head}`); await notify(head); }
     afterTemplate();
+  }
+
+  // WhatsApp number → the app number from their template (same number when not recorded).
+  // Operator link (`applink`) wins over the template's number.
+  function appPhoneOf(phone) { const st = load(); return st.links[phone] || st.contacts[phone]?.appPhone || phone; }
+  // Sent a template / was linked → a known person, not a stranger with the link.
+  function knows(phone) { const st = load(); return !!(st.links[phone] || st.contacts[phone]); }
+  // applink: '' → list, '<wa> off' → unlink, '<wa> <app>' → link.
+  function link(wa, app) {
+    const st = load();
+    if (!wa) return Object.entries(st.links);
+    if (app === 'off') delete st.links[wa]; else st.links[wa] = app;
+    save(st);
+    afterTemplate();   // a held request for this number can be decided now
+    return null;
   }
 
   // Has this number DMed the template (or been put through `intake` by the operator)?
@@ -266,5 +281,5 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     for (const m of messages || []) handle(m).catch(err => log.warn(`⚠️  Intake: ${err.message}`));
   };
 
-  return { handle, onUpsert, onPaid, manual, hasDm, auto };
+  return { handle, onUpsert, onPaid, manual, hasDm, auto, appPhoneOf, knows, link };
 }
