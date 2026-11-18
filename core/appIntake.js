@@ -49,6 +49,15 @@ export function firstName(raw) {
 }
 
 const REPLIES = ['Okk veerji 🙏', 'Ok paaji', 'Ok ji', 'Ji done 👍', 'Okk ji 🙏', 'Theek aa veerji'];
+// Group link reply: opener × line × closer, so no two link messages read the same.
+const OPEN = ['Okk ji {n} 🙏', 'Ji {n} veerji', 'Ok paaji {n}', 'Sat Sri Akal {n} ji 🙏', 'Hanji {n}', 'Okk {n} veerji'];
+const LINE = ['Eh reha group da link', 'Group link eh hai ji', 'Aah lo group da link', 'Is link to group join karlo', 'Group join karan layi link'];
+const CLOSE = ['', 'Isse number ton request bhejna ji 👍', 'Request aape approve ho jaugi 🙏', 'Join request bhej deo, approve ho jaugi', 'Isse WhatsApp ton hi join karna ji'];
+const pick = (a) => a[randomBetween(0, a.length - 1)];
+export function linkReply(name, link) {
+  const open = pick(OPEN).replace(name ? '{n}' : / ?\{n\}/, name || '');
+  return [`${open}, ${pick(LINE).toLowerCase()} 👇`, link, pick(CLOSE)].filter(Boolean).join('\n');
+}
 const textOf = (m) => m?.message?.conversation || m?.message?.extendedTextMessage?.text || '';
 const phoneOfJid = (jid) => String(jid || '').endsWith('@s.whatsapp.net')
   ? normalizePhone(jid.split('@')[0].split(':')[0]) : null;
@@ -85,7 +94,13 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
       save(st);
       const jid = msg.key.remoteJid;
       setTimeout(async () => {
-        try { await getSock()?.sendMessage(jid, { text: REPLIES[randomBetween(0, REPLIES.length - 1)] }); }
+        try {
+          // Paid on the app → the group link (their request from this chat is then approved).
+          let row = null;
+          if (config.appGroupLink) row = await appSync.lookup(tpl.phone).catch(() => null);
+          const text = liveOnApp(row) ? linkReply(firstName(row.name || tpl.name || msg.pushName), config.appGroupLink) : pick(REPLIES);
+          await getSock()?.sendMessage(jid, { text });
+        }
         catch (err) { log.warn(`⚠️  Intake reply failed: ${err.message}`); }
       }, randomBetween(60_000, 300_000)).unref?.();
     }

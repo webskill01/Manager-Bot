@@ -37,6 +37,8 @@ export function loadConfig(botDir) {
   // EaseCab member-sync access, .env only for the same reason. No URL → no app sync.
   config.appSyncUrl = process.env.APP_SYNC_URL || '';
   config.appSyncToken = process.env.APP_SYNC_TOKEN || '';
+  // App group invite link, .env only: public repo, and a leaked link only brings strangers.
+  config.appGroupLink = process.env.APP_GROUP_LINK || '';
   // bot-nitin only: "bot-abhi=<sheetId>,bot-sachin2=<sheetId>" for the fleet-wide views.
   config.fleetSheets = Object.fromEntries((process.env.FLEET_SHEETS || '').split(',')
     .map(p => p.split('=').map(s => s.trim())).filter(([k, v]) => k && v));

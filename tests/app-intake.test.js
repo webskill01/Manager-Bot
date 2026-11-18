@@ -79,3 +79,11 @@ test('auto intake: on no sheet but app has a name → intaken', async () => {
   assert.match(await intake.auto('9876543210'), /Jaswant \(9876543210\) · live on app/);
   assert.deepEqual(added, ['Jaswant']);
 });
+
+test('link reply: link on its own line, name in the opener, varies between sends', async () => {
+  const { linkReply } = await import('../core/appIntake.js');
+  const outs = new Set(Array.from({ length: 30 }, () => linkReply('Amit', 'https://chat.whatsapp.com/X')));
+  for (const t of outs) { assert.match(t, /Amit/); assert.ok(t.split('\n').includes('https://chat.whatsapp.com/X')); }
+  assert.ok(outs.size > 5);
+  assert.doesNotMatch(linkReply('', 'L'), /\{n\}|  /);
+});
