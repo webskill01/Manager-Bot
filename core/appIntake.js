@@ -3,6 +3,7 @@ import path from 'node:path';
 import { normalizePhone, randomBetween, todayStr, formatDateTime } from './globalConfig.js';
 import { liveOnApp } from './appFlow.js';
 import { appDate } from './appSync.js';
+import { loadKicked, saveKicked } from './removalEngine.js';
 
 // The join-request template app users send to the DM number ("…join request bhej di hai…
 // Name: X / Number: 98…", also in Punjabi and Hindi). Their message opens the chat from their
@@ -277,6 +278,24 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     const st = load();
     const sock = getSock();
     if (!sock) return;
+    // Removed by kickall in the last 24h and paid now → DM the app group link so they can
+    // rejoin (the gate approves their request). Never re-added directly — that logs us out.
+    const kicked = loadKicked(config.botDir);
+    for (const r of rows) {
+      const appPhone = normalizePhone(String(r.phone));
+      if (!config.appGroupLink || !liveOnApp(r)) continue;
+      const was = Object.keys(kicked).filter(wa => wa === appPhone || appPhoneOf(wa) === appPhone);
+      for (const wa of was) {
+        if (Date.now() - Date.parse(kicked[wa]) > 864e5) continue;
+        delete kicked[wa];
+        const text = linkReply(firstName(r.name), config.appGroupLink);
+        setTimeout(async () => {
+          try { await getSock()?.sendMessage(`91${wa}@s.whatsapp.net`, { text }); await notify(`🔗 ${firstName(r.name) || wa} (${wa}) paid after being removed — sent the app group link`); }
+          catch (err) { log.warn(`⚠️  Rejoin link to ${wa} failed: ${err.message}`); }
+        }, randomBetween(60_000, 300_000)).unref?.();
+      }
+    }
+    saveKicked(config.botDir, kicked);
     for (const r of rows) {
       const appPhone = normalizePhone(String(r.phone));
       for (const [sender, c] of Object.entries(st.contacts)) {

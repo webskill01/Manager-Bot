@@ -87,3 +87,26 @@ test('link reply: link on its own line, name in the opener, varies between sends
   assert.ok(outs.size > 5);
   assert.doesNotMatch(linkReply('', 'L'), /\{n\}|  /);
 });
+
+test('paid within a day of a kick → app group link DMed once', async (t) => {
+  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
+  const { createAppIntake } = await import('../core/appIntake.js');
+  const { loadKicked, saveKicked } = await import('../core/removalEngine.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kick-'));
+  saveKicked(dir, { '7973855083': new Date().toISOString(), '9000000000': new Date(Date.now() - 1.5 * 864e5).toISOString() });
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const sent = [];
+  const sock = { sendMessage: async (jid, m) => sent.push([jid, m.text]), addOrEditContact: async () => {} };
+  const intake = createAppIntake({
+    config: { botDir: dir, botName: 'bot-nitin', appGroupLink: 'https://chat.whatsapp.com/X' }, log: { warn() {}, info() {} },
+    getSock: () => sock, appSync: null, fleet: null, store: null, notify: async () => {},
+  });
+  const row = { phone: '7973855083', name: 'harbhajan singh', paidCount: 2, status: 'active', lastPaidAt: '2026-11-19T04:02:14Z', expiresAt: new Date(Date.now() + 30 * 864e5).toISOString() };
+  await intake.onPaid([row, { ...row, phone: '9000000000' }]);
+  t.mock.timers.tick(300_001);
+  await new Promise(r => setImmediate(r));
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0][0], '917973855083@s.whatsapp.net');
+  assert.match(sent[0][1], /Harbhajan[\s\S]*chat\.whatsapp\.com\/X/);
+  assert.deepEqual(Object.keys(loadKicked(dir)), ['9000000000']);
+});

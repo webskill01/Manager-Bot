@@ -3,6 +3,19 @@ import path from 'path';
 import { daysFromToday, sleep, randomBetween, normalizePhone, resolveWhatsAppJid, isDelayActive } from './globalConfig.js';
 import { removalDue, isAppFlow, loadContactLog } from './appFlow.js';
 
+// kicked.json { phone: iso } — who kickall removed, so a payment right after can send the link
+// back (appIntake.onPaid). Entries older than 2 days are dropped on each write.
+const kickedFile = (dir) => path.join(dir, 'kicked.json');
+export function loadKicked(dir) {
+  try { return JSON.parse(fs.readFileSync(kickedFile(dir), 'utf8')); } catch { return {}; }
+}
+export function saveKicked(dir, k) {
+  const cutoff = Date.now() - 2 * 864e5;
+  for (const [p, at] of Object.entries(k)) if (Date.parse(at) < cutoff) delete k[p];
+  try { fs.writeFileSync(kickedFile(dir), JSON.stringify(k, null, 2)); } catch { /* best effort */ }
+}
+function noteKicked(dir, phone) { const k = loadKicked(dir); k[String(phone)] = new Date().toISOString(); saveKicked(dir, k); }
+
 const MIN_GAP_MS = 15 * 60 * 1000;
 const MAX_GAP_MS = 30 * 60 * 1000;
 
@@ -176,6 +189,7 @@ export function createRemovalEngine(config, log, getSock, store, getBroadcastJid
       } catch (err) {
         log.warn(`⚠️  Kickall store update failed [${member.name}]: ${err.message}`);
       }
+      if (removedCount > 0) noteKicked(config.botDir, member.phone);
 
       state.members[index].done = true;
       state.members[index].removedGroups = removedCount;
