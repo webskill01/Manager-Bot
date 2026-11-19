@@ -124,6 +124,8 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
     if (app === 'off') delete st.links[wa]; else st.links[wa] = app;
     save(st);
     afterTemplate();   // a held request for this number can be decided now
+    // Paid on the app → save the contact on the WhatsApp number now (Telegram note with the result).
+    if (app !== 'off') auto(app, wa).then(out => out && notify(out)).catch(err => log.warn(`⚠️  applink intake ${wa}: ${err.message}`));
     return null;
   }
 
@@ -186,13 +188,15 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
   // Paid on the app, no template, but on some bot's sheet: we already know them — intake
   // straight from the sheet (contact named app name → sheet name). On no sheet but with an app
   // name → same, plus a bot-nitin row. null = already intaken, or no sheet and no app name.
-  async function auto(phone) {
-    if (Object.values(load().contacts).some(c => c.appPhone === phone)) return null;
+  // wa = the WhatsApp number in the group (default: same as the app number). Keyed on wa, so a
+  // person who sent the template from a second number is saved on the group number too.
+  async function auto(phone, wa = phone) {
+    if (load().contacts[wa]) return null;
     // On no sheet: still known if the app has their name (required at sign-up).
     if (!fleet || !(await fleet.whereIs(phone)).length) {
       if (!firstName((await appSync.lookup(phone))?.name)) return null;
     }
-    return intakeOne({ appPhone: phone, sender: phone });
+    return intakeOne({ appPhone: phone, sender: wa });
   }
 
   // `intake appgroup` — one-off: auto() for everyone in the app group (last scan), 3–8 s apart.
@@ -200,15 +204,15 @@ export function createAppIntake({ config, log, getSock, appSync, fleet, store, n
   let backfilling = false;
   function backfill() {
     if (backfilling) return 'ℹ️ Already running — the summary comes on Telegram when it ends.';
-    const done = new Set(Object.values(load().contacts).map(c => c.appPhone));
-    const phones = [...appGroupPhones()].filter(p => !done.has(p));
+    const done = load().contacts;
+    const phones = [...appGroupPhones()].filter(p => !done[p]);
     if (!phones.length) return 'ℹ️ Everyone in the app group is already intaken (or no group scan yet).';
     backfilling = true;
     (async () => {
       const n = { saved: 0, unpaid: 0, nosheet: 0, failed: [] };
       for (const ph of phones) {
         try {
-          const out = await auto(ph);
+          const out = await auto(appPhoneOf(ph), ph);
           if (out === null) n.nosheet++;
           else if (out.includes('📇 saved')) n.saved++;
           else if (out.includes('not paid')) n.unpaid++;

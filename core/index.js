@@ -216,7 +216,7 @@ export async function startBot(config, log, authDir) {
   const appGate = appMove
     ? createAppGate({ config, log, getSock, groupScan, appSync, fleet, store, removal: removalEngine,
       notify: (text) => notifyTelegram(text, config.dripIds), warmingUp,
-      onApproved: (ph) => appIntake?.auto(ph) ?? null,
+      onApproved: (ph) => appIntake?.auto(appIntake.appPhoneOf(ph), ph) ?? null,
       appPhoneOf: (ph) => appIntake?.appPhoneOf(ph) ?? ph,
       knows: (ph) => appIntake?.knows(ph) ?? false }) : null;
 

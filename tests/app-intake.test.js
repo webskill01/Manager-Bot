@@ -110,3 +110,23 @@ test('paid within a day of a kick → app group link DMed once', async (t) => {
   assert.match(sent[0][1], /Harbhajan[\s\S]*chat\.whatsapp\.com\/X/);
   assert.deepEqual(Object.keys(loadKicked(dir)), ['9000000000']);
 });
+
+test('applink saves the contact on the WhatsApp number when the app number is paid', async () => {
+  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
+  const { createAppIntake } = await import('../core/appIntake.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'link-'));
+  const row = { name: 'tejpal singh', paidCount: 1, status: 'active', lastPaidAt: '2026-11-10T00:00:00Z', expiresAt: '2026-12-10T10:00:00+05:30' };
+  const saved = []; const notes = [];
+  const intake = createAppIntake({
+    config: { botDir: dir, botName: 'bot-nitin' }, log: { warn() {}, info() {} },
+    getSock: () => ({ addOrEditContact: async (jid, c) => saved.push([jid, c.fullName]) }),
+    appSync: { lookup: async (p) => (p === '9814918249' ? row : null) },
+    fleet: { whereIs: async () => [{ bot: 'bot-nitin', member: { name: 'Tejpal', status: 'ACTIVE' } }] },
+    store: { add: async () => {} }, notify: async (t) => notes.push(t),
+  });
+  intake.link('7710121213', '9814918249');
+  await new Promise(r => setTimeout(r, 20));
+  assert.deepEqual(saved, [['917710121213@s.whatsapp.net', 'Tejpal - 10 EC']]);
+  assert.match(notes[0], /Tejpal \(9814918249\)/);
+  assert.equal(intake.appPhoneOf('7710121213'), '9814918249');
+});
