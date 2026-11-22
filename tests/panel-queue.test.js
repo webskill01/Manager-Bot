@@ -39,6 +39,18 @@ test('removal day is per bot: aayush2 drops at 6 days overdue', () => {
   assert.deepEqual(phones(rows), ['9000000002']);
 });
 
+test('stopped bot: every ACTIVE member is on Today as due, whatever the date', () => {
+  const cfg = { ...botCfg, 'bot-aayush2': { ...botCfg['bot-aayush2'], stopped: true } };
+  const people = buildPeople({ sheets: {
+    'bot-aayush2': [mem('9000000001', day(-40)), mem('9000000002', day(12)), mem('9000000003', day(0), { status: 'REMOVED' })],
+    'bot-abhi': [mem('9000000004', day(12))],
+  } });
+  const rows = buildQueue({ people, botCfg: cfg, filter: { view: 'today' }, now: NOW });
+  assert.deepEqual(phones(rows), ['9000000001', '9000000002']);
+  assert.ok(rows.every(r => r.reason === 'due'));
+  assert.equal(rows[1].days, 12, 'real billing date still shown');
+});
+
 test('range view lists exactly the chosen days, including future ones as upcoming', () => {
   const sheets = { 'bot-abhi': [mem('9000000001', day(-4)), mem('9000000002', day(-3)), mem('9000000003', day(1)), mem('9000000004', day(-20))] };
   assert.deepEqual(phones(q({ sheets, filter: { view: 'range', from: day(-4), to: day(-4) } })), ['9000000001']);

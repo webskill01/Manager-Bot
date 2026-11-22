@@ -47,7 +47,8 @@ export function buildQueue({ people, botCfg, price = 0, interactions = [], follo
     if (!hits.length) continue;
 
     const { bot, member, days } = hits[0];
-    const reason = fuDue ? 'followup' : days < 0 ? 'overdue' : days === 0 ? 'due' : 'upcoming';
+    // A stopped bot reminds and kicks nobody, so its whole ACTIVE list is "call now".
+    const reason = fuDue ? 'followup' : days < 0 && !botCfg[bot].stopped ? 'overdue' : days <= 0 || botCfg[bot].stopped ? 'due' : 'upcoming';
     if (!has(filter.status, reason)) continue;
 
     const assignedTo = assigned.get(p.phone) ?? null;
@@ -85,6 +86,7 @@ function inView({ bot, billingDate, days, filter, from, to, botCfg, fuDue = fals
     const d = parseDate(billingDate);
     return from && to && d >= from && d <= to;
   }
+  if (botCfg[bot].stopped) return true;   // no bot moving dates or kicking: show them all, now
   return (days <= 0 && days >= -botCfg[bot].removalDay) || (fuDue && days <= 0);
 }
 
