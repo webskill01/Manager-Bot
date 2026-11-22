@@ -14,7 +14,6 @@ import { createLogger } from '../core/logger.js';
 const log = createLogger('panel');
 const env = loadEnv();
 const botCfg = loadBotConfigs(Object.keys(env.sheets));
-for (const b of env.stoppedBots) if (botCfg[b]) botCfg[b].stopped = true;
 const db = openDb(env.dbFile);
 const sync = createSync({ env, botCfg, db, log });
 

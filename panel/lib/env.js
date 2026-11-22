@@ -49,8 +49,6 @@ export function loadEnv(file = path.join(PANEL_DIR, '.env'), env = process.env) 
     appLaunch: new Date(`${vars.PANEL_APP_LAUNCH || '2026-10-15'}T00:00:00+05:30`).toISOString(),
     dbFile: path.resolve(PANEL_DIR, vars.PANEL_DB || 'panel.db'),
     syncMs: parseInt(vars.PANEL_SYNC_MS || '120000', 10),
-    // Bots whose pm2 process is stopped: their sheet is frozen, so Today lists all their ACTIVE members.
-    stoppedBots: String(vars.PANEL_STOPPED_BOTS || '').split(',').map(s => s.trim()).filter(Boolean),
   });
 }
 
