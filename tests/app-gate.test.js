@@ -53,7 +53,7 @@ test('gate: paid but no DM yet → left pending; with DM → approved; unknown �
   const orig = global.setTimeout; global.setTimeout = (fn) => orig(fn, 0);   // skip the 4–8 s gaps
   try { await gate.gateRequests(); } finally { global.setTimeout = orig; }
   assert.deepEqual(acted, ['approve 9000000001']);
-  assert.match(notes[0], /waiting for their DM.*9000000002/);
+  assert.doesNotMatch(notes[0], /Approved|waiting|9000000001|9000000002/);   // routine → log only
   assert.match(notes[0], /held 3 days.*9000000003/);
   assert.ok(JSON.parse(fs.readFileSync(path.join(dir, 'app-gate.json'), 'utf8')).held['9000000003']);
 });

@@ -88,12 +88,12 @@ test('link reply: link on its own line, name in the opener, varies between sends
   assert.doesNotMatch(linkReply('', 'L'), /\{n\}|  /);
 });
 
-test('paid within a day of a kick → app group link DMed once', async (t) => {
+test('paid right after a kick → no link DM (WhatsApp blocks removed people from link + request)', async (t) => {
   const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
   const { createAppIntake } = await import('../core/appIntake.js');
-  const { loadKicked, saveKicked } = await import('../core/removalEngine.js');
+  const { saveKicked } = await import('../core/removalEngine.js');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kick-'));
-  saveKicked(dir, { '7973855083': new Date().toISOString(), '9000000000': new Date(Date.now() - 1.5 * 864e5).toISOString() });
+  saveKicked(dir, { '7973855083': new Date().toISOString() });
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const sent = [];
   const sock = { sendMessage: async (jid, m) => sent.push([jid, m.text]), addOrEditContact: async () => {} };
@@ -102,13 +102,30 @@ test('paid within a day of a kick → app group link DMed once', async (t) => {
     getSock: () => sock, appSync: null, fleet: null, store: null, notify: async () => {},
   });
   const row = { phone: '7973855083', name: 'harbhajan singh', paidCount: 2, status: 'active', lastPaidAt: '2026-11-19T04:02:14Z', expiresAt: new Date(Date.now() + 30 * 864e5).toISOString() };
-  await intake.onPaid([row, { ...row, phone: '9000000000' }]);
+  await intake.onPaid([row]);
   t.mock.timers.tick(300_001);
   await new Promise(r => setImmediate(r));
-  assert.equal(sent.length, 1);
-  assert.equal(sent[0][0], '917973855083@s.whatsapp.net');
-  assert.match(sent[0][1], /Harbhajan[\s\S]*chat\.whatsapp\.com\/X/);
-  assert.deepEqual(Object.keys(loadKicked(dir)), ['9000000000']);
+  assert.equal(sent.length, 0);
+});
+
+test('template intake: a clean one is log-only, one with ⚠️ reaches Telegram', async (t) => {
+  const fs = await import('node:fs'); const os = await import('node:os'); const path = await import('node:path');
+  const { createAppIntake } = await import('../core/appIntake.js');
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const live = { name: 'rakesh', paidCount: 1, status: 'active', lastPaidAt: '2026-11-26T00:00:00Z', expiresAt: new Date(Date.now() + 20 * 864e5).toISOString() };
+  const notes = [];
+  const intake = createAppIntake({
+    config: { botDir: fs.mkdtempSync(path.join(os.tmpdir(), 'tpl-')), botName: 'bot-nitin' }, log: { warn() {}, info() {} },
+    getSock: () => ({ addOrEditContact: async () => {}, sendMessage: async () => {} }),
+    appSync: { lookup: async () => live }, fleet: { whereIs: async () => [] }, store: { add: async () => {} },
+    notify: async (x) => notes.push(x),
+  });
+  const msg = (from, num) => ({ key: { remoteJid: `91${from}@s.whatsapp.net` }, message: { conversation: `Name: Rakesh\nNumber: ${num}` } });
+  await intake.handle(msg('7087906199', '7087906199'));
+  assert.equal(notes.length, 0);
+  await intake.handle(msg('7087906100', '7087906199'));   // wrote from another number → ⚠️
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /⚠️ wrote from 7087906100/);
 });
 
 test('applink saves the contact on the WhatsApp number when the app number is paid', async () => {

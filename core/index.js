@@ -192,8 +192,9 @@ export async function startBot(config, log, authDir) {
     config, log, store, client: appClient,
     notify: (t) => notifyTelegram(t, config.dripIds),
     // bot-nitin: one ping per app payment naming every sheet the phone is on (or none).
-    onAppPaid: fleet?.isFleet ? async (rows) => {
-      for (const r of rows) await notifyTelegram(paidPing(r, await fleet.whereIs(r.phone), config.botName), config.dripIds);
+    // back = phones that were REMOVED on this sheet and just paid again (the row says ACTIVE now).
+    onAppPaid: fleet?.isFleet ? async (rows, back = new Set()) => {
+      for (const r of rows) await notifyTelegram(paidPing(r, await fleet.whereIs(r.phone), config.botName, back.has(r.phone)), config.dripIds);
       await appIntake?.onPaid(rows);
     } : null,
     linksFor: (phone) => commandParser?.linksReply(phone) ?? `Send the group links: sendlinks ${phone}`,

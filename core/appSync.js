@@ -125,12 +125,14 @@ export function createAppSync({ config, log, store, client, notify, linksFor, on
     for (const e of onAppPaid ? [] : plan.renew) {
       await notify(`✅ App payment — ${e.member.name} (${e.member.phone}) renewed till ${friendlyDate(e.until)}${e.amount ? ` · ₹${e.amount}` : ''}`);
     }
-    for (const e of plan.activate) await notify(await activationText(e));
+    // onAppPaid's ping already says "removed earlier, add by hand" for these.
+    for (const e of plan.activate) if (!(onAppPaid && e.member.status === 'REMOVED')) await notify(await activationText(e));
   }
 
   async function activationText({ member, until }) {
-    const was = member.status === 'REMOVED' ? 'was removed, paid again' : 'new member';
-    const head = `🎉 Paid on the app — ${member.name} (${member.phone}), ${was}. Active till ${friendlyDate(until)}.`;
+    // Removed and back: WhatsApp blocks their link and request, so an admin adds them by hand.
+    if (member.status === 'REMOVED') return `🔁 Renewed on the app — ${member.name} (${member.phone}), was removed earlier. Active till ${friendlyDate(until)}.\n🚫 Can't rejoin by link or request.\n➕ Add ${member.phone} to the app group directly from your phone.`;
+    const head = `🎉 Paid on the app — ${member.name} (${member.phone}), new member. Active till ${friendlyDate(until)}.`;
     try { return `${head}\n\n${await linksFor(member.phone)}`; }
     catch (err) { return `${head}\nSend the group links: sendlinks ${member.phone}`; }
   }
@@ -149,15 +151,17 @@ export function createAppSync({ config, log, store, client, notify, linksFor, on
       const state = loadState();
       const firstRun = !state.started;
       const { rows, paid } = await pull();
+      const back = new Set();   // sheet REMOVED → paid again (the row reads ACTIVE once applied)
       if (rows.length) {
         await store.refresh();
         const plan = planSync(store.getAll(), rows);
+        for (const e of plan.activate) if (e.member.status === 'REMOVED') back.add(e.member.phone);
         if (plan.renew.length + plan.activate.length + plan.quiet.length) {
           await apply(plan);
           await ping(plan, firstRun);
         }
       }
-      if (paid.length && onAppPaid) await onAppPaid(paid);
+      if (paid.length && onAppPaid) await onAppPaid(paid, back);
       await checkPending(state);
       state.started = state.started || new Date().toISOString();
       saveState(state);

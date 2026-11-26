@@ -152,11 +152,12 @@ export function createAppGate({ config, log, getSock, groupScan, appSync, fleet,
           try { const t = await onApproved(ph); if (t) intaken.push(t); }
           catch (err) { log.warn(`⚠️  App gate: intake ${ph} failed — ${err.message}`); }
         }
+        // Telegram gets only what needs the operator. Approvals, rejections, waits and clean
+        // intakes are routine: log only.
+        if (done.reject.length) log.info(`❌ App gate: rejected (no active membership) ${done.reject.join(', ')}`);
+        if (waiting.length) log.info(`⏳ App gate: waiting for template — ${waiting.join(', ')}`);
         const lines = [
-          done.approve.length && `✅ Approved (active on app): ${done.approve.join(', ')}`,
-          intaken.length && intaken.join('\n'),
-          done.reject.length && `❌ Rejected (no active membership): ${done.reject.join(', ')}`,
-          waiting.length && `⏳ Active on app, waiting for their DM (template) before approving: ${waiting.join(', ')}`,
+          intaken.filter(t => t.includes('⚠️')).join('\n'),
           heldNow.length && `🕓 Number not on the app — held ${holdDays} days for their template (or \`applink <wa> <app>\`), then rejected: ${heldNow.join(', ')}`,
           shared.length && `⚠️ Held — one app account, one member. Not approved: ${shared.join('; ')}`,
           hidden.length && `❔ ${hidden.length} request(s) with a hidden number — left pending, decide by hand`,

@@ -17,7 +17,7 @@ export const shortName = (bot) => String(bot).replace(/^bot-/, '');
 // sheets (if any) they sit on, and what to do. `where` is whereIs(phone), `own` this bot.
 //   on no sheet      → maybe the person you just told to pay: add them, links come back
 //   only other bots' → their member, their bot handles it: info only
-export function paidPing(row, where, own = '') {
+export function paidPing(row, where, own = '', back = false) {
   const name = where.find(w => w.member.name)?.member.name || '(app user)';
   const till = row.expiresAt ? ` till ${friendlyDate(formatDate(new Date(row.expiresAt)))}` : '';
   const sheets = where.length
@@ -28,7 +28,11 @@ export function paidPing(row, where, own = '') {
     : own && !where.some(w => w.bot === own)
       ? `\n   ℹ️ ${where.map(w => shortName(w.bot)).join('+')}'s member — their bot handles it, nothing to do.`
       : '';
-  return `💳 App payment — ${name} (${row.phone})${row.lastAmount ? ` · ₹${row.lastAmount}` : ''}${till}\n   Sheets: ${sheets}${next}`;
+  // Removed earlier → WhatsApp blocks their link and join request; only an admin can add them.
+  const removed = back || where.some(w => w.member.status === 'REMOVED')
+    ? `\n   🚫 Was removed earlier — can't rejoin by link or request.\n   ➕ Add ${row.phone} to the app group directly from your phone.` : '';
+  const kind = row.paidCount > 1 ? '🔁 App renewal' : '💳 App payment';
+  return `${kind} — ${name} (${row.phone})${row.lastAmount ? ` · ₹${row.lastAmount}` : ''}${till}\n   Sheets: ${sheets}${removed}${next}`;
 }
 
 // Each sheet also carries `inGroups` (Set of phones its bot last saw inside its WhatsApp

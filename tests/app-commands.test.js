@@ -197,6 +197,17 @@ test('payment ping says what to do: add if on no sheet, nothing if another bot\'
   assert.doesNotMatch(paidPing({ phone: '9000000001' }, own, 'bot-nitin'), /➕|ℹ️/);
 });
 
+test('payment ping: renewal says so; removed earlier → add by hand to the app group', () => {
+  const own = [{ bot: 'bot-nitin', member: { name: 'Manish', status: 'ACTIVE' } }];
+  assert.match(paidPing({ phone: '9988617826', paidCount: 1 }, own, 'bot-nitin'), /^💳 App payment — Manish/);
+  const renew = paidPing({ phone: '9988617826', paidCount: 3 }, own, 'bot-nitin');
+  assert.match(renew, /^🔁 App renewal — Manish/);
+  assert.doesNotMatch(renew, /removed/);
+  assert.match(paidPing({ phone: '9988617826', paidCount: 3 }, own, 'bot-nitin', true), /removed earlier[\s\S]*Add 9988617826 to the app group directly/);
+  const abhiGone = [{ bot: 'bot-abhi', member: { name: 'A', status: 'REMOVED' } }];
+  assert.match(paidPing({ phone: '9000000001', paidCount: 2 }, abhiGone, 'bot-nitin'), /Add 9000000001 to the app group directly/);
+});
+
 test('appstats <bot> lists one sheet by name: on the app, not yet, waiting, in groups without a row', async () => {
   const store = memStore([
     { phone: '9000000001', name: 'OnApp', status: 'ACTIVE' },

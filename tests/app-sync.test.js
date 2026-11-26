@@ -110,6 +110,34 @@ test('engine: first run marks silently with one summary; later payments ping per
   assert.strictEqual(sync.snapshot().get('9000000002').status, 'active');
 });
 
+test('removed member pays again → renewal, add by hand, no group links; fleet ping gets the flag', async () => {
+  const run = async (onAppPaid) => {
+    const botDir = fs.mkdtempSync(path.join(os.tmpdir(), 'appsync-'));
+    const store = fakeStore([
+      { phone: '9000000001', name: 'A', status: 'ACTIVE', appPaidUntil: '', renewals: 0 },
+      { phone: '9988617826', name: 'Manish', status: 'REMOVED', appPaidUntil: '', renewals: 1 },
+    ]);
+    let answer = [row('9000000001', 30)];
+    const client = { async memberships() { return { members: answer, truncated: false }; } };
+    const pings = [];
+    const sync = createAppSync({
+      config: { botDir, app: {}, appGroupLink: 'https://chat.whatsapp.com/APP' }, log: { warn() {}, info() {} }, store, client,
+      notify: async (t) => { pings.push(t); }, linksFor: async () => 'LINKS', onAppPaid,
+    });
+    await sync.tick();
+    answer = [row('9000000001', 30), row('9988617826', 30, { lastPaidAt: iso(0) })];
+    await sync.tick();
+    return pings.filter(t => /Manish/.test(t));
+  };
+  const [p] = await run(null);
+  assert.match(p, /Renewed on the app — Manish \(9988617826\), was removed earlier[\s\S]*Add 9988617826 to the app group directly/);
+  assert.doesNotMatch(p, /LINKS|chat\.whatsapp/);
+  // bot-nitin (onAppPaid): its own ping carries it, so no second note; `back` names him
+  let back = null;
+  assert.deepEqual(await run(async (rows, b) => { back = b; }), []);
+  assert.ok(back.has('9988617826'));
+});
+
 test('appClient: null without .env access; sends the token and unwraps the envelope', async () => {
   assert.strictEqual(createAppClient({ appSyncUrl: '', appSyncToken: 'x' }), null);
   let seen;
